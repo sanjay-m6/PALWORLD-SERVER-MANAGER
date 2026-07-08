@@ -1,0 +1,385 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Variables ──────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.625rem;
+  --primary: #00D9FF;
+  --primary-rgb: 0, 217, 255;
+  --success: #00C853;
+  --warning: #FFB300;
+  --error: #FF1744;
+  --bg-dark: #0D1117;
+  --bg-card: rgba(30, 41, 59, 0.5);
+  --bg-card-hover: rgba(30, 41, 59, 0.8);
+  --border-subtle: rgba(71, 85, 105, 0.3);
+}
+
+/* ─── Base Reset ─────────────────────────────────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--bg-dark);
+  background-image: linear-gradient(rgba(13, 17, 23, 0.75), rgba(13, 17, 23, 0.75)), url('../Asset/Back.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Custom Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+/* ─── Glassmorphism Card ─────────────────────────────────────────────────── */
+@layer components {
+  .glass-card {
+    @apply rounded-xl border border-dark-800 bg-dark-900/60 backdrop-blur-md;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card:hover {
+    @apply border-primary-500/30 bg-dark-900/80;
+    box-shadow: 0 10px 30px rgba(0, 217, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .glass-card-active {
+    @apply rounded-xl border border-primary-500/40 bg-dark-900/70 backdrop-blur-md;
+    box-shadow: 0 10px 40px rgba(0, 217, 255, 0.15), inset 0 1px 0 rgba(0, 217, 255, 0.1);
+  }
+}
+
+/* ─── Status Indicators ──────────────────────────────────────────────────── */
+@layer components {
+  .status-dot {
+    @apply w-2.5 h-2.5 rounded-full relative;
+  }
+
+  .status-online {
+    @apply bg-success-500;
+    box-shadow: 0 0 12px #00C853;
+    animation: pulse-status 1.8s ease-in-out infinite;
+  }
+
+  .status-offline {
+    @apply bg-dark-600;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+  }
+
+  .status-starting {
+    @apply bg-primary-500;
+    box-shadow: 0 0 12px #00D9FF;
+    animation: pulse-status 1s ease-in-out infinite;
+  }
+
+  .status-stopping {
+    @apply bg-warning-500;
+    box-shadow: 0 0 12px #FFB300;
+    animation: pulse-status 1s ease-in-out infinite;
+  }
+
+  .status-error {
+    @apply bg-error-500;
+    box-shadow: 0 0 12px #FF1744;
+    animation: pulse-status 1.2s ease-in-out infinite;
+  }
+
+  .status-updating {
+    @apply bg-primary-400;
+    box-shadow: 0 0 12px #22d3ee;
+    animation: pulse-status 0.8s ease-in-out infinite;
+  }
+}
+
+/* ─── Button Styles ──────────────────────────────────────────────────────── */
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
+    @apply bg-gradient-to-r from-primary-600/30 to-cyan-500/20 text-primary-400 border border-primary-500/40;
+    box-shadow: 0 2px 10px rgba(0, 217, 255, 0.05);
+    @apply hover:from-primary-600/45 hover:to-cyan-500/35 hover:border-primary-400 hover:text-white;
+    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+
+    &:hover {
+      box-shadow: 0 4px 20px rgba(0, 217, 255, 0.2);
+    }
+  }
+
+  .btn-success {
+    @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
+    @apply bg-gradient-to-r from-success-600/30 to-emerald-500/20 text-success-400 border border-success-500/40;
+    box-shadow: 0 2px 10px rgba(0, 200, 83, 0.05);
+    @apply hover:from-success-600/45 hover:to-emerald-500/35 hover:border-success-400 hover:text-white;
+    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+
+    &:hover {
+      box-shadow: 0 4px 20px rgba(0, 200, 83, 0.2);
+    }
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
+    @apply bg-gradient-to-r from-error-600/30 to-red-500/20 text-error-400 border border-error-500/40;
+    box-shadow: 0 2px 10px rgba(255, 23, 68, 0.05);
+    @apply hover:from-error-600/45 hover:to-red-500/35 hover:border-error-400 hover:text-white;
+    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+
+    &:hover {
+      box-shadow: 0 4px 20px rgba(255, 23, 68, 0.2);
+    }
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
+    @apply text-dark-300 hover:text-dark-100 hover:bg-dark-800/80 border border-transparent hover:border-dark-700/50;
+    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+  }
+}
+
+/* ─── Input Styles ───────────────────────────────────────────────────────── */
+@layer components {
+  .input-field {
+    @apply w-full px-3 py-2 rounded-lg text-sm transition-all duration-300;
+    @apply bg-dark-950/80 border border-dark-800 text-dark-100;
+    @apply placeholder:text-dark-600;
+    @apply focus:outline-none focus:border-primary-500/60 focus:ring-1 focus:ring-primary-500/20;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .select-field {
+    @apply w-full px-3 py-2 rounded-lg text-sm transition-all duration-300;
+    @apply bg-dark-950/80 border border-dark-800 text-dark-100;
+    @apply focus:outline-none focus:border-primary-500/60 focus:ring-1 focus:ring-primary-500/20;
+    @apply cursor-pointer;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+}
+
+/* ─── Console / Terminal ─────────────────────────────────────────────────── */
+@layer components {
+  .console-output {
+    @apply font-mono text-sm leading-relaxed border border-dark-800/80;
+    @apply bg-dark-950/95 rounded-lg p-4 overflow-auto;
+    box-shadow: inset 0 5px 15px rgba(0,0,0,0.5);
+  }
+
+  .console-line-info { @apply text-cyan-400; }
+  .console-line-warning { @apply text-warning-400; }
+  .console-line-error { @apply text-error-400 font-semibold; }
+  .console-line-chat { @apply text-emerald-400; }
+  .console-line-admin { @apply text-purple-400; }
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+@keyframes pulse-status {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* ─── Drag Region (Custom Title Bar) ─────────────────────────────────────── */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ─── Skeleton Loading ───────────────────────────────────────────────────── */
+@layer components {
+  .skeleton {
+    @apply rounded-lg;
+    background: linear-gradient(
+      90deg,
+      rgba(30, 41, 59, 0.3) 0%,
+      rgba(51, 65, 85, 0.3) 50%,
+      rgba(30, 41, 59, 0.3) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ─── Cyberpunk / Glassmorphism Enhancements ────────────────────────────── */
+@keyframes logo-breath {
+  0%, 100% {
+    transform: scale(0.96) rotate(-2deg);
+    filter: drop-shadow(0 0 15px rgba(0, 217, 255, 0.3));
+  }
+  50% {
+    transform: scale(1.04) rotate(2deg);
+    filter: drop-shadow(0 0 35px rgba(0, 217, 255, 0.7));
+  }
+}
+
+@keyframes glow-pulse {
+  0% {
+    box-shadow: 0 0 10px rgba(0, 217, 255, 0.1), inset 0 0 5px rgba(0, 217, 255, 0.05);
+  }
+  100% {
+    box-shadow: 0 0 25px rgba(0, 217, 255, 0.4), inset 0 0 15px rgba(0, 217, 255, 0.1);
+  }
+}
+
+@keyframes fade-out-splash {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.05);
+    filter: blur(10px);
+  }
+}
+
+@keyframes float-slow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-15px) rotate(5deg);
+  }
+}
+
+@keyframes float-slower {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-25px) rotate(-8deg);
+  }
+}
+
+@keyframes progress-loading {
+  0% {
+    left: -30%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+@keyframes text-shine {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-logo-breath {
+  animation: logo-breath 4s ease-in-out infinite;
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 3s ease-in-out infinite alternate;
+}
+
+.animate-float-slow {
+  animation: float-slow 6s ease-in-out infinite;
+}
+
+.animate-float-slower {
+  animation: float-slower 9s ease-in-out infinite;
+}
+
+.animate-splash-fadeout {
+  animation: fade-out-splash 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.animate-progress-loading {
+  animation: progress-loading 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.text-gradient-cyan {
+  background: linear-gradient(135deg, #00D9FF 0%, #00F5D4 50%, #00b4d8 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shine 5s linear infinite;
+}
+
+.cyber-grid {
+  background-image: 
+    linear-gradient(rgba(0, 217, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 217, 255, 0.03) 1px, transparent 1px);
+  background-size: 30px 30px;
+  background-position: center;
+}
+
+.cyber-radial {
+  background: radial-gradient(circle at center, transparent 30%, rgba(13, 17, 23, 0.95) 80%);
+}
+
+.glow-blob {
+  background: radial-gradient(circle, rgba(0, 217, 255, 0.15) 0%, transparent 65%);
+  filter: blur(40px);
+}
+
+.glow-blob-secondary {
+  background: radial-gradient(circle, rgba(0, 245, 212, 0.12) 0%, transparent 65%);
+  filter: blur(45px);
+}
+

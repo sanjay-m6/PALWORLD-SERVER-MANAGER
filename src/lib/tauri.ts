@@ -1,0 +1,240 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { useAppStore } from '../stores/useAppStore';
+import type { Server, ServerStatus } from '../stores/useAppStore';
+
+// ─── Tauri Command Wrappers ─────────────────────────────────────────────────
+
+export const tauriCommands = {
+  // Server commands
+  getServers: () => invoke<Server[]>('get_servers'),
+  createServer: (request: any) => invoke<Server>('create_server', { request }),
+  deleteServer: (serverId: number, backupFirst: boolean) =>
+    invoke<void>('delete_server', { serverId, backupFirst }),
+  startServer: (serverId: number) => invoke<void>('start_server', { serverId }),
+  stopServer: (serverId: number, force: boolean) =>
+    invoke<void>('stop_server', { serverId, force }),
+  restartServer: (serverId: number) => invoke<void>('restart_server', { serverId }),
+  getServerStatus: (serverId: number) =>
+    invoke<{ isRunning: boolean; pid: number | null; uptimeSeconds: number | null; cpuUsage: number | null; memoryMb: number | null }>('get_server_status', { serverId }),
+
+  // Config commands
+  getServerConfig: (serverId: number) => invoke<any>('get_server_config', { serverId }),
+  saveServerConfig: (serverId: number, config: any) =>
+    invoke<void>('save_server_config', { serverId, config }),
+  getRawConfig: (serverId: number) => invoke<string>('get_raw_config', { serverId }),
+  saveRawConfig: (serverId: number, content: string) =>
+    invoke<void>('save_raw_config', { serverId, content }),
+  getConfigPresets: () => invoke<any[]>('get_config_presets'),
+  applyPreset: (serverId: number, preset: string) =>
+    invoke<any>('apply_preset', { serverId, preset }),
+
+  // RCON commands
+  rconConnect: (serverId: number) => invoke<any>('rcon_connect', { serverId }),
+  rconDisconnect: (serverId: number) => invoke<void>('rcon_disconnect', { serverId }),
+  rconSendCommand: (serverId: number, command: string) =>
+    invoke<any>('rcon_send_command', { serverId, command }),
+  getPlayerList: (serverId: number) => invoke<any[]>('get_player_list', { serverId }),
+  kickPlayer: (serverId: number, steamId: string) =>
+    invoke<any>('kick_player', { serverId, steamId }),
+  banPlayer: (serverId: number, steamId: string) =>
+    invoke<any>('ban_player', { serverId, steamId }),
+  broadcastMessage: (serverId: number, message: string) =>
+    invoke<any>('broadcast_message', { serverId, message }),
+
+  // Backup commands
+  createBackup: (serverId: number, label?: string) =>
+    invoke<any>('create_backup', { serverId, label }),
+  getBackups: (serverId: number) => invoke<any[]>('get_backups', { serverId }),
+  restoreBackup: (serverId: number, backupId: number) =>
+    invoke<void>('restore_backup', { serverId, backupId }),
+  deleteBackup: (backupId: number) => invoke<void>('delete_backup', { backupId }),
+
+  // System commands
+  getSystemInfo: () => invoke<any>('get_system_info'),
+  getProcessStats: (serverId: number) => invoke<any>('get_process_stats', { serverId }),
+  checkPortAvailable: (port: number) => invoke<boolean>('check_port_available', { port }),
+  getPublicIp: () => invoke<string>('get_public_ip'),
+  getLocalIp: () => invoke<string>('get_local_ip'),
+  checkSteamcmdInstalled: () => invoke<boolean>('check_steamcmd_installed'),
+  checkServerInstalled: (installPath: string) =>
+    invoke<boolean>('check_server_installed', { installPath }),
+  installSteamcmd: () => invoke<void>('install_steamcmd'),
+  installPalworldServer: (installPath: string) =>
+    invoke<string>('install_palworld_server', { installPath }),
+  updatePalworldServer: (installPath: string) =>
+    invoke<string>('update_palworld_server', { installPath }),
+  getSetting: (key: string) => invoke<string | null>('get_setting', { key }),
+  setSetting: (key: string, value: string) =>
+    invoke<void>('set_setting', { key, value }),
+  setupFirewallRules: (serverId: number) =>
+    invoke<void>('setup_firewall_rules', { serverId }),
+  listInstalledMods: (serverId: number) =>
+    invoke<any[]>('list_installed_mods', { serverId }),
+  installMod: (serverId: number, sourceFilePath: string, isLogicMod: boolean) =>
+    invoke<void>('install_mod', { serverId, sourceFilePath, isLogicMod }),
+  toggleMod: (serverId: number, modName: string, isLogicMod: boolean, enable: boolean) =>
+    invoke<void>('toggle_mod', { serverId, modName, isLogicMod, enable }),
+  deleteMod: (serverId: number, modName: string, isLogicMod: boolean, enabled: boolean) =>
+    invoke<void>('delete_mod', { serverId, modName, isLogicMod, enabled }),
+  getModPerformanceReport: (serverId: number) =>
+    invoke<any[]>('get_mod_performance_report', { serverId }),
+  checkModConflicts: (serverId: number) =>
+    invoke<any[]>('check_mod_conflicts', { serverId }),
+  createModSnapshot: (serverId: number, description: string) =>
+    invoke<void>('create_mod_snapshot', { serverId, description }),
+  listModSnapshots: (serverId: number) =>
+    invoke<any[]>('list_mod_snapshots', { serverId }),
+  restoreModSnapshot: (serverId: number, snapshotId: string) =>
+    invoke<void>('restore_mod_snapshot', { serverId, snapshotId }),
+  downloadAndInstallModViaUrl: (serverId: number, url: string, isLogicMod: boolean) =>
+    invoke<void>('download_and_install_mod_via_url', { serverId, url, isLogicMod }),
+  searchModsOnline: (query: string) =>
+    invoke<any[]>('search_mods_online', { query }),
+  downloadNexusModViaApi: (serverId: number, modId: number, apiKey: string, isLogicMod: boolean) =>
+    invoke<void>('download_nexus_mod_via_api', { serverId, modId, apiKey, isLogicMod }),
+
+  // Scheduler commands
+  getTasks: (serverId: number) => invoke<any[]>('get_tasks', { serverId }),
+  createTask: (serverId: number, taskName: string, taskType: string, cronExpression: string) =>
+    invoke<number>('create_task', { serverId, taskName, taskType, cronExpression }),
+  deleteTask: (taskId: number) => invoke<void>('delete_task', { taskId }),
+  toggleTask: (taskId: number, enabled: boolean) =>
+    invoke<void>('toggle_task', { taskId, enabled }),
+};
+
+// ─── Event Listeners ────────────────────────────────────────────────────────
+
+let listenersSetup = false;
+
+export function setupEventListeners() {
+  if (listenersSetup) return;
+  listenersSetup = true;
+
+  // Server lifecycle events
+  listen<{
+    server_id: number;
+    event: string;
+    reason?: string;
+    exit_code?: number;
+    uptime_seconds?: number;
+    timestamp: string;
+  }>('server-lifecycle', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+
+    let status: ServerStatus = 'stopped';
+    switch (data.event) {
+      case 'started':
+        status = 'running';
+        break;
+      case 'stopped':
+        status = 'stopped';
+        break;
+      case 'crashed':
+        status = 'crashed';
+        store.showNotification('error', `Server crashed unexpectedly`);
+        break;
+    }
+
+    store.updateServerStatus(data.server_id, status);
+  });
+
+  // Server log events
+  listen<{
+    server_id: number;
+    timestamp: string;
+    level: string;
+    message: string;
+  }>('server-log', (event) => {
+    const data = event.payload;
+    useAppStore.getState().addLogLine(data.server_id, {
+      timestamp: data.timestamp,
+      level: data.level,
+      message: data.message,
+    });
+  });
+
+  // Install progress events
+  listen<{
+    installPath: string;
+    status: string;
+    progress: number;
+    bytesDownloaded: number;
+    bytesTotal: number;
+  }>('install-progress', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+    const server = store.servers.find((s) => s.installPath === data.installPath);
+    if (server) {
+      store.setInstallState(server.id, {
+        isInstalling: data.status !== 'finished' && data.status !== 'failed',
+        progress: data.status === 'finished' ? 100 : data.progress,
+        status: data.status,
+        bytesDownloaded: data.bytesDownloaded,
+        bytesTotal: data.bytesTotal,
+      });
+    }
+  });
+
+  // Install log events
+  listen<{
+    installPath: string;
+    line: string;
+  }>('install-log', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+    const server = store.servers.find((s) => s.installPath === data.installPath);
+    if (server) {
+      store.setInstallState(server.id, (prev) => ({
+        log: prev.log + data.line,
+      }));
+    }
+  });
+}
+
+// ─── Utility: Format Uptime ─────────────────────────────────────────────────
+
+export function formatUptime(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return '—';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// ─── Utility: Format Bytes ──────────────────────────────────────────────────
+
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// ─── Utility: Status Color ─────────────────────────────────────────────────
+
+export function getStatusColor(status: ServerStatus): string {
+  switch (status) {
+    case 'running':
+    case 'online':
+      return 'status-online';
+    case 'starting':
+      return 'status-starting';
+    case 'stopping':
+    case 'restarting':
+    case 'updating':
+      return 'status-stopping';
+    case 'crashed':
+      return 'status-error';
+    default:
+      return 'status-offline';
+  }
+}
+
+// ─── Global Application Version ─────────────────────────────────────────────
+export const APP_VERSION = '1.0.0';
