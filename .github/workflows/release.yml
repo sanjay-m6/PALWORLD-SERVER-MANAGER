@@ -51,15 +51,20 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      # ── 6. Clean Private Key ───────────────────────────────────────────────
-      - name: Clean Private Key
+      # ── 6. Clean Private Key and Password ────────────────────────────────
+      - name: Clean Private Key and Password
         shell: bash
         env:
           RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           CLEAN_KEY=$(echo -n "$RAW_KEY" | tr -d '\n\r')
           echo "::add-mask::$CLEAN_KEY"
           echo "CLEAN_PRIVATE_KEY=$CLEAN_KEY" >> $GITHUB_ENV
+          
+          CLEAN_PASSWORD=$(echo -n "$RAW_PASSWORD" | tr -d '\n\r')
+          echo "::add-mask::$CLEAN_PASSWORD"
+          echo "CLEAN_PRIVATE_KEY_PASSWORD=$CLEAN_PASSWORD" >> $GITHUB_ENV
 
       # ── 7. Build Tauri App + Updater Artifacts ─────────────────────────────
       # This step:
@@ -74,7 +79,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ env.CLEAN_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.CLEAN_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: "Palworld Server Manager v__VERSION__"
