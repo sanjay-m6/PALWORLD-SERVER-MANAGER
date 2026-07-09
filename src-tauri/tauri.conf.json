@@ -58,7 +58,9 @@
   "plugins": {
     "updater": {
       "pubkey": "",
-      "endpoints": []
+      "endpoints": [
+        "https://github.com/sanjay-m6/PALWORLD-SERVER-MANAGER/releases/latest/download/latest.json"
+      ]
     }
   }
 }

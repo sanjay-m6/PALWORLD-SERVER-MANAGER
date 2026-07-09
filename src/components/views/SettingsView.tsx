@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
-import { tauriCommands } from '../../lib/tauri';
+import { tauriCommands, APP_VERSION } from '../../lib/tauri';
+import { check } from '@tauri-apps/plugin-updater';
 
 export const SettingsView: React.FC = () => {
   const { showNotification } = useAppStore();
@@ -9,6 +10,12 @@ export const SettingsView: React.FC = () => {
   const [defaultPort, setDefaultPort] = useState(8211);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // ── Auto-Update State ──────────────────────────────────────────────────────
+  const [isAutoUpdateEnabled, setIsAutoUpdateEnabled] = useState(() => {
+    try { return localStorage.getItem('palworld_auto_update') === 'true'; } catch { return false; }
+  });
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -59,6 +66,30 @@ export const SettingsView: React.FC = () => {
       showNotification('error', `Firewall configuration failed: ${e}. Please ensure the app is running with administrator privileges.`);
     }
   };
+
+  // ── Auto-Update Toggle Handler ─────────────────────────────────────────────
+  const handleAutoUpdateToggle = useCallback(() => {
+    const next = !isAutoUpdateEnabled;
+    setIsAutoUpdateEnabled(next);
+    try { localStorage.setItem('palworld_auto_update', next ? 'true' : 'false'); } catch { /* noop */ }
+  }, [isAutoUpdateEnabled]);
+
+  // ── Manual Update Check (from Settings button) ─────────────────────────────
+  const handleCheckForUpdates = useCallback(async () => {
+    setCheckingForUpdates(true);
+    try {
+      const update = await check();
+      if (update) {
+        showNotification('info', `Update v${update.version} is available! It will be applied based on your update mode.`);
+      } else {
+        showNotification('success', 'You are running the latest version.');
+      }
+    } catch (err) {
+      showNotification('error', `Update check failed: ${err}`);
+    } finally {
+      setCheckingForUpdates(false);
+    }
+  }, [showNotification]);
 
   if (loading) {
     return (
@@ -180,6 +211,77 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
       </div>
+
+        {/* Application Updates Card */}
+        <div className="bg-dark-900/40 border border-dark-700/30 rounded-xl p-5 space-y-5">
+          <h2 className="text-sm font-semibold text-dark-100 flex items-center gap-2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-primary-400">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Application Updates
+          </h2>
+
+          <div className="space-y-4">
+            {/* Auto-Update Toggle */}
+            <div className="flex items-center justify-between py-2 border-b border-dark-800/40">
+              <div>
+                <label className="text-xs text-dark-200 font-semibold block">Auto-Update Mode</label>
+                <span className="text-[10px] text-dark-400">
+                  {isAutoUpdateEnabled
+                    ? 'Updates download and install automatically on launch.'
+                    : 'You will be notified when an update is available.'}
+                </span>
+              </div>
+              <button
+                onClick={handleAutoUpdateToggle}
+                className={`w-10 h-5 rounded-full transition-all relative ${isAutoUpdateEnabled
+                    ? 'bg-primary-500/30 border border-primary-500/50'
+                    : 'bg-dark-700/50 border border-dark-600/30'
+                  }`}
+                aria-label="Toggle auto-update mode"
+              >
+                <div
+                  className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${isAutoUpdateEnabled ? 'left-5 bg-primary-400' : 'left-0.5 bg-dark-500'
+                    }`}
+                />
+              </button>
+            </div>
+
+            {/* Mode Description */}
+            <div className="p-3 bg-dark-950/60 border border-dark-800 rounded-lg text-[11px] text-dark-400 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-primary-400/90 font-medium">
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                How Updates Work
+              </div>
+              <p>
+                <strong className="text-dark-300">Auto Mode:</strong> The app silently checks, downloads, and installs updates when launched. A full-screen overlay prevents interaction during installation.
+              </p>
+              <p>
+                <strong className="text-dark-300">Manual Mode:</strong> A notification banner appears when an update is available. Click to install at your convenience.
+              </p>
+            </div>
+
+            {/* Check for Updates Button */}
+            <button
+              onClick={handleCheckForUpdates}
+              disabled={checkingForUpdates}
+              className="w-full bg-primary-600/10 border border-primary-500/20 hover:bg-primary-600/20 text-primary-400 rounded-lg py-2.5 text-xs font-semibold transition-all disabled:opacity-50 disabled:pointer-events-none"
+            >
+              {checkingForUpdates ? 'Checking...' : 'Check for Updates Now'}
+            </button>
+
+            {/* Current Version */}
+            <div className="text-center">
+              <span className="text-[10px] text-dark-600 font-mono tracking-wider">
+                Current Version: v{APP_VERSION}
+              </span>
+            </div>
+          </div>
+        </div>
     </div>
   );
 };

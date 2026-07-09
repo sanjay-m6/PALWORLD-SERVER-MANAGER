@@ -434,9 +434,12 @@ export const Dashboard: React.FC = () => {
           </p>
           <button
             onClick={() => setCurrentView('create-server')}
-            className="btn-primary text-xs font-semibold px-4 py-2"
+            className="btn-primary text-xs font-semibold px-6 py-2.5 flex items-center gap-2"
           >
-            Create Server
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+            </svg>
+            Deploy New Server
           </button>
         </div>
       ) : (
@@ -781,6 +784,23 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── Floating Action Button (FAB) — Deploy Server ─────────────── */}
+      <button
+        onClick={() => setCurrentView('create-server')}
+        className="fixed bottom-8 right-8 z-40 group"
+        aria-label="Deploy new server"
+        title="Deploy New Server"
+      >
+        {/* Outer glow ring */}
+        <div className="absolute inset-0 rounded-full bg-primary-500/20 animate-ping opacity-30 scale-110" />
+        {/* Button body */}
+        <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-primary-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-primary-500/30 transition-all duration-300 group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-primary-500/50 active:scale-95">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="w-6 h-6 text-dark-950 transition-transform duration-300 group-hover:rotate-90">
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+        </div>
+      </button>
 
     </div>
   );

@@ -1,0 +1,83 @@
+name: "Release & Publish Updater"
+
+# ─── Triggers ─────────────────────────────────────────────────────────────────
+# 1. Manual dispatch from GitHub Actions UI (for on-demand releases)
+# 2. Automatic trigger when a version tag like v1.2.3 is pushed
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+# ─── Jobs ─────────────────────────────────────────────────────────────────────
+jobs:
+  release:
+    permissions:
+      contents: write                       # Required to create GitHub Releases
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"      # Windows NSIS/MSI build
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js ─────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      # ── 3. Rust Toolchain ──────────────────────────────────────────────────
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # ── 4. Rust Dependency Cache ───────────────────────────────────────────
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      # ── 5. Frontend Dependencies ───────────────────────────────────────────
+      - name: Install frontend dependencies
+        run: npm install
+
+      # ── 6. Build Tauri App + Updater Artifacts ─────────────────────────────
+      # This step:
+      #   - Compiles the Rust backend
+      #   - Bundles the frontend
+      #   - Produces NSIS installer (.exe) and updater bundle (.nsis.zip)
+      #   - Signs the updater bundle with TAURI_SIGNING_PRIVATE_KEY
+      #   - Generates latest.json updater manifest
+      #   - Creates a draft GitHub Release with all artifacts attached
+      - name: Build and publish Tauri release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Palworld Server Manager v__VERSION__"
+          releaseBody: |
+            ## Palworld Server Manager v__VERSION__
+
+            Automated production-grade release.
+
+            ### Installation
+            Download the `.exe` installer below and run it. If you already have a previous version installed, the in-app auto-updater will handle upgrades automatically.
+
+            ---
+            _Developed by Sanjay._
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true

@@ -3,6 +3,7 @@ import { TitleBar } from './components/layout/TitleBar';
 import { Sidebar } from './components/layout/Sidebar';
 import { Notification } from './components/ui/Notification';
 import { DonationAlert } from './components/ui/DonationAlert';
+import { UpdateOverlay } from './components/ui/UpdateOverlay';
 import { Dashboard } from './components/views/Dashboard';
 import { CreateServer } from './components/views/CreateServer';
 import { ServerDetail } from './components/views/ServerDetail';
@@ -147,6 +148,7 @@ const App: React.FC = () => {
       {/* Toast Notifications */}
       <Notification />
       <DonationAlert />
+      <UpdateOverlay />
     </div>
   );
 };
