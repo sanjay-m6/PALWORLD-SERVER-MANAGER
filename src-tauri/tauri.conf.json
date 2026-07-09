@@ -57,7 +57,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCOUFDOTcwRkRBRDg5MEMKUldRTWlhMzljTW1hVzVYdko1ekpiME1SK244QkpnRWd6Nm85MFF1LzFmTG1kWXZZb0dHb1NseEQK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYwMEFGOEE3RUY0RTgxMDYKUldRR2dVN3ZwL2dLOFBkOFBNaERWMDNjQ3BRa0tlUXVqSDVYMXFRQkxrKzZGZC94NkFYeEJoRkgK",
       "endpoints": [
         "https://github.com/sanjay-m6/PALWORLD-SERVER-MANAGER/releases/latest/download/latest.json"
       ]
