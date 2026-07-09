@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
-import { tauriCommands, APP_VERSION } from '../../lib/tauri';
+import { tauriCommands } from '../../lib/tauri';
 import { check } from '@tauri-apps/plugin-updater';
 
 export const SettingsView: React.FC = () => {
-  const { showNotification } = useAppStore();
+  const { showNotification, appVersion } = useAppStore();
   const [minimizedToTray, setMinimizedToTray] = useState(false);
   const [steamcmdPath, setSteamcmdPath] = useState('');
   const [defaultPort, setDefaultPort] = useState(8211);
@@ -354,7 +354,7 @@ export const SettingsView: React.FC = () => {
             {/* Current Version */}
             <div className="text-center">
               <span className="text-[10px] text-dark-600 font-mono tracking-wider">
-                Current Version: v{APP_VERSION}
+                Current Version: v{appVersion || '...'}
               </span>
             </div>
           </div>

@@ -133,6 +133,10 @@ interface AppStore {
   showNotification: (type: 'success' | 'error' | 'warning' | 'info', message: string) => void;
   clearNotification: () => void;
 
+  // App version (dynamically fetched from Tauri)
+  appVersion: string;
+  setAppVersion: (version: string) => void;
+
   // Settings
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -209,6 +213,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }, 5000);
   },
   clearNotification: () => set({ notification: null }),
+
+  // App version
+  appVersion: '',
+  setAppVersion: (version) => set({ appVersion: version }),
 
   // Settings
   sidebarCollapsed: false,

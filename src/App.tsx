@@ -9,10 +9,10 @@ import { CreateServer } from './components/views/CreateServer';
 import { ServerDetail } from './components/views/ServerDetail';
 import { SettingsView } from './components/views/SettingsView';
 import { useAppStore } from './stores/useAppStore';
-import { setupEventListeners, tauriCommands } from './lib/tauri';
+import { setupEventListeners, tauriCommands, fetchAppVersion } from './lib/tauri';
 
 const App: React.FC = () => {
-  const { currentView, setServers } = useAppStore();
+  const { currentView, setServers, setAppVersion } = useAppStore();
   const [showSplash, setShowSplash] = useState(true);
   const [splashFade, setSplashFade] = useState(false);
   const [loaderProgress, setLoaderProgress] = useState(0);
@@ -20,6 +20,9 @@ const App: React.FC = () => {
   useEffect(() => {
     // Setup event listeners for server lifecycle and log events
     setupEventListeners();
+    
+    // Fetch and set global app version
+    fetchAppVersion().then(setAppVersion);
 
     // Progress bar animation for splash
     const progressInterval = setInterval(() => {

@@ -1,10 +1,11 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import React, { useState } from 'react';
-import { APP_VERSION } from '../../lib/tauri';
+import { useAppStore } from '../../stores/useAppStore';
 
 const appWindow = getCurrentWindow();
 
 export const TitleBar: React.FC = () => {
+  const { appVersion } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
 
   React.useEffect(() => {
@@ -55,7 +56,7 @@ export const TitleBar: React.FC = () => {
           <img src={new URL('../../Asset/pal.png', import.meta.url).href} alt="Logo" className="w-4 h-4 object-contain" />
         </div>
         <span className="text-xs font-semibold text-dark-300 tracking-wider uppercase">
-          Palworld Server Manager - v{APP_VERSION}
+          Palworld Server Manager - v{appVersion || '...'}
         </span>
       </div>
 

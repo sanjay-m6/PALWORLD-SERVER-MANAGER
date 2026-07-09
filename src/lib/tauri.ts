@@ -324,4 +324,17 @@ export function getStatusColor(status: ServerStatus): string {
 }
 
 // ─── Global Application Version ─────────────────────────────────────────────
-export const APP_VERSION = '1.0.0';
+// Dynamically fetched from tauri.conf.json at runtime — never hardcoded.
+import { getVersion } from '@tauri-apps/api/app';
+
+let _cachedVersion: string | null = null;
+
+export async function fetchAppVersion(): Promise<string> {
+  if (_cachedVersion) return _cachedVersion;
+  try {
+    _cachedVersion = await getVersion();
+  } catch {
+    _cachedVersion = '0.0.0';
+  }
+  return _cachedVersion;
+}

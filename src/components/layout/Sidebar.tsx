@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppStore } from '../../stores/useAppStore';
-import { getStatusColor, APP_VERSION } from '../../lib/tauri';
+import { getStatusColor } from '../../lib/tauri';
 
 // SVG Icons
 const DashboardIcon = () => (
@@ -43,6 +43,7 @@ export const Sidebar: React.FC = () => {
     setActiveServerTab,
     sidebarCollapsed,
     toggleSidebar,
+    appVersion,
   } = useAppStore();
 
   const handleServerClick = (id: number) => {
@@ -150,7 +151,7 @@ export const Sidebar: React.FC = () => {
             <div className="font-semibold text-dark-400">Palworld Server Manager</div>
             <div className="flex items-center justify-between gap-1.5 mt-1">
               <div className="flex items-center gap-1">
-                <span>v{APP_VERSION}</span>
+                <span>v{appVersion || '...'}</span>
                 <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
                 <span className="text-[9px] text-dark-600">Production</span>
               </div>
@@ -173,8 +174,8 @@ export const Sidebar: React.FC = () => {
             >
               <DiscordIcon />
             </button>
-            <div className="text-[9px] text-dark-500 font-medium select-none" title={`v${APP_VERSION}`}>
-              v{APP_VERSION}
+            <div className="text-[9px] text-dark-500 font-medium select-none" title={`v${appVersion || '...'}`}>
+              v{appVersion || '...'}
             </div>
           </div>
         )}
