@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Palworld Server Manager Banner](public/banner.png)
+![Palworld Server Manager Banner](src/Asset/pal.png)
 
 A professional, real-time administration dashboard and mod curation system for **Palworld Dedicated Servers**. Manage server instances, configure properties, watch logs in real-time, automate backups, and install mods directly from Nexus Mods and Modrinth.
 
