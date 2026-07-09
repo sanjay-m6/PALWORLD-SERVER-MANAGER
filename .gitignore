@@ -48,3 +48,8 @@ desktop.ini
 /steamcmd/
 /PalServer/
 /servers/
+
+# Tauri Updater Keys
+*.key
+*.pub
+
