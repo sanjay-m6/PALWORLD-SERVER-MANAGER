@@ -17,8 +17,55 @@ pub async fn create_server(
     state: State<'_, AppState>,
     request: CreateServerRequest,
 ) -> Result<Server, String> {
+    // Check if the ports are already in use by another server in the DB
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        
+        // Check game_port
+        let conflict_game: Option<String> = conn.query_row(
+            "SELECT name FROM servers WHERE game_port = ?1",
+            [request.game_port as i64],
+            |row| row.get(0),
+        ).ok();
+        if let Some(other_name) = conflict_game {
+            return Err(format!("Game Port {} is already configured for server '{}'. Each server must have a unique Game Port.", request.game_port, other_name));
+        }
+
+        // Check rcon_port
+        let conflict_rcon: Option<String> = conn.query_row(
+            "SELECT name FROM servers WHERE rcon_port = ?1",
+            [request.rcon_port as i64],
+            |row| row.get(0),
+        ).ok();
+        if let Some(other_name) = conflict_rcon {
+            return Err(format!("RCON Port {} is already configured for server '{}'. Each server must have a unique RCON Port.", request.rcon_port, other_name));
+        }
+
+        // Check rest_api_port
+        let conflict_rest: Option<String> = conn.query_row(
+            "SELECT name FROM servers WHERE rest_api_port = ?1",
+            [request.rest_api_port as i64],
+            |row| row.get(0),
+        ).ok();
+        if let Some(other_name) = conflict_rest {
+            return Err(format!("REST API Port {} is already configured for server '{}'. Each server must have a unique REST API Port.", request.rest_api_port, other_name));
+        }
+    }
+
     // Generate config from preset
-    let config = ConfigGenerator::from_preset(&request.preset);
+    let mut config = ConfigGenerator::from_preset(&request.preset);
+
+    // Apply the customized request settings to config
+    config.public_port = request.game_port;
+    config.rcon_port = request.rcon_port;
+    config.rest_api_port = request.rest_api_port;
+    config.server_player_max_num = request.max_players;
+    config.admin_password = request.admin_password.clone();
+    if let Some(ref pass) = request.server_password {
+        config.server_password = pass.clone();
+    }
+    
     let config_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
 
     // Create in database
@@ -90,7 +137,11 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
 
     // Check port availability
     if !crate::services::network::NetworkUtils::is_port_available(game_port) {
-        return Err(format!("Port {} is already in use. Please choose a different port or stop the conflicting process.", game_port));
+        return Err(format!("Game Port {} is already in use. Please choose a different port or stop the conflicting process.", game_port));
+    }
+
+    if !crate::services::network::NetworkUtils::is_port_available(rcon_port) {
+        return Err(format!("RCON Port {} is already in use. Please choose a different RCON port or stop the conflicting process.", rcon_port));
     }
 
     // Update status to starting
@@ -224,3 +275,36 @@ pub async fn get_server_status(
         "memoryMb": stats.as_ref().map(|s| s.memory_mb),
     }))
 }
+
+#[tauri::command]
+pub async fn update_server_branch(
+    state: State<'_, AppState>,
+    server_id: i64,
+    branch: String,
+) -> Result<(), String> {
+    use rusqlite::params;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection()?;
+    conn.execute(
+        "UPDATE servers SET branch = ?1 WHERE id = ?2",
+        params![branch, server_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_server_auto_start(
+    state: State<'_, AppState>,
+    server_id: i64,
+    auto_start: bool,
+) -> Result<(), String> {
+    use rusqlite::params;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection()?;
+    conn.execute(
+        "UPDATE servers SET auto_start = ?1 WHERE id = ?2",
+        params![if auto_start { 1 } else { 0 }, server_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+

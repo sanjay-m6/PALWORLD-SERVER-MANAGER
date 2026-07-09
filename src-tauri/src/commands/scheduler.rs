@@ -43,3 +43,15 @@ pub async fn toggle_task(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.toggle_task(task_id, enabled)
 }
+
+#[tauri::command]
+pub async fn update_task(
+    state: State<'_, AppState>,
+    task_id: i64,
+    task_name: String,
+    task_type: String,
+    cron_expression: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_task(task_id, &task_name, &task_type, &cron_expression)
+}

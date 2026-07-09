@@ -56,6 +56,15 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [installing, setInstalling] = useState(false);
   const [isLogicMod, setIsLogicMod] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState('');
+
+  // UE4SS States
+  const [ue4ssInstalled, setUe4ssInstalled] = useState(false);
+  const [checkingUe4ss, setCheckingUe4ss] = useState(true);
+  const [installingUe4ss, setInstallingUe4ss] = useState(false);
+
+  // Steam Workshop States
+  const [workshopId, setWorkshopId] = useState('');
+  const [downloadingWorkshop, setDownloadingWorkshop] = useState(false);
   
   // Dynamic backend stats
   const [performanceReports, setPerformanceReports] = useState<ModPerformanceReport[]>([]);
@@ -71,8 +80,20 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [apiKey, setApiKey] = useState('');
   const [savingApiKey, setSavingApiKey] = useState(false);
 
+  const checkUe4ss = async () => {
+    try {
+      const installed = await tauriCommands.checkUe4ssInstalled(serverId);
+      setUe4ssInstalled(installed);
+    } catch (e) {
+      console.error('Failed to check UE4SS installation state:', e);
+    } finally {
+      setCheckingUe4ss(false);
+    }
+  };
+
   useEffect(() => {
     fetchMods();
+    checkUe4ss();
     fetchSecondaryData();
     if (activeSubTab === 'discover' && searchResults.length === 0 && !searching) {
       loadDefaultMods();
@@ -150,6 +171,38 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       showNotification('error', `Installation failed: ${err}`);
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const handleInstallUe4ss = async () => {
+    setInstallingUe4ss(true);
+    try {
+      const res = await tauriCommands.installUe4ss(serverId);
+      showNotification('success', res);
+      await checkUe4ss();
+    } catch (e: any) {
+      showNotification('error', `UE4SS installation failed: ${e}`);
+    } finally {
+      setInstallingUe4ss(false);
+    }
+  };
+
+  const handleDownloadWorkshop = async () => {
+    if (!workshopId.trim()) return;
+    setDownloadingWorkshop(true);
+    try {
+      const res = await tauriCommands.downloadWorkshopMod(serverId, workshopId.trim());
+      if (res.success) {
+        showNotification('success', res.message);
+        setWorkshopId('');
+        fetchMods();
+      } else {
+        showNotification('error', res.message);
+      }
+    } catch (e: any) {
+      showNotification('error', `Workshop download failed: ${e}`);
+    } finally {
+      setDownloadingWorkshop(false);
     }
   };
 
@@ -455,54 +508,119 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
         {/* SUB TAB: DISCOVER MODS */}
         {activeSubTab === 'discover' && (
           <div className="space-y-4">
-            <div className="glass-card p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Nexus Mods API Key</h4>
-                <a
-                  href="https://www.nexusmods.com/users/myaccount?tab=api"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[10px] text-primary-400 hover:underline flex items-center gap-1 font-semibold"
-                >
-                  Get API Key ↗
-                </a>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Nexus Mods API Key */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Nexus Mods API Key</h4>
+                    <a
+                      href="https://www.nexusmods.com/users/myaccount?tab=api"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] text-primary-400 hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      Get API Key ↗
+                    </a>
+                  </div>
+                  <p className="text-[10px] text-dark-500 mt-1">Needed to download files directly from Nexus Mods.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
+                    placeholder="Enter Nexus Mods API Key"
+                  />
+                  <button
+                    onClick={handleSaveApiKey}
+                    disabled={savingApiKey}
+                    className="btn-primary text-xs px-4"
+                  >
+                    {savingApiKey ? 'Saving...' : 'Save Key'}
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="input-field text-xs flex-1"
-                  placeholder="Enter Nexus Mods API Key (required to download Nexus mods directly)"
-                />
-                <button
-                  onClick={handleSaveApiKey}
-                  disabled={savingApiKey}
-                  className="btn-primary text-xs px-4"
-                >
-                  {savingApiKey ? 'Saving...' : 'Save Key'}
-                </button>
+
+              {/* UE4SS Framework Status & Installer */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">UE4SS Modding Framework</h4>
+                    {checkingUe4ss ? (
+                      <span className="text-[9px] text-dark-400">Checking...</span>
+                    ) : ue4ssInstalled ? (
+                      <span className="text-[9px] text-success-400 font-black bg-success-500/10 px-2 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">🟢 Active / Installed</span>
+                    ) : (
+                      <span className="text-[9px] text-warning-400 font-black bg-warning-500/10 px-2 py-0.5 rounded border border-warning-500/20 uppercase tracking-wider">⚠️ Missing</span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-dark-500 mt-1">Required by script/logic mods and LUA overlays. Essential for advanced modding.</p>
+                </div>
+                <div className="pt-1">
+                  <button
+                    onClick={handleInstallUe4ss}
+                    disabled={installingUe4ss || ue4ssInstalled}
+                    className={`w-full text-xs py-2 px-4 rounded-lg font-semibold transition-all ${
+                      ue4ssInstalled 
+                        ? 'bg-success-600/10 border border-success-500/20 text-success-400 cursor-not-allowed'
+                        : 'bg-primary-600/10 border border-primary-500/20 hover:bg-primary-600/20 text-primary-400'
+                    }`}
+                  >
+                    {installingUe4ss ? 'Installing UE4SS Framework...' : ue4ssInstalled ? 'UE4SS is Ready' : 'Install UE4SS Framework'}
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Custom URL Downloader */}
-            <div className="glass-card p-4 space-y-3">
-              <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Install via Direct Download URL</h4>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={downloadUrl}
-                  onChange={(e) => setDownloadUrl(e.target.value)}
-                  className="input-field text-xs flex-1"
-                  placeholder="Paste direct download URL (e.g., https://site.com/mod.pak)"
-                />
-                <button
-                  onClick={() => handleInstallUrl()}
-                  disabled={installing || !downloadUrl}
-                  className="btn-primary text-xs px-4"
-                >
-                  {installing ? 'Downloading...' : 'Install URL'}
-                </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Custom URL Downloader */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Install via Direct Download URL</h4>
+                  <p className="text-[10px] text-dark-500 mt-1">Download and install any .pak / script archive from a direct URL.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={downloadUrl}
+                    onChange={(e) => setDownloadUrl(e.target.value)}
+                    className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
+                    placeholder="https://site.com/mod.pak"
+                  />
+                  <button
+                    onClick={() => handleInstallUrl()}
+                    disabled={installing || !downloadUrl}
+                    className="btn-primary text-xs px-4"
+                  >
+                    {installing ? 'Downloading...' : 'Install URL'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Steam Workshop Downloader */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Install Steam Workshop Mod</h4>
+                  <p className="text-[10px] text-dark-500 mt-1">Input the Steam Workshop Mod ID to download and auto-extract it.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={workshopId}
+                    onChange={(e) => setWorkshopId(e.target.value)}
+                    className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
+                    placeholder="Steam Workshop ID (e.g. 3158021234)"
+                  />
+                  <button
+                    onClick={handleDownloadWorkshop}
+                    disabled={downloadingWorkshop || !workshopId.trim()}
+                    className="btn-primary text-xs px-4"
+                  >
+                    {downloadingWorkshop ? 'Installing...' : 'Install Mod'}
+                  </button>
+                </div>
               </div>
             </div>
 

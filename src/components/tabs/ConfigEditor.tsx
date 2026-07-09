@@ -98,6 +98,15 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [viewMode, setViewMode] = useState<'visual' | 'raw'>('visual');
   const [rawContent, setRawContent] = useState('');
   const [isDirty, setIsDirty] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredFields = searchQuery.trim() !== ''
+    ? configFields.filter((f) =>
+        f.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        f.key.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (f.description && f.description.toLowerCase().includes(searchQuery.toLowerCase()))
+      )
+    : configFields.filter((f) => f.category === activeCategory);
 
   const categories = [...new Set(configFields.map((f) => f.category))];
 
@@ -182,6 +191,43 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
             Raw INI
           </button>
         </div>
+
+        {viewMode === 'visual' && (
+          <div className="flex-1 max-w-[160px] focus-within:max-w-xs mx-4 transition-all duration-300 ease-in-out">
+            <div className="relative group">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="input-field text-xs pl-8 pr-8 w-full py-1.5 bg-dark-900/60 border-dark-700/50 transition-all"
+                placeholder="Search settings..."
+              />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="w-4 h-4 text-dark-500 group-focus-within:text-primary-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none transition-colors duration-300"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a1 1 0 11-1.414 1.414l-3.329-3.328A7 7 0 012 9z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300 flex items-center justify-center animate-fade-in"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-2">
           {isDirty && (
             <span className="text-[10px] text-warning-400 font-medium">
@@ -201,9 +247,12 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
             {categories.map((cat) => (
               <button
                 key={cat}
-                onClick={() => setActiveCategory(cat)}
+                onClick={() => {
+                  setActiveCategory(cat);
+                  setSearchQuery('');
+                }}
                 className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  activeCategory === cat
+                  activeCategory === cat && searchQuery.trim() === ''
                     ? 'text-primary-400 bg-primary-500/10'
                     : 'text-dark-400 hover:text-dark-200 hover:bg-dark-700/30'
                 }`}
@@ -216,19 +265,27 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
           {/* Fields */}
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
             <h3 className="text-sm font-semibold text-dark-200 mb-4">
-              {activeCategory} Settings
+              {searchQuery.trim() !== '' ? `Search Results for "${searchQuery}"` : `${activeCategory} Settings`}
             </h3>
-            {configFields
-              .filter((f) => f.category === activeCategory)
-              .map((field) => (
+            {filteredFields.length === 0 ? (
+              <div className="text-center py-12 text-dark-500 text-xs animate-fade-in">
+                No settings match your search query.
+              </div>
+            ) : (
+              filteredFields.map((field) => (
                 <div
                   key={field.key}
-                  className="flex items-center justify-between py-2.5 border-b border-dark-700/15 relative z-10 hover:z-20 focus-within:z-20"
+                  className="flex items-center justify-between py-2.5 border-b border-dark-700/15 relative z-10 hover:z-20 focus-within:z-20 animate-fade-in"
                 >
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <label className="text-xs text-dark-300 font-medium">
                       {field.label}
                     </label>
+                    {searchQuery.trim() !== '' && (
+                      <span className="text-[8px] bg-dark-800 text-dark-400 px-1.5 py-0.5 rounded border border-dark-700/50 uppercase tracking-wider font-semibold">
+                        {field.category}
+                      </span>
+                    )}
                     {field.description && (
                       <div className="relative group flex items-center">
                         <svg
@@ -303,7 +360,8 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
                     )}
                   </div>
                 </div>
-              ))}
+              ))
+            )}
           </div>
         </div>
       ) : (

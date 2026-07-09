@@ -36,6 +36,7 @@ export interface Server {
   createdAt: string;
   lastStarted: string | null;
   configJson: string;
+  branch: string;
 }
 
 // Backup model
@@ -86,6 +87,9 @@ export interface InstallState {
   bytesDownloaded: number;
   bytesTotal: number;
   log: string;
+  speed: number;
+  eta: number | null;
+  lastUpdatedTime: number;
 }
 
 // Store
@@ -210,7 +214,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidebarCollapsed: false,
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
-  // Install states
   installStates: {},
   setInstallState: (serverId, stateUpdate) =>
     set((state) => {
@@ -221,12 +224,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
         bytesDownloaded: 0,
         bytesTotal: 0,
         log: '',
+        speed: 0,
+        eta: null,
+        lastUpdatedTime: Date.now(),
       };
       const update = typeof stateUpdate === 'function' ? stateUpdate(current) : stateUpdate;
+      
+      let speed = current.speed ?? 0;
+      let eta = current.eta ?? null;
+      let lastUpdatedTime = current.lastUpdatedTime ?? Date.now();
+
+      if (update.bytesDownloaded !== undefined && update.bytesDownloaded > current.bytesDownloaded) {
+        const now = Date.now();
+        const timeDiffSec = (now - lastUpdatedTime) / 1000;
+        if (timeDiffSec > 0.5) {
+          const bytesDiff = update.bytesDownloaded - current.bytesDownloaded;
+          speed = Math.max(0, bytesDiff / timeDiffSec);
+          lastUpdatedTime = now;
+
+          const total = update.bytesTotal !== undefined ? update.bytesTotal : current.bytesTotal;
+          if (total > update.bytesDownloaded && speed > 0) {
+            const remainingBytes = total - update.bytesDownloaded;
+            eta = Math.round(remainingBytes / speed);
+          } else {
+            eta = null;
+          }
+        }
+      }
+
+      if (update.status === 'finished' || update.status === 'failed') {
+        speed = 0;
+        eta = null;
+      }
+
       return {
         installStates: {
           ...state.installStates,
-          [serverId]: { ...current, ...update },
+          [serverId]: { 
+            ...current, 
+            ...update, 
+            speed, 
+            eta, 
+            lastUpdatedTime 
+          },
         },
       };
     }),

@@ -57,6 +57,7 @@ pub struct Server {
     pub created_at: String,
     pub last_started: Option<String>,
     pub config_json: String,
+    pub branch: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +168,79 @@ pub struct PalworldConfig {
 
     // Supply Drop
     pub supply_drop_span: u32,
+}
+
+impl PalworldConfig {
+    pub fn update_from_map(&mut self, map: &std::collections::HashMap<String, String>) {
+        let parse_bool = |s: &str| -> bool {
+            let lowered = s.to_lowercase();
+            lowered == "true" || lowered == "1"
+        };
+
+        // Gameplay
+        if let Some(v) = map.get("Difficulty") { self.difficulty = v.clone(); }
+        if let Some(v) = map.get("DayTimeSpeedRate") { if let Ok(val) = v.parse() { self.day_time_speed_rate = val; } }
+        if let Some(v) = map.get("NightTimeSpeedRate") { if let Ok(val) = v.parse() { self.night_time_speed_rate = val; } }
+        if let Some(v) = map.get("ExpRate") { if let Ok(val) = v.parse() { self.exp_rate = val; } }
+        if let Some(v) = map.get("PalCaptureRate") { if let Ok(val) = v.parse() { self.pal_capture_rate = val; } }
+        if let Some(v) = map.get("PalSpawnNumRate") { if let Ok(val) = v.parse() { self.pal_spawn_num_rate = val; } }
+        if let Some(v) = map.get("PalDamageRateAttack") { if let Ok(val) = v.parse() { self.pal_damage_rate_attack = val; } }
+        if let Some(v) = map.get("PalDamageRateDefense") { if let Ok(val) = v.parse() { self.pal_damage_rate_defense = val; } }
+        if let Some(v) = map.get("PlayerDamageRateAttack") { if let Ok(val) = v.parse() { self.player_damage_rate_attack = val; } }
+        if let Some(v) = map.get("PlayerDamageRateDefense") { if let Ok(val) = v.parse() { self.player_damage_rate_defense = val; } }
+        if let Some(v) = map.get("PlayerStomachDecreaseRate") { if let Ok(val) = v.parse() { self.player_stomach_decrease_rate = val; } }
+        if let Some(v) = map.get("PlayerStaminaDecreaseRate") { if let Ok(val) = v.parse() { self.player_stamina_decrease_rate = val; } }
+        if let Some(v) = map.get("PlayerAutoHPRegeneRate") { if let Ok(val) = v.parse() { self.player_auto_hp_regen_rate = val; } }
+        if let Some(v) = map.get("PlayerAutoHpRegeneRateInSleep") { if let Ok(val) = v.parse() { self.player_auto_hp_regen_rate_in_sleep = val; } }
+        if let Some(v) = map.get("PalStomachDecreaseRate") { if let Ok(val) = v.parse() { self.pal_stomach_decrease_rate = val; } }
+        if let Some(v) = map.get("PalStaminaDecreaseRate") { if let Ok(val) = v.parse() { self.pal_stamina_decrease_rate = val; } }
+        if let Some(v) = map.get("PalAutoHPRegeneRate") { if let Ok(val) = v.parse() { self.pal_auto_hp_regen_rate = val; } }
+        if let Some(v) = map.get("PalAutoHpRegeneRateInSleep") { if let Ok(val) = v.parse() { self.pal_auto_hp_regen_rate_in_sleep = val; } }
+        if let Some(v) = map.get("DeathPenalty") { self.death_penalty = v.clone(); }
+        if let Some(v) = map.get("BuildObjectDamageRate") { if let Ok(val) = v.parse() { self.build_object_damage_rate = val; } }
+        if let Some(v) = map.get("BuildObjectDeteriorationDamageRate") { if let Ok(val) = v.parse() { self.build_object_deterioration_damage_rate = val; } }
+        if let Some(v) = map.get("CollectionDropRate") { if let Ok(val) = v.parse() { self.collection_drop_rate = val; } }
+        if let Some(v) = map.get("CollectionObjectHpRate") { if let Ok(val) = v.parse() { self.collection_object_hp_rate = val; } }
+        if let Some(v) = map.get("CollectionObjectRespawnSpeedRate") { if let Ok(val) = v.parse() { self.collection_object_respawn_speed_rate = val; } }
+        if let Some(v) = map.get("EnemyDropItemRate") { if let Ok(val) = v.parse() { self.enemy_drop_item_rate = val; } }
+        if let Some(v) = map.get("PalEggDefaultHatchingTime") { if let Ok(val) = v.parse() { self.pal_egg_default_hatching_time = val; } }
+        if let Some(v) = map.get("WorkSpeedRate") { if let Ok(val) = v.parse() { self.work_speed_rate = val; } }
+        if let Some(v) = map.get("bIsMultiplay") { self.is_multiplay = parse_bool(v); }
+        if let Some(v) = map.get("bIsPvP") { self.is_pvp = parse_bool(v); }
+        if let Some(v) = map.get("bCanPickupOtherGuildDeathPenaltyDrop") { self.can_pickup_other_guild_death_penalty_drop = parse_bool(v); }
+        if let Some(v) = map.get("bEnableNonLoginPenalty") { self.enable_non_login_penalty = parse_bool(v); }
+        if let Some(v) = map.get("bEnableFastTravel") { self.enable_fast_travel = parse_bool(v); }
+        if let Some(v) = map.get("bEnablePlayerToPlayerDamage") { self.enable_player_to_player_damage = parse_bool(v); }
+        if let Some(v) = map.get("bEnableFriendlyFire") { self.enable_friendly_fire = parse_bool(v); }
+        if let Some(v) = map.get("bEnableInvaderEnemy") { self.enable_invader_enemy = parse_bool(v); }
+        if let Some(v) = map.get("BaseCampMaxNum") { if let Ok(val) = v.parse() { self.base_camp_max_num = val; } }
+        if let Some(v) = map.get("BaseCampMaxNumInGuild") { if let Ok(val) = v.parse() { self.base_camp_max_num_in_guild = val; } }
+        if let Some(v) = map.get("BaseCampWorkerMaxNum") { if let Ok(val) = v.parse() { self.base_camp_worker_max_num = val; } }
+        if let Some(v) = map.get("DropItemMaxNum") { if let Ok(val) = v.parse() { self.drop_item_max_num = val; } }
+        if let Some(v) = map.get("DropItemMaxNum_UNKO") { if let Ok(val) = v.parse() { self.drop_item_max_num_unko = val; } }
+        if let Some(v) = map.get("DropItemAliveMaxHours") { if let Ok(val) = v.parse() { self.drop_item_alive_max_hours = val; } }
+        if let Some(v) = map.get("bAutoResetGuildNoOnlinePlayers") { self.auto_reset_guild_no_online_players = parse_bool(v); }
+        if let Some(v) = map.get("AutoResetGuildTimeNoOnlinePlayers") { if let Ok(val) = v.parse() { self.auto_reset_guild_time_no_online_players = val; } }
+        if let Some(v) = map.get("ServerPlayerMaxNum") { if let Ok(val) = v.parse() { self.server_player_max_num = val; } }
+        if let Some(v) = map.get("ServerName") { self.server_name = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("ServerDescription") { self.server_description = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("AdminPassword") { self.admin_password = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("ServerPassword") { self.server_password = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("PublicPort") { if let Ok(val) = v.parse() { self.public_port = val; } }
+        if let Some(v) = map.get("PublicIP") { self.public_ip = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("RCONEnabled") { self.rcon_enabled = parse_bool(v); }
+        if let Some(v) = map.get("RCONPort") { if let Ok(val) = v.parse() { self.rcon_port = val; } }
+        if let Some(v) = map.get("Region") { self.region = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("bUseAuth") { self.useauth = parse_bool(v); }
+        if let Some(v) = map.get("BanListURL") { self.ban_list_url = v.trim_matches('"').to_string(); }
+        if let Some(v) = map.get("RESTAPIEnabled") { self.rest_api_enabled = parse_bool(v); }
+        if let Some(v) = map.get("RESTAPIPort") { if let Ok(val) = v.parse() { self.rest_api_port = val; } }
+        if let Some(v) = map.get("CoopPlayerMaxNum") { if let Ok(val) = v.parse() { self.coop_player_max_num = val; } }
+        if let Some(v) = map.get("GuildPlayerMaxNum") { if let Ok(val) = v.parse() { self.guild_player_max_num = val; } }
+        if let Some(v) = map.get("bEnableAimAssistPad") { self.enable_aim_assist_pad = parse_bool(v); }
+        if let Some(v) = map.get("bEnableAimAssistKeyboard") { self.enable_aim_assist_keyboard = parse_bool(v); }
+        if let Some(v) = map.get("SupplyDropSpan") { if let Ok(val) = v.parse() { self.supply_drop_span = val; } }
+    }
 }
 
 impl Default for PalworldConfig {
@@ -383,4 +457,22 @@ pub struct CreateServerRequest {
     pub server_password: Option<String>,
     pub is_public: bool,
     pub auto_start: bool,
+}
+
+// ─── Extended Server Details ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtendedServerDetails {
+    pub server_id: i64,
+    pub is_installed: bool,
+    pub build_id: String,
+    pub branch: String,
+    pub install_size_bytes: u64,
+    pub save_size_bytes: u64,
+    pub mod_count: u32,
+    pub rcon_status: String,      // "connected" | "disconnected" | "disabled"
+    pub rest_api_status: String,  // "active" | "disabled"
+    pub disk_free_bytes: u64,
+    pub disk_total_bytes: u64,
 }

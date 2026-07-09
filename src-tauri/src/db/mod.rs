@@ -26,6 +26,9 @@ impl Database {
         let schema = include_str!("schema.sql");
         conn.execute_batch(schema)?;
 
+        // Run migration for branch column if it doesn't exist
+        let _ = conn.execute("ALTER TABLE servers ADD COLUMN branch TEXT DEFAULT 'public'", []);
+
         Ok(Database {
             conn: Mutex::new(conn),
         })
@@ -67,7 +70,7 @@ impl Database {
             "SELECT id, name, description, install_path, save_path, status, game_port, rcon_port, rcon_enabled,
                     rest_api_port, rest_api_enabled, max_players, admin_password, server_password, is_public,
                     preset, startup_args, crossplay_platforms, auto_start, auto_restart_schedule,
-                    created_at, last_started, config_json
+                    created_at, last_started, config_json, branch
              FROM servers ORDER BY id"
         ).map_err(|e| e.to_string())?;
 
@@ -113,6 +116,7 @@ impl Database {
                 created_at: row.get::<_, String>(20).unwrap_or_default(),
                 last_started: row.get::<_, Option<String>>(21).ok().flatten(),
                 config_json: row.get::<_, String>(22).unwrap_or_else(|_| "{}".to_string()),
+                branch: row.get::<_, String>(23).unwrap_or_else(|_| "public".to_string()),
             })
         }).map_err(|e| e.to_string())?;
 
@@ -176,6 +180,39 @@ impl Database {
         conn.execute(
             "UPDATE servers SET config_json = ?1 WHERE id = ?2",
             params![config_json, server_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn update_server_ports_and_settings(
+        &self,
+        server_id: i64,
+        game_port: u16,
+        rcon_port: u16,
+        rest_api_port: u16,
+        max_players: u32,
+        admin_password: &str,
+        server_password: &str,
+    ) -> Result<(), String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE servers SET 
+                game_port = ?1,
+                rcon_port = ?2,
+                rest_api_port = ?3,
+                max_players = ?4,
+                admin_password = ?5,
+                server_password = ?6
+             WHERE id = ?7",
+            params![
+                game_port,
+                rcon_port,
+                rest_api_port,
+                max_players,
+                admin_password,
+                server_password,
+                server_id
+            ],
         ).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -313,6 +350,15 @@ impl Database {
             params![server_id, task_name, task_type, cron_expression],
         ).map_err(|e| e.to_string())?;
         Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_task(&self, task_id: i64, task_name: &str, task_type: &str, cron_expression: &str) -> Result<(), String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE scheduler_tasks SET task_name = ?1, task_type = ?2, cron_expression = ?3, next_run = NULL WHERE id = ?4",
+            params![task_name, task_type, cron_expression, task_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn delete_task(&self, task_id: i64) -> Result<(), String> {

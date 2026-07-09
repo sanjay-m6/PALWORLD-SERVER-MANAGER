@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
-import { tauriCommands, getStatusColor, formatUptime } from '../../lib/tauri';
+import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
 import { SponsorBanner } from '../ui/SponsorBanner';
 
 export const Dashboard: React.FC = () => {
@@ -11,7 +11,11 @@ export const Dashboard: React.FC = () => {
     setSelectedServerId,
     setActiveServerTab,
     showNotification,
+    installStates,
+    setInstallState,
   } = useAppStore();
+
+  const [installStatesMap, setInstallStatesMap] = useState<Record<number, boolean>>({});
 
   const [systemInfo, setSystemInfo] = useState<any>(null);
   const [serverStats, setServerStats] = useState<Record<number, any>>({});
@@ -70,8 +74,50 @@ export const Dashboard: React.FC = () => {
     try {
       const data = await tauriCommands.getServers();
       setServers(data);
+      
+      const map: Record<number, boolean> = {};
+      await Promise.all(
+        data.map(async (s) => {
+          try {
+            const installed = await tauriCommands.checkServerInstalled(s.installPath);
+            map[s.id] = installed;
+          } catch (_) {
+            map[s.id] = false;
+          }
+        })
+      );
+      setInstallStatesMap(map);
     } catch (e: any) {
       showNotification('error', `Failed to load servers: ${e}`);
+    }
+  };
+
+  const handleInstallServer = async (serverId: number, installPath: string, branch: string) => {
+    setInstallState(serverId, {
+      isInstalling: true,
+      progress: 0,
+      status: 'starting',
+      log: `Downloading Palworld Dedicated Server via SteamCMD (Branch: ${branch})...\n`,
+      speed: 0,
+      eta: null,
+    });
+    try {
+      showNotification('info', 'Starting Palworld server installation...');
+      const result = await tauriCommands.installPalworldServer(installPath, branch);
+      setInstallState(serverId, (prev) => ({
+        log: prev.log + result + '\n✓ Installation finished successfully!',
+      }));
+      showNotification('success', 'Server installed successfully via SteamCMD');
+      setInstallStatesMap((prev) => ({ ...prev, [serverId]: true }));
+    } catch (e: any) {
+      setInstallState(serverId, (prev) => ({
+        log: prev.log + `\n✗ Error: ${e}`,
+      }));
+      showNotification('error', `Installation failed: ${e}`);
+    } finally {
+      setInstallState(serverId, {
+        isInstalling: false,
+      });
     }
   };
 
@@ -113,12 +159,18 @@ export const Dashboard: React.FC = () => {
       return;
     }
     showNotification('info', `Starting ${stopped.length} server(s)...`);
+    const errors: string[] = [];
     for (const s of stopped) {
       try {
         await tauriCommands.startServer(s.id);
-      } catch (err) {
-        console.error(err);
+      } catch (err: any) {
+        errors.push(`${s.name}: ${err}`);
       }
+    }
+    if (errors.length > 0) {
+      showNotification('error', `Failed to start: ${errors.join(', ')}`);
+    } else {
+      showNotification('success', 'All servers started successfully.');
     }
     await loadServers();
   };
@@ -449,12 +501,14 @@ export const Dashboard: React.FC = () => {
             const isActive =
               server.status === 'running' || server.status === 'online';
             const uptimeSecs = uptimes[server.id];
+            const installState = installStates[server.id];
 
             return (
               <div
                 key={server.id}
-                className={`glass-card p-5 flex flex-col justify-between border transition-all relative overflow-hidden ${
-                  isActive ? 'border-primary-500/30 bg-primary-950/5' : 'border-dark-800 bg-dark-900/10'
+                onClick={() => openServerDetail(server.id)}
+                className={`glass-card p-5 flex flex-col justify-between border transition-all relative overflow-hidden cursor-pointer hover:scale-[1.01] hover:shadow-lg active:scale-[0.99] ${
+                  isActive ? 'border-primary-500/30 bg-primary-950/5 hover:border-primary-500/60' : 'border-dark-800 bg-dark-900/10 hover:border-dark-700'
                 }`}
               >
                 {/* Mini start/stop overlay */}
@@ -481,7 +535,7 @@ export const Dashboard: React.FC = () => {
                 <div>
                   {/* Top line Info */}
                   <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-2" onClick={() => openServerDetail(server.id)}>
+                    <div className="flex items-center gap-2">
                       <span className={`status-dot ${getStatusColor(server.status)}`} />
                       <span className="text-xs font-bold text-dark-100 hover:text-primary-400 transition-colors cursor-pointer truncate max-w-[150px]">
                         {server.name}
@@ -491,6 +545,7 @@ export const Dashboard: React.FC = () => {
                     {/* Quick Preset Selector */}
                     <select
                       value={server.preset}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => handleApplyPreset(server.id, e.target.value)}
                       className="bg-dark-900/80 border border-dark-700/50 text-[9px] text-dark-300 font-bold px-2 py-0.5 rounded focus:outline-none focus:border-primary-500/50"
                     >
@@ -514,7 +569,19 @@ export const Dashboard: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">Lifecycle State</span>
-                      <span className="text-dark-200 capitalize font-semibold">{server.status}</span>
+                      <span className={`${
+                        installState && installState.isInstalling
+                          ? 'text-primary-400 animate-pulse font-bold'
+                          : installStatesMap[server.id] === false
+                          ? 'text-red-400 font-mono font-bold'
+                          : 'text-dark-200'
+                      } capitalize font-semibold`}>
+                        {installState && installState.isInstalling
+                          ? installState.status
+                          : installStatesMap[server.id] === false
+                          ? 'Not Installed'
+                          : server.status}
+                      </span>
                     </div>
                     <div>
                       <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">Real Uptime</span>
@@ -560,102 +627,138 @@ export const Dashboard: React.FC = () => {
 
                 {/* Grid controls */}
                 <div className="space-y-2 pt-2 border-t border-dark-800">
-                  
-                  {/* Primary Power State Toggle */}
-                  <div className="flex gap-2">
-                    {isActive ? (
-                      <>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStopServer(server.id);
-                          }}
-                          className="btn-danger flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider"
-                        >
-                          Stop
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRestartServer(server.id);
-                          }}
-                          className="btn-ghost flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider border border-dark-700/50 hover:bg-dark-800"
-                        >
-                          Restart
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleStartServer(server.id);
-                        }}
-                        className="btn-success w-full py-1.5 text-[10px] font-bold uppercase tracking-wider"
-                        disabled={server.status === 'starting'}
-                      >
-                        {server.status === 'starting' ? 'Starting...' : 'Start Server'}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Secondary Quick Action Console Buttons */}
-                  {isActive && (
-                    <div className="grid grid-cols-3 gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openConsole(server.id);
-                        }}
-                        className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
-                        title="Broadcast & RCON commands"
-                      >
-                        Console
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openPlayersList(server.id);
-                        }}
-                        className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
-                        title="View online player inventory"
-                      >
-                        Players
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCreateQuickBackup(server.id);
-                        }}
-                        className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
-                        title="Take manual backup snapshot"
-                      >
-                        Backup
-                      </button>
+                  {installState && installState.isInstalling ? (
+                    <div className="space-y-1.5 py-1 px-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-between items-center text-[10px]">
+                        <span className="text-primary-400 font-bold capitalize animate-pulse">{installState.status}</span>
+                        <span className="text-dark-300 font-mono font-bold">{installState.progress?.toFixed(1)}%</span>
+                      </div>
+                      <div className="w-full bg-dark-950 border border-dark-800 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-primary-500 to-cyan-400 h-full rounded-full transition-all duration-300"
+                          style={{ width: `${installState.progress || 0}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between items-center text-[8px] text-dark-500 font-mono">
+                        {installState.speed > 0 ? (
+                          <span>{formatBytes(installState.speed)}/s</span>
+                        ) : (
+                          <span />
+                        )}
+                        {installState.eta !== null && installState.eta > 0 && (
+                          <span>ETA: {formatUptime(installState.eta)}</span>
+                        )}
+                      </div>
                     </div>
-                  )}
+                  ) : (
+                    <>
+                      {/* Primary Power State Toggle / Install Trigger */}
+                      <div className="flex gap-2">
+                        {installStatesMap[server.id] === false ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleInstallServer(server.id, server.installPath, server.branch);
+                            }}
+                            className="btn-primary w-full py-1.5 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 border-none"
+                          >
+                            Install Server (SteamCMD)
+                          </button>
+                        ) : isActive ? (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStopServer(server.id);
+                              }}
+                              className="btn-danger flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider"
+                            >
+                              Stop
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRestartServer(server.id);
+                              }}
+                              className="btn-ghost flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider border border-dark-700/50 hover:bg-dark-800"
+                            >
+                              Restart
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleStartServer(server.id);
+                            }}
+                            className="btn-success w-full py-1.5 text-[10px] font-bold uppercase tracking-wider"
+                            disabled={server.status === 'starting'}
+                          >
+                            {server.status === 'starting' ? 'Starting...' : 'Start Server'}
+                          </button>
+                        )}
+                      </div>
 
-                  {/* Stopped Quick Actions */}
-                  {!isActive && (
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openServerDetail(server.id);
-                        }}
-                        className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 text-center block"
-                      >
-                        Open Details
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSingleFirewallRules(server.id);
-                        }}
-                        className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 text-center block"
-                      >
-                        Firewall Port
-                      </button>
-                    </div>
+                      {/* Secondary Quick Action Console Buttons */}
+                      {isActive && (
+                        <div className="grid grid-cols-3 gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openConsole(server.id);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
+                            title="Broadcast & RCON commands"
+                          >
+                            Console
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openPlayersList(server.id);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
+                            title="View online player inventory"
+                          >
+                            Players
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCreateQuickBackup(server.id);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
+                            title="Take manual backup snapshot"
+                          >
+                            Backup
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Stopped Quick Actions */}
+                      {!isActive && (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openServerDetail(server.id);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 text-center block"
+                          >
+                            Open Details
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSingleFirewallRules(server.id);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 text-center block"
+                          >
+                            Firewall Port
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

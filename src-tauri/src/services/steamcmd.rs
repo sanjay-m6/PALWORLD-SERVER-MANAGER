@@ -23,6 +23,20 @@ impl SteamCmdService {
         self.base_dir.join("steamcmd")
     }
 
+    fn write_optimization_config(&self) {
+        let cfg_path = self.get_steamcmd_dir().join("steam_dev.cfg");
+        let cfg_content = "\
+@nClientDownloadEnableHTTP2PlatformWindows 0
+@fDownloadRateImprovementToAddAnotherConnection 1.1
+@cMaxInitialDownloadSources 15
+";
+        if let Err(e) = std::fs::write(&cfg_path, cfg_content) {
+            log::error!("[STEAMCMD] Failed to write steam_dev.cfg optimization: {}", e);
+        } else {
+            log::info!("[STEAMCMD] Successfully applied download speed optimization configs");
+        }
+    }
+
     pub fn get_steamcmd_exe(&self) -> PathBuf {
         self.get_steamcmd_dir().join("steamcmd.exe")
     }
@@ -57,7 +71,7 @@ impl SteamCmdService {
     }
 
     /// Install or update Palworld Dedicated Server
-    pub async fn install_palworld_server(&self, app_handle: tauri::AppHandle, install_path: &str) -> Result<String> {
+    pub async fn install_palworld_server(&self, app_handle: tauri::AppHandle, install_path: &str, branch: Option<&str>) -> Result<String> {
         let steamcmd_exe = self.get_steamcmd_exe();
         if !steamcmd_exe.exists() {
             anyhow::bail!("SteamCMD not installed. Please install SteamCMD first.");
@@ -94,14 +108,36 @@ impl SteamCmdService {
             line: String,
         }
 
+        self.write_optimization_config();
+
+        let mut args = vec![
+            "+force_install_dir".to_string(),
+            install_path.to_string(),
+            "+login".to_string(),
+            "anonymous".to_string(),
+            "+@nClientDownloadEnableHTTP2PlatformWindows".to_string(),
+            "0".to_string(),
+            "+@fDownloadRateImprovementToAddAnotherConnection".to_string(),
+            "1.1".to_string(),
+            "+@cMaxInitialDownloadSources".to_string(),
+            "15".to_string(),
+            "+app_update".to_string(),
+            PALWORLD_SERVER_APP_ID.to_string(),
+        ];
+
+        if let Some(branch_name) = branch {
+            let trimmed = branch_name.trim();
+            if !trimmed.is_empty() && trimmed != "public" {
+                args.push("-beta".to_string());
+                args.push(trimmed.to_string());
+            }
+        }
+
+        args.push("validate".to_string());
+        args.push("+quit".to_string());
+
         let mut child = tokio::process::Command::new(&steamcmd_exe)
-            .args([
-                "+force_install_dir", install_path,
-                "+login", "anonymous",
-                "+app_update", PALWORLD_SERVER_APP_ID,
-                "validate",
-                "+quit",
-            ])
+            .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -210,13 +246,13 @@ impl SteamCmdService {
     }
 
     /// Update an existing Palworld server installation
-    pub async fn update_server(&self, app_handle: tauri::AppHandle, install_path: &str) -> Result<String> {
-        self.install_palworld_server(app_handle, install_path).await
+    pub async fn update_server(&self, app_handle: tauri::AppHandle, install_path: &str, branch: Option<&str>) -> Result<String> {
+        self.install_palworld_server(app_handle, install_path, branch).await
     }
 
     /// Validate server files
-    pub async fn validate_server(&self, app_handle: tauri::AppHandle, install_path: &str) -> Result<String> {
-        self.install_palworld_server(app_handle, install_path).await
+    pub async fn validate_server(&self, app_handle: tauri::AppHandle, install_path: &str, branch: Option<&str>) -> Result<String> {
+        self.install_palworld_server(app_handle, install_path, branch).await
     }
 
     /// Repair SteamCMD installation

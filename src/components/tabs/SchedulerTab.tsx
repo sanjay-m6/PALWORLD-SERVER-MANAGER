@@ -13,16 +13,23 @@ interface Task {
   lastRun: string | null;
   nextRun: string | null;
   createdAt: string;
+  playerAware?: boolean;
+  preBackup?: boolean;
+  gracePeriod?: number;
 }
 
 export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const { showNotification } = useAppStore();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [showCreate, setShowCreate] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [newTask, setNewTask] = useState({
     name: '',
     type: 'restart',
     cron: '0 */6 * * *',
+    playerAware: true,
+    preBackup: true,
+    gracePeriod: 5,
   });
 
   useEffect(() => {
@@ -32,7 +39,20 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const loadTasks = async () => {
     try {
       const data = await tauriCommands.getTasks(serverId);
-      setTasks(data);
+      const tasksWithSettings = await Promise.all(
+        data.map(async (task: any) => {
+          const aware = await tauriCommands.getSetting(`task_player_aware_${task.id}`);
+          const backup = await tauriCommands.getSetting(`task_pre_backup_${task.id}`);
+          const grace = await tauriCommands.getSetting(`task_grace_period_${task.id}`);
+          return {
+            ...task,
+            playerAware: aware === 'true',
+            preBackup: backup === 'true',
+            gracePeriod: grace ? parseInt(grace) : 5,
+          };
+        })
+      );
+      setTasks(tasksWithSettings);
     } catch (e: any) {
       showNotification('error', `Failed to load tasks: ${e}`);
     }
@@ -40,13 +60,52 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
 
   const handleCreate = async () => {
     try {
-      await tauriCommands.createTask(serverId, newTask.name, newTask.type, newTask.cron);
-      showNotification('success', 'Task created');
+      const taskId = await tauriCommands.createTask(serverId, newTask.name, newTask.type, newTask.cron);
+      
+      // Save scheduler options to DB settings
+      await tauriCommands.setSetting(`task_player_aware_${taskId}`, newTask.playerAware ? 'true' : 'false');
+      await tauriCommands.setSetting(`task_pre_backup_${taskId}`, newTask.preBackup ? 'true' : 'false');
+      await tauriCommands.setSetting(`task_grace_period_${taskId}`, newTask.gracePeriod.toString());
+
+      showNotification('success', 'Task created successfully');
       setShowCreate(false);
-      setNewTask({ name: '', type: 'restart', cron: '0 */6 * * *' });
+      setNewTask({
+        name: '',
+        type: 'restart',
+        cron: '0 */6 * * *',
+        playerAware: true,
+        preBackup: true,
+        gracePeriod: 5,
+      });
       await loadTasks();
     } catch (e: any) {
       showNotification('error', `Failed to create task: ${e}`);
+    }
+  };
+
+  const handleUpdate = async (taskId: number) => {
+    try {
+      await tauriCommands.updateTask(taskId, newTask.name, newTask.type, newTask.cron);
+      
+      // Save scheduler options to DB settings
+      await tauriCommands.setSetting(`task_player_aware_${taskId}`, newTask.playerAware ? 'true' : 'false');
+      await tauriCommands.setSetting(`task_pre_backup_${taskId}`, newTask.preBackup ? 'true' : 'false');
+      await tauriCommands.setSetting(`task_grace_period_${taskId}`, newTask.gracePeriod.toString());
+
+      showNotification('success', 'Task updated successfully');
+      setShowCreate(false);
+      setEditingTaskId(null);
+      setNewTask({
+        name: '',
+        type: 'restart',
+        cron: '0 */6 * * *',
+        playerAware: true,
+        preBackup: true,
+        gracePeriod: 5,
+      });
+      await loadTasks();
+    } catch (e: any) {
+      showNotification('error', `Failed to update task: ${e}`);
     }
   };
 
@@ -86,7 +145,22 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
             Scheduled Tasks
           </h3>
           <button
-            onClick={() => setShowCreate(!showCreate)}
+            onClick={() => {
+              if (showCreate) {
+                setShowCreate(false);
+                setEditingTaskId(null);
+                setNewTask({
+                  name: '',
+                  type: 'restart',
+                  cron: '0 */6 * * *',
+                  playerAware: true,
+                  preBackup: true,
+                  gracePeriod: 5,
+                });
+              } else {
+                setShowCreate(true);
+              }
+            }}
             className="btn-primary text-xs py-1.5 px-3"
           >
             {showCreate ? 'Cancel' : '+ Add Task'}
@@ -117,7 +191,6 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                     { value: 'restart', label: 'Restart' },
                     { value: 'backup', label: 'Backup' },
                     { value: 'update', label: 'Update' },
-                    { value: 'custom', label: 'Custom' },
                   ]}
                   value={newTask.type}
                   onChange={(val) => setNewTask((prev) => ({ ...prev, type: val }))}
@@ -135,6 +208,51 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 />
               </div>
             </div>
+
+            {/* Smart Settings */}
+            <div className="p-3 bg-dark-900/40 rounded-lg border border-dark-800/40 space-y-3">
+              <h4 className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
+                Smart Warning & Backups
+              </h4>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2 text-xs text-dark-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newTask.playerAware}
+                    onChange={(e) => setNewTask((prev) => ({ ...prev, playerAware: e.target.checked }))}
+                    className="rounded border-dark-700 bg-dark-800 text-primary-500 focus:ring-0"
+                  />
+                  <span>Smart Player-Aware restarts (Broadcast RCON warning if players are online)</span>
+                </label>
+                
+                {newTask.playerAware && (
+                  <div className="flex items-center gap-2 pl-5">
+                    <span className="text-xs text-dark-500">Warning Grace Period:</span>
+                    <select
+                      value={newTask.gracePeriod}
+                      onChange={(e) => setNewTask((prev) => ({ ...prev, gracePeriod: parseInt(e.target.value) }))}
+                      className="bg-dark-800 border border-dark-700 text-xs rounded px-2 py-1 text-dark-200 focus:outline-none"
+                    >
+                      <option value="1">1 minute</option>
+                      <option value="3">3 minutes</option>
+                      <option value="5">5 minutes</option>
+                      <option value="10">10 minutes</option>
+                    </select>
+                  </div>
+                )}
+
+                <label className="flex items-center gap-2 text-xs text-dark-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newTask.preBackup}
+                    onChange={(e) => setNewTask((prev) => ({ ...prev, preBackup: e.target.checked }))}
+                    className="rounded border-dark-700 bg-dark-800 text-primary-500 focus:ring-0"
+                  />
+                  <span>Create automatic backup before executing this task</span>
+                </label>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2">
               {cronPresets.map((preset) => (
                 <button
@@ -150,8 +268,11 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 </button>
               ))}
             </div>
-            <button onClick={handleCreate} className="btn-success text-xs">
-              Create Task
+            <button
+              onClick={() => editingTaskId !== null ? handleUpdate(editingTaskId) : handleCreate()}
+              className="btn-success text-xs"
+            >
+              {editingTaskId !== null ? 'Save Changes' : 'Create Task'}
             </button>
           </div>
         )}
@@ -187,21 +308,45 @@ export const SchedulerTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                   <div className="text-sm font-medium text-dark-200">
                     {task.taskName || `${task.taskType} task`}
                   </div>
-                  <div className="flex items-center gap-3 text-[10px] text-dark-500 mt-0.5">
-                    <span className="capitalize">{task.taskType}</span>
-                    <span className="font-mono">{task.cronExpression}</span>
-                    {task.lastRun && (
-                      <span>Last: {new Date(task.lastRun).toLocaleString()}</span>
-                    )}
+                  <div className="flex flex-col gap-0.5 text-[10px] text-dark-500 mt-0.5 font-mono">
+                    <div className="flex items-center gap-3">
+                      <span className="capitalize text-primary-400 font-bold font-sans">{task.taskType}</span>
+                      <span>Cron: {task.cronExpression}</span>
+                      {task.playerAware && <span className="text-success-400 font-sans">🛡️ Player-Aware ({task.gracePeriod}m)</span>}
+                      {task.preBackup && <span className="text-warning-400 font-sans">💾 Pre-Backup</span>}
+                    </div>
+                    <div className="text-dark-600">
+                      {task.lastRun && <span>Last: {new Date(task.lastRun).toLocaleString()} | </span>}
+                      {task.nextRun && <span>Next: {new Date(task.nextRun).toLocaleString()}</span>}
+                    </div>
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => handleDelete(task.id)}
-                className="btn-ghost text-[10px] py-1 px-2 text-error-400 hover:text-error-300"
-              >
-                Delete
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    setEditingTaskId(task.id);
+                    setNewTask({
+                      name: task.taskName,
+                      type: task.taskType,
+                      cron: task.cronExpression,
+                      playerAware: task.playerAware ?? true,
+                      preBackup: task.preBackup ?? true,
+                      gracePeriod: task.gracePeriod ?? 5,
+                    });
+                    setShowCreate(true);
+                  }}
+                  className="btn-ghost text-[10px] py-1 px-2 text-primary-400 hover:text-primary-300"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(task.id)}
+                  className="btn-ghost text-[10px] py-1 px-2 text-error-400 hover:text-error-300"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>

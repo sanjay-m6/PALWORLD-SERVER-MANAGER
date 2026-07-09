@@ -75,8 +75,9 @@ pub async fn install_palworld_server(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
     install_path: String,
+    branch: Option<String>,
 ) -> Result<String, String> {
-    state.steamcmd.install_palworld_server(app_handle, &install_path).await.map_err(|e| e.to_string())
+    state.steamcmd.install_palworld_server(app_handle, &install_path, branch.as_deref()).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -84,8 +85,9 @@ pub async fn update_palworld_server(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
     install_path: String,
+    branch: Option<String>,
 ) -> Result<String, String> {
-    state.steamcmd.update_server(app_handle, &install_path).await.map_err(|e| e.to_string())
+    state.steamcmd.update_server(app_handle, &install_path, branch.as_deref()).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -672,21 +674,46 @@ pub async fn download_and_install_mod_via_url(
 
     std::fs::create_dir_all(&dest_dir).map_err(|e| format!("Failed to create mod directory: {}", e))?;
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .build()
+        .map_err(|e| e.to_string())?;
     let response = client.get(&url).send().await.map_err(|e| format!("Download failed: {}", e))?;
+
+    let mut file_name = String::new();
+    if let Some(cd) = response.headers().get(reqwest::header::CONTENT_DISPOSITION) {
+        if let Ok(cd_str) = cd.to_str() {
+            if let Some(pos) = cd_str.find("filename=") {
+                let filename_part = &cd_str[pos + 9..];
+                let clean_filename = filename_part
+                    .trim_matches('"')
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if !clean_filename.is_empty() {
+                    file_name = clean_filename.to_string();
+                }
+            }
+        }
+    }
+
     let bytes = response.bytes().await.map_err(|e| format!("Failed to read response body: {}", e))?;
 
-    let parsed_url = reqwest::Url::parse(&url).map_err(|e| e.to_string())?;
-    let file_name = parsed_url.path_segments()
-        .and_then(|segments| segments.last())
-        .unwrap_or("downloaded_mod.pak")
-        .to_string();
+    if file_name.is_empty() {
+        let parsed_url = reqwest::Url::parse(&url).map_err(|e| e.to_string())?;
+        file_name = parsed_url.path_segments()
+            .and_then(|segments| segments.last())
+            .unwrap_or("downloaded_mod.pak")
+            .to_string();
+    }
 
     let temp_dir = std::env::temp_dir();
     let temp_file_path = temp_dir.join(&file_name);
     std::fs::write(&temp_file_path, &bytes).map_err(|e| format!("Failed to save temp file: {}", e))?;
 
-    if file_name.ends_with(".zip") {
+    let is_zip = file_name.ends_with(".zip") || bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]);
+    if is_zip {
         let file = std::fs::File::open(&temp_file_path).map_err(|e| e.to_string())?;
         let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid zip archive: {}", e))?;
         for i in 0..archive.len() {
@@ -700,7 +727,11 @@ pub async fn download_and_install_mod_via_url(
             }
         }
     } else {
-        let dest_path = dest_dir.join(&file_name);
+        let mut final_file_name = file_name.clone();
+        if !final_file_name.ends_with(".pak") {
+            final_file_name = format!("{}.pak", final_file_name);
+        }
+        let dest_path = dest_dir.join(&final_file_name);
         std::fs::copy(&temp_file_path, &dest_path).map_err(|e| format!("Failed to copy mod file: {}", e))?;
     }
 
@@ -906,6 +937,152 @@ pub async fn open_popout_window(
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_server_extended_details(
+    state: State<'_, AppState>,
+    server_id: i64,
+) -> Result<crate::models::ExtendedServerDetails, String> {
+    // 1. Fetch server from DB
+    let server = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let servers = db.get_all_servers()?;
+        servers.into_iter().find(|s| s.id == server_id)
+            .ok_or_else(|| "Server not found".to_string())?
+    };
+
+    // 2. Check if installed
+    let is_installed = crate::commands::system::check_server_installed(server.install_path.to_string_lossy().to_string()).await.unwrap_or(false);
+
+    // 3. Read manifest for buildid
+    let mut build_id = "—".to_string();
+    let manifest_path = server.install_path.join("steamapps").join("appmanifest_2394010.acf");
+    if manifest_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+            let re = regex::Regex::new(r#""buildid"\s+"(\d+)""#).unwrap();
+            if let Some(caps) = re.captures(&content) {
+                if let Some(m) = caps.get(1) {
+                    build_id = m.as_str().to_string();
+                }
+            }
+        }
+    }
+
+    // 4. Calculate directory size of install path and Saved folder
+    let install_path = server.install_path.clone();
+    let saved_path = install_path.join("Pal").join("Saved");
+
+    let (i_size, s_size) = tokio::task::spawn_blocking(move || {
+        let mut i_sz = 0;
+        let mut s_sz = 0;
+
+        if install_path.exists() {
+            for entry in walkdir::WalkDir::new(&install_path).into_iter().filter_map(|e| e.ok()) {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_file() {
+                        i_sz += meta.len();
+                    }
+                }
+            }
+        }
+
+        if saved_path.exists() {
+            for entry in walkdir::WalkDir::new(&saved_path).into_iter().filter_map(|e| e.ok()) {
+                if let Ok(meta) = entry.metadata() {
+                    if meta.is_file() {
+                        s_sz += meta.len();
+                    }
+                }
+            }
+        }
+
+        (i_sz, s_sz)
+    }).await.unwrap_or((0, 0));
+
+    let install_size_bytes = i_size;
+    let save_size_bytes = s_size;
+
+    // 5. Query mod count from DB
+    let mod_count = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM installed_mods WHERE server_id = ?1",
+            [server_id],
+            |row| row.get::<_, u32>(0),
+        ).unwrap_or(0)
+    };
+
+    // 6. Check RCON status and REST API status
+    let is_running = state.process_manager.is_server_running(server_id);
+    let rcon_status = if !server.rcon_config.enabled {
+        "disabled".to_string()
+    } else if is_running {
+        "connected".to_string()
+    } else {
+        "disconnected".to_string()
+    };
+
+    let rest_api_status = if !server.rest_api_config.enabled {
+        "disabled".to_string()
+    } else if is_running {
+        "active".to_string()
+    } else {
+        "disabled".to_string()
+    };
+
+    // 7. Get Disk space
+    let mut disk_free_bytes = 0;
+    let mut disk_total_bytes = 0;
+
+    let path_to_check = if server.install_path.exists() {
+        server.install_path.clone()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("C:\\"))
+    };
+
+    if let Ok(abs_path) = std::fs::canonicalize(&path_to_check).or_else(|_| Ok::<_, std::io::Error>(path_to_check)) {
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        for disk in &disks {
+            if abs_path.starts_with(disk.mount_point()) {
+                disk_free_bytes = disk.available_space();
+                disk_total_bytes = disk.total_space();
+                break;
+            }
+        }
+    }
+
+    Ok(crate::models::ExtendedServerDetails {
+        server_id,
+        is_installed,
+        build_id,
+        branch: server.branch,
+        install_size_bytes,
+        save_size_bytes,
+        mod_count,
+        rcon_status,
+        rest_api_status,
+        disk_free_bytes,
+        disk_total_bytes,
+    })
+}
+
+#[tauri::command]
+pub async fn open_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 

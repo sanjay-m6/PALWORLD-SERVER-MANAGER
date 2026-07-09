@@ -27,6 +27,12 @@ const SettingsIcon = () => (
   </svg>
 );
 
+const DiscordIcon = () => (
+  <svg viewBox="0 0 127.14 96.36" fill="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
+    <path d="M107.7,8.07A105.15,105.15,0,0,0,77.26,0a77.19,77.19,0,0,0-3.3,6.83A96.67,96.67,0,0,0,53.22,6.83,77.19,77.19,0,0,0,49.88,0,105.15,105.15,0,0,0,19.44,8.07C3.66,31.58-1.86,54.65,1,77.53A105.73,105.73,0,0,0,32,96.36a77.7,77.7,0,0,0,6.63-10.85,68.43,68.43,0,0,1-10.5-5c.88-.65,1.72-1.34,2.51-2a75.58,75.58,0,0,0,73,0c.79.71,1.63,1.4,2.52,2a68.43,68.43,0,0,1-10.5,5,77.7,77.7,0,0,0,6.63,10.85,105.73,105.73,0,0,0,31-18.83C129.07,54.65,123.56,31.58,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53S36.18,40.36,42.45,40.36,53.83,46,53.83,53,48.72,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.24,60,73.24,53S78.41,40.36,84.69,40.36,96.07,46,96.07,53,91,65.69,84.69,65.69Z"/>
+  </svg>
+);
+
 export const Sidebar: React.FC = () => {
   const {
     currentView,
@@ -138,19 +144,38 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       {/* Footer Info */}
-      <div className="border-t border-dark-700/30">
+      <div className="border-t border-dark-700/30 flex flex-col">
         {!sidebarCollapsed ? (
-          <div className="px-4 py-2 text-[10px] text-dark-500 select-none">
+          <div className="px-4 py-2.5 text-[10px] text-dark-500 select-none">
             <div className="font-semibold text-dark-400">Palworld Server Manager</div>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span>v{APP_VERSION}</span>
-              <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
-              <span className="text-[9px] text-dark-600">Production</span>
+            <div className="flex items-center justify-between gap-1.5 mt-1">
+              <div className="flex items-center gap-1">
+                <span>v{APP_VERSION}</span>
+                <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+                <span className="text-[9px] text-dark-600">Production</span>
+              </div>
+              <button
+                onClick={() => window.open('https://discord.gg/gSNpPXhecV', '_blank')}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#5865F2]/10 hover:bg-[#5865F2]/20 border border-[#5865F2]/20 text-[#5865F2] hover:text-[#7289da] text-[9px] font-bold uppercase transition-all duration-200"
+                title="Join our Discord"
+              >
+                <DiscordIcon />
+                <span>Discord</span>
+              </button>
             </div>
           </div>
         ) : (
-          <div className="py-2 text-[9px] text-center text-dark-500 font-medium select-none" title={`v${APP_VERSION}`}>
-            v{APP_VERSION}
+          <div className="flex flex-col items-center py-2 gap-1.5">
+            <button
+              onClick={() => window.open('https://discord.gg/gSNpPXhecV', '_blank')}
+              className="flex items-center justify-center p-1 rounded-md text-[#5865F2] hover:bg-[#5865F2]/10 transition-colors"
+              title="Join our Discord"
+            >
+              <DiscordIcon />
+            </button>
+            <div className="text-[9px] text-dark-500 font-medium select-none" title={`v${APP_VERSION}`}>
+              v{APP_VERSION}
+            </div>
           </div>
         )}
       </div>

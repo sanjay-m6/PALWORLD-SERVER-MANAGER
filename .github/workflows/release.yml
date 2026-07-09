@@ -78,6 +78,7 @@ jobs:
 
             ---
             _Developed by Sanjay._
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+          generateReleaseNotes: true

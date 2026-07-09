@@ -17,6 +17,10 @@ export const tauriCommands = {
   restartServer: (serverId: number) => invoke<void>('restart_server', { serverId }),
   getServerStatus: (serverId: number) =>
     invoke<{ isRunning: boolean; pid: number | null; uptimeSeconds: number | null; cpuUsage: number | null; memoryMb: number | null }>('get_server_status', { serverId }),
+  updateServerBranch: (serverId: number, branch: string) =>
+    invoke<void>('update_server_branch', { serverId, branch }),
+  updateServerAutoStart: (serverId: number, autoStart: boolean) =>
+    invoke<void>('update_server_auto_start', { serverId, autoStart }),
 
   // Config commands
   getServerConfig: (serverId: number) => invoke<any>('get_server_config', { serverId }),
@@ -60,10 +64,14 @@ export const tauriCommands = {
   checkServerInstalled: (installPath: string) =>
     invoke<boolean>('check_server_installed', { installPath }),
   installSteamcmd: () => invoke<void>('install_steamcmd'),
-  installPalworldServer: (installPath: string) =>
-    invoke<string>('install_palworld_server', { installPath }),
-  updatePalworldServer: (installPath: string) =>
-    invoke<string>('update_palworld_server', { installPath }),
+  installPalworldServer: (installPath: string, branch?: string) =>
+    invoke<string>('install_palworld_server', { installPath, branch }),
+  updatePalworldServer: (installPath: string, branch?: string) =>
+    invoke<string>('update_palworld_server', { installPath, branch }),
+  openFolder: (path: string) =>
+    invoke<void>('open_folder', { path }),
+  getServerExtendedDetails: (serverId: number) =>
+    invoke<any>('get_server_extended_details', { serverId }),
   getSetting: (key: string) => invoke<string | null>('get_setting', { key }),
   setSetting: (key: string, value: string) =>
     invoke<void>('set_setting', { key, value }),
@@ -98,9 +106,34 @@ export const tauriCommands = {
   getTasks: (serverId: number) => invoke<any[]>('get_tasks', { serverId }),
   createTask: (serverId: number, taskName: string, taskType: string, cronExpression: string) =>
     invoke<number>('create_task', { serverId, taskName, taskType, cronExpression }),
+  updateTask: (taskId: number, taskName: string, taskType: string, cronExpression: string) =>
+    invoke<void>('update_task', { taskId, taskName, taskType, cronExpression }),
   deleteTask: (taskId: number) => invoke<void>('delete_task', { taskId }),
   toggleTask: (taskId: number, enabled: boolean) =>
     invoke<void>('toggle_task', { taskId, enabled }),
+
+  // Access Control commands
+  getBanList: (serverId: number) => invoke<string[]>('get_ban_list', { serverId }),
+  removeBan: (serverId: number, steamId: string) => invoke<void>('remove_ban', { serverId, steamId }),
+  addToBanList: (serverId: number, steamId: string) => invoke<void>('add_to_ban_list', { serverId, steamId }),
+  getWhitelist: (serverId: number) => invoke<string[]>('get_whitelist', { serverId }),
+  setWhitelist: (serverId: number, steamIds: string[]) => invoke<void>('set_whitelist', { serverId, steamIds }),
+
+  // Discord commands
+  testDiscordWebhook: (webhookUrl: string) => invoke<string>('test_discord_webhook', { webhookUrl }),
+  sendDiscordNotification: (eventType: string, serverName: string, message: string) =>
+    invoke<void>('send_discord_notification', { eventType, serverName, message }),
+
+  // Startup commands
+  getStartupEnabled: () => invoke<boolean>('get_startup_enabled'),
+  setStartupEnabled: (enabled: boolean) => invoke<void>('set_startup_enabled', { enabled }),
+  autoStartServers: () => invoke<number>('auto_start_servers'),
+
+  // Workshop commands
+  downloadWorkshopMod: (serverId: number, workshopId: string) =>
+    invoke<{ success: boolean; message: string; modName: string | null }>('download_workshop_mod', { serverId, workshopId }),
+  checkUe4ssInstalled: (serverId: number) => invoke<boolean>('check_ue4ss_installed', { serverId }),
+  installUe4ss: (serverId: number) => invoke<string>('install_ue4ss', { serverId }),
 };
 
 // ─── Event Listeners ────────────────────────────────────────────────────────
@@ -138,6 +171,8 @@ export function setupEventListeners() {
     }
 
     store.updateServerStatus(data.server_id, status);
+    // Refetch full list to update other views reactively
+    tauriCommands.getServers().then(store.setServers).catch(console.error);
   });
 
   // Server log events
@@ -167,13 +202,19 @@ export function setupEventListeners() {
     const store = useAppStore.getState();
     const server = store.servers.find((s) => s.installPath === data.installPath);
     if (server) {
+      const isFinished = data.status === 'finished';
       store.setInstallState(server.id, {
-        isInstalling: data.status !== 'finished' && data.status !== 'failed',
-        progress: data.status === 'finished' ? 100 : data.progress,
+        isInstalling: !isFinished && data.status !== 'failed',
+        progress: isFinished ? 100 : data.progress,
         status: data.status,
         bytesDownloaded: data.bytesDownloaded,
         bytesTotal: data.bytesTotal,
       });
+
+      if (isFinished || data.status === 'failed') {
+        // Refetch full list to update installed status reactively
+        tauriCommands.getServers().then(store.setServers).catch(console.error);
+      }
     }
   });
 
@@ -186,9 +227,55 @@ export function setupEventListeners() {
     const store = useAppStore.getState();
     const server = store.servers.find((s) => s.installPath === data.installPath);
     if (server) {
-      store.setInstallState(server.id, (prev) => ({
-        log: prev.log + data.line,
-      }));
+      store.setInstallState(server.id, (prev) => {
+        let currentLog = prev.log;
+        const incomingLine = data.line;
+
+        // Optimize progress line replacement to prevent log bloat and UI lag
+        const isProgressLine = incomingLine.includes("Update state") && incomingLine.includes("progress:");
+
+        if (isProgressLine) {
+          const lines = currentLog.split('\n');
+          let replaced = false;
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i].trim();
+            if (line === '') continue;
+            if (line.includes("Update state") && line.includes("progress:")) {
+              lines[i] = incomingLine.replace(/\r?\n$/, '');
+              currentLog = lines.join('\n') + '\n';
+              replaced = true;
+              break;
+            } else {
+              break;
+            }
+          }
+          if (!replaced) {
+            currentLog = currentLog + incomingLine;
+          }
+        } else {
+          currentLog = currentLog + incomingLine;
+        }
+
+        return { log: currentLog };
+      });
+    }
+  });
+
+  // Server auto-update notification events
+  listen<{
+    serverId: number;
+    serverName: string;
+    eventType: string;
+    message: string;
+  }>('server-update-notification', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+    if (data.eventType === 'success') {
+      store.showNotification('success', data.message);
+    } else if (data.eventType === 'failed') {
+      store.showNotification('error', data.message);
+    } else {
+      store.showNotification('info', data.message);
     }
   });
 }

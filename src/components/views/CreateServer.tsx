@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -24,6 +24,36 @@ export const CreateServer: React.FC = () => {
     isPublic: false,
     autoStart: false,
   });
+
+  useEffect(() => {
+    const autoAllocatePorts = async () => {
+      try {
+        const servers = await tauriCommands.getServers();
+        
+        let maxGamePort = 8211;
+        let maxRconPort = 25575;
+        let maxRestPort = 8212;
+        
+        if (servers.length > 0) {
+          servers.forEach((s: any) => {
+            if (s.gamePort >= maxGamePort) maxGamePort = s.gamePort + 1;
+            if (s.rconPort >= maxRconPort) maxRconPort = s.rconPort + 1;
+            if (s.restApiPort >= maxRestPort) maxRestPort = s.restApiPort + 1;
+          });
+          
+          setForm((prev) => ({
+            ...prev,
+            gamePort: maxGamePort,
+            rconPort: maxRconPort,
+            restApiPort: maxRestPort,
+          }));
+        }
+      } catch (err) {
+        console.error('Failed to query existing servers for port allocation:', err);
+      }
+    };
+    autoAllocatePorts();
+  }, []);
 
   const updateField = (field: string, value: any) => {
     setForm((prev) => {

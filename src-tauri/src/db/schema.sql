@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS servers (
     auto_restart_schedule TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     last_started TEXT,
-    config_json TEXT DEFAULT '{}'
+    config_json TEXT DEFAULT '{}',
+    branch TEXT DEFAULT 'public'
 );
 
 -- ─── Backups ────────────────────────────────────────────────────────────────

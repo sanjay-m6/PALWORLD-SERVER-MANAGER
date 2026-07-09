@@ -182,6 +182,70 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             // Start background services
             if !safe_mode {
                 scheduler.start();
+
+                // Auto-start servers with auto_start enabled
+                let app_handle_clone = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                    if let Some(state) = app_handle_clone.try_state::<AppState>() {
+                        log::info!("[STARTUP] Checking for auto-start servers...");
+                        let servers_to_start: Vec<(i64, String, String, u16, u16, String)> = {
+                            if let Ok(db) = state.db.lock() {
+                                if let Ok(conn) = db.get_connection() {
+                                    if let Ok(mut stmt) = conn.prepare(
+                                        "SELECT id, install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE auto_start = 1 AND status = 'stopped'"
+                                    ) {
+                                        let rows = stmt.query_map([], |row| {
+                                            Ok((
+                                                row.get::<_, i64>(0)?,
+                                                row.get::<_, String>(1)?,
+                                                row.get::<_, String>(2).unwrap_or_default(),
+                                                row.get::<_, u16>(3).unwrap_or(8211),
+                                                row.get::<_, u16>(4).unwrap_or(25575),
+                                                row.get::<_, String>(5).unwrap_or_default(),
+                                            ))
+                                        });
+                                        if let Ok(rows) = rows {
+                                            rows.filter_map(|r| r.ok()).collect()
+                                        } else {
+                                            Vec::new()
+                                        }
+                                    } else {
+                                        Vec::new()
+                                    }
+                                } else {
+                                    Vec::new()
+                                }
+                            } else {
+                                Vec::new()
+                            }
+                        };
+
+                        for (server_id, install_path, startup_args, game_port, rcon_port, admin_password) in servers_to_start {
+                            if let Ok(db) = state.db.lock() {
+                                let _ = db.update_server_status(server_id, "starting");
+                            }
+                            match state.process_manager.start_server(
+                                server_id,
+                                &install_path,
+                                &startup_args,
+                                game_port,
+                                rcon_port,
+                                &admin_password,
+                            ) {
+                                Ok(_) => {
+                                    log::info!("[STARTUP] Auto-started server ID {}", server_id);
+                                }
+                                Err(e) => {
+                                    log::error!("[STARTUP] Failed to auto-start server ID {}: {}", server_id, e);
+                                    if let Ok(db) = state.db.lock() {
+                                        let _ = db.update_server_status(server_id, "stopped");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
             }
 
             Ok(())
@@ -195,6 +259,8 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::server::stop_server,
             commands::server::restart_server,
             commands::server::get_server_status,
+            commands::server::update_server_branch,
+            commands::server::update_server_auto_start,
             // Config commands
             commands::config::get_server_config,
             commands::config::save_server_config,
@@ -242,11 +308,31 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::system::search_mods_online,
             commands::system::download_nexus_mod_via_api,
             commands::system::open_popout_window,
+            commands::system::get_server_extended_details,
+            commands::system::open_folder,
             // Scheduler commands
             commands::scheduler::get_tasks,
             commands::scheduler::create_task,
             commands::scheduler::delete_task,
             commands::scheduler::toggle_task,
+            commands::scheduler::update_task,
+            // Access Control commands
+            commands::access_control::get_ban_list,
+            commands::access_control::remove_ban,
+            commands::access_control::add_to_ban_list,
+            commands::access_control::get_whitelist,
+            commands::access_control::set_whitelist,
+            // Discord commands
+            commands::discord::test_discord_webhook,
+            commands::discord::send_discord_notification,
+            // Startup commands
+            commands::startup::get_startup_enabled,
+            commands::startup::set_startup_enabled,
+            commands::startup::auto_start_servers,
+            // Workshop commands
+            commands::workshop::download_workshop_mod,
+            commands::workshop::check_ue4ss_installed,
+            commands::workshop::install_ue4ss,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

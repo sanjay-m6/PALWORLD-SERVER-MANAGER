@@ -178,6 +178,29 @@ impl ProcessManager {
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
 
+        // Send Discord Start Notification
+        let app_handle_clone = self.app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(state) = app_handle_clone.try_state::<crate::AppState>() {
+                let server_name = {
+                    if let Ok(db) = state.db.lock() {
+                        db.get_all_servers().unwrap_or_default().into_iter()
+                            .find(|s| s.id == server_id)
+                            .map(|s| s.name)
+                            .unwrap_or_else(|| format!("Server #{}", server_id))
+                    } else {
+                        format!("Server #{}", server_id)
+                    }
+                };
+                let _ = crate::commands::discord::send_discord_notification(
+                    state,
+                    "start".to_string(),
+                    server_name,
+                    "Palworld server is now starting up!".to_string(),
+                ).await;
+            }
+        });
+
         // Spawn crash monitor
         self.spawn_crash_monitor(server_id, pid);
 
@@ -254,6 +277,31 @@ impl ProcessManager {
             exit_code: Some(0),
             uptime_seconds: uptime,
             timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+
+        // Send Discord Stop Notification
+        let app_handle_clone = self.app_handle.clone();
+        let reason_str = reason.to_string();
+        tauri::async_runtime::spawn(async move {
+            if let Some(state) = app_handle_clone.try_state::<crate::AppState>() {
+                let server_name = {
+                    if let Ok(db) = state.db.lock() {
+                        db.get_all_servers().unwrap_or_default().into_iter()
+                            .find(|s| s.id == server_id)
+                            .map(|s| s.name)
+                            .unwrap_or_else(|| format!("Server #{}", server_id))
+                    } else {
+                        format!("Server #{}", server_id)
+                    }
+                };
+                let msg = format!("Palworld server has been stopped. Reason: {}.", reason_str);
+                let _ = crate::commands::discord::send_discord_notification(
+                    state,
+                    "stop".to_string(),
+                    server_name,
+                    msg,
+                ).await;
+            }
         });
 
         Ok(())
@@ -334,12 +382,31 @@ impl ProcessManager {
                         timestamp: chrono::Utc::now().to_rfc3339(),
                     });
 
-                    // Update DB status
-                    if let Some(state) = app_handle.try_state::<crate::AppState>() {
-                        if let Ok(db) = state.db.lock() {
-                            let _ = db.update_server_status(server_id, "crashed");
+                    // Update DB status and Send Discord Alert
+                    let app_handle_clone = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(state) = app_handle_clone.try_state::<crate::AppState>() {
+                            if let Ok(db) = state.db.lock() {
+                                let _ = db.update_server_status(server_id, "crashed");
+                            }
+                            let server_name = {
+                                if let Ok(db) = state.db.lock() {
+                                    db.get_all_servers().unwrap_or_default().into_iter()
+                                        .find(|s| s.id == server_id)
+                                        .map(|s| s.name)
+                                        .unwrap_or_else(|| format!("Server #{}", server_id))
+                                } else {
+                                    format!("Server #{}", server_id)
+                                }
+                            };
+                            let _ = crate::commands::discord::send_discord_notification(
+                                state,
+                                "crash".to_string(),
+                                server_name,
+                                "Palworld server process exited unexpectedly! Server crashed.".to_string(),
+                            ).await;
                         }
-                    }
+                    });
 
                     return;
                 }
