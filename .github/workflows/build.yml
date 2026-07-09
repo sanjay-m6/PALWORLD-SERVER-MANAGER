@@ -5,8 +5,6 @@ on:
     branches:
       - main
       - master
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - main
@@ -51,9 +49,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: "Palworld Server Manager v__VERSION__"
-          releaseBody: "Automated production-grade release of Palworld Server Manager v__VERSION__.\n\nDeveloped by Sanjay."
-          releaseDraft: true
-          prerelease: false
           args: ""
