@@ -46,13 +46,19 @@ pub async fn download_workshop_mod(
 
     log::info!("[WORKSHOP] Downloading workshop item {} for server {}", workshop_id, server_id);
 
-    let output = tokio::process::Command::new(&steamcmd_exe)
-        .args([
-            "+login", "anonymous",
-            "+workshop_download_item", app_id, &workshop_id,
-            "+quit",
-        ])
-        .output()
+    let mut cmd = tokio::process::Command::new(&steamcmd_exe);
+    cmd.args([
+        "+login", "anonymous",
+        "+workshop_download_item", app_id, &workshop_id,
+        "+quit",
+    ]);
+
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = cmd.output()
         .await
         .map_err(|e| format!("Failed to run SteamCMD: {}", e))?;
 

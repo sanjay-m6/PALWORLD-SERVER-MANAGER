@@ -129,17 +129,24 @@ pub async fn setup_firewall_rules(state: State<'_, AppState>, server_id: i64) ->
     {
         // Add UDP port for game server
         let game_rule_name = format!("Palworld Game Server Port {}", game_port);
-        let status_game = std::process::Command::new("powershell")
-            .args([
-                "-Command",
-                &format!(
-                    "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {}",
-                    game_rule_name, game_rule_name, game_port
-                )
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let mut cmd_game = std::process::Command::new("powershell");
+        cmd_game.args([
+            "-Command",
+            &format!(
+                "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {}",
+                game_rule_name, game_rule_name, game_port
+            )
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let status_game = cmd_game.status();
 
         if let Ok(s) = status_game {
             if !s.success() {
@@ -150,17 +157,24 @@ pub async fn setup_firewall_rules(state: State<'_, AppState>, server_id: i64) ->
         // Add TCP port for RCON if enabled
         if rcon_enabled == 1 {
             let rcon_rule_name = format!("Palworld Server RCON {}", rcon_port);
-            let status_rcon = std::process::Command::new("powershell")
-                .args([
-                    "-Command",
-                    &format!(
-                        "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {}",
-                        rcon_rule_name, rcon_rule_name, rcon_port
-                    )
-                ])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            let mut cmd_rcon = std::process::Command::new("powershell");
+            cmd_rcon.args([
+                "-Command",
+                &format!(
+                    "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {}",
+                    rcon_rule_name, rcon_rule_name, rcon_port
+                )
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            let status_rcon = cmd_rcon.status();
 
             if let Ok(s) = status_rcon {
                 if !s.success() {

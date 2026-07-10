@@ -90,14 +90,21 @@ pub async fn delete_server(
     state: State<'_, AppState>,
     server_id: i64,
     backup_first: bool,
+    delete_files: bool,
 ) -> Result<(), String> {
+    let install_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_server_install_path(server_id)?
+    };
+
+    // Stop server if running to release file handles
+    if state.process_manager.get_server_pid(server_id).is_some() {
+        let _ = state.process_manager.stop_server(server_id, StopReason::UserAction);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
     // Optionally backup before deletion
     if backup_first {
-        let install_path = {
-            let db = state.db.lock().map_err(|e| e.to_string())?;
-            db.get_server_install_path(server_id)?
-        };
-
         let app_dir = state.app_handle.path().app_data_dir()
             .map_err(|e| format!("Failed to get app dir: {}", e))?;
         let backup_dir = app_dir.join("backups").join(server_id.to_string());
@@ -112,8 +119,22 @@ pub async fn delete_server(
     }
 
     // Delete from database (cascades to backups, tasks, mods)
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.delete_server(server_id)
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.delete_server(server_id)?;
+    }
+
+    // Delete actual server directory from local machine if requested
+    if delete_files {
+        let path = std::path::Path::new(&install_path);
+        if path.exists() && path.is_dir() {
+            log::info!("[SERVER] Deleting server directory: {:?}", path);
+            std::fs::remove_dir_all(path)
+                .map_err(|e| format!("Failed to delete server folder: {}", e))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -165,30 +186,44 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
             #[cfg(target_os = "windows")]
             {
                 let game_rule_name = format!("Palworld Game Server Port {}", game_port);
-                let _ = std::process::Command::new("powershell")
-                    .args([
-                        "-Command",
-                        &format!(
-                            "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {}",
-                            game_rule_name, game_rule_name, game_port
-                        )
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                let mut cmd_game = std::process::Command::new("powershell");
+                cmd_game.args([
+                    "-Command",
+                    &format!(
+                        "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {}",
+                        game_rule_name, game_rule_name, game_port
+                    )
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+
+                let _ = cmd_game.status();
 
                 let rcon_rule_name = format!("Palworld Server RCON {}", rcon_port);
-                let _ = std::process::Command::new("powershell")
-                    .args([
-                        "-Command",
-                        &format!(
-                            "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {}",
-                            rcon_rule_name, rcon_rule_name, rcon_port
-                        )
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                let mut cmd_rcon = std::process::Command::new("powershell");
+                cmd_rcon.args([
+                    "-Command",
+                    &format!(
+                        "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {}",
+                        rcon_rule_name, rcon_rule_name, rcon_port
+                    )
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+
+                let _ = cmd_rcon.status();
             }
 
             let db = state.db.lock().map_err(|e| e.to_string())?;

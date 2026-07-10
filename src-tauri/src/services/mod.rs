@@ -9,3 +9,4 @@ pub mod system_analyzer;
 pub mod scheduler;
 pub mod log_watcher;
 pub mod network;
+pub mod installation_manager;

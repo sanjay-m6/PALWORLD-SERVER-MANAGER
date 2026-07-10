@@ -9,8 +9,8 @@ export const tauriCommands = {
   // Server commands
   getServers: () => invoke<Server[]>('get_servers'),
   createServer: (request: any) => invoke<Server>('create_server', { request }),
-  deleteServer: (serverId: number, backupFirst: boolean) =>
-    invoke<void>('delete_server', { serverId, backupFirst }),
+  deleteServer: (serverId: number, backupFirst: boolean, deleteFiles: boolean) =>
+    invoke<void>('delete_server', { serverId, backupFirst, deleteFiles }),
   startServer: (serverId: number) => invoke<void>('start_server', { serverId }),
   stopServer: (serverId: number, force: boolean) =>
     invoke<void>('stop_server', { serverId, force }),
@@ -78,6 +78,17 @@ export const tauriCommands = {
     invoke<void>('open_folder', { path }),
   getServerExtendedDetails: (serverId: number) =>
     invoke<any>('get_server_extended_details', { serverId }),
+  // Installation Commands
+  startServerInstallation: (serverId: number, branch: string) =>
+    invoke<void>('start_server_installation', { serverId, branch }),
+  cancelServerInstallation: (serverId: number) =>
+    invoke<void>('cancel_server_installation', { serverId }),
+  getActiveInstallationState: (serverId: number) =>
+    invoke<any>('get_active_installation_state', { serverId }),
+  getServerInstallationHistory: (serverId: number) =>
+    invoke<any[]>('get_server_installation_history', { serverId }),
+  runInstallationDiagnostics: (serverId: number) =>
+    invoke<any>('run_installation_diagnostics', { serverId }),
   getSetting: (key: string) => invoke<string | null>('get_setting', { key }),
   setSetting: (key: string, value: string) =>
     invoke<void>('set_setting', { key, value }),
@@ -197,75 +208,90 @@ export function setupEventListeners() {
   });
 
   // Install progress events
-  listen<{
-    installPath: string;
-    status: string;
-    progress: number;
-    bytesDownloaded: number;
-    bytesTotal: number;
-  }>('install-progress', (event) => {
-    const data = event.payload;
-    const store = useAppStore.getState();
-    const server = store.servers.find((s) => s.installPath === data.installPath);
-    if (server) {
-      const isFinished = data.status === 'finished';
-      store.setInstallState(server.id, {
-        isInstalling: !isFinished && data.status !== 'failed',
-        progress: isFinished ? 100 : data.progress,
-        status: data.status,
-        bytesDownloaded: data.bytesDownloaded,
-        bytesTotal: data.bytesTotal,
-      });
 
-      if (isFinished || data.status === 'failed') {
-        // Refetch full list to update installed status reactively
-        tauriCommands.getServers().then(store.setServers).catch(console.error);
-      }
-    }
+// Install tick events
+listen<{
+  serverId: number;
+  isInstalling: boolean;
+  stage: string;
+  progress: number;
+  status: string;
+  bytesDownloaded: number;
+  bytesTotal: number;
+  speedBps: number;
+  avgSpeedBps: number;
+  peakSpeedBps: number;
+  diskWriteSpeedBps: number;
+  diskReadSpeedBps: number;
+  etaSeconds: number | null;
+  cdnServer: string;
+  elapsedSeconds: number;
+}>('install-tick', (event) => {
+  const data = event.payload;
+  const store = useAppStore.getState();
+  store.setInstallState(data.serverId, {
+    isInstalling: data.isInstalling,
+    stage: data.stage,
+    progress: data.progress,
+    status: data.status,
+    bytesDownloaded: data.bytesDownloaded,
+    bytesTotal: data.bytesTotal,
+    speed: data.speedBps,
+    speedBps: data.speedBps,
+    avgSpeedBps: data.avgSpeedBps,
+    peakSpeedBps: data.peakSpeedBps,
+    diskWriteSpeedBps: data.diskWriteSpeedBps,
+    diskReadSpeedBps: data.diskReadSpeedBps,
+    eta: data.etaSeconds,
+    cdnServer: data.cdnServer,
+    elapsedSeconds: data.elapsedSeconds,
   });
 
-  // Install log events
-  listen<{
-    installPath: string;
-    line: string;
-  }>('install-log', (event) => {
-    const data = event.payload;
-    const store = useAppStore.getState();
-    const server = store.servers.find((s) => s.installPath === data.installPath);
-    if (server) {
-      store.setInstallState(server.id, (prev) => {
-        let currentLog = prev.log;
-        const incomingLine = data.line;
+  if (data.stage === 'completed' || data.stage === 'failed') {
+    // Refetch full list to update installed status reactively
+    tauriCommands.getServers().then(store.setServers).catch(console.error);
+  }
+});
 
-        // Optimize progress line replacement to prevent log bloat and UI lag
-        const isProgressLine = incomingLine.includes("Update state") && incomingLine.includes("progress:");
+// Install log events
+listen<{
+  serverId: number;
+  line: string;
+}>('install-log', (event) => {
+  const data = event.payload;
+  const store = useAppStore.getState();
+  store.setInstallState(data.serverId, (prev) => {
+    let currentLog = prev.log || '';
+    const incomingLine = data.line;
 
-        if (isProgressLine) {
-          const lines = currentLog.split('\n');
-          let replaced = false;
-          for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i].trim();
-            if (line === '') continue;
-            if (line.includes("Update state") && line.includes("progress:")) {
-              lines[i] = incomingLine.replace(/\r?\n$/, '');
-              currentLog = lines.join('\n') + '\n';
-              replaced = true;
-              break;
-            } else {
-              break;
-            }
-          }
-          if (!replaced) {
-            currentLog = currentLog + incomingLine;
-          }
+    // Optimize progress line replacement to prevent log bloat and UI lag
+    const isProgressLine = incomingLine.includes("Update state") && incomingLine.includes("progress:");
+
+    if (isProgressLine) {
+      const lines = currentLog.split('\n');
+      let replaced = false;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line === '') continue;
+        if (line.includes("Update state") && line.includes("progress:")) {
+          lines[i] = incomingLine.replace(/\r?\n$/, '');
+          currentLog = lines.join('\n') + '\n';
+          replaced = true;
+          break;
         } else {
-          currentLog = currentLog + incomingLine;
+          break;
         }
-
-        return { log: currentLog };
-      });
+      }
+      if (!replaced) {
+        currentLog = currentLog + incomingLine;
+      }
+    } else {
+      currentLog = currentLog + incomingLine;
     }
+
+    return { log: currentLog };
   });
+});
 
   // Server auto-update notification events
   listen<{

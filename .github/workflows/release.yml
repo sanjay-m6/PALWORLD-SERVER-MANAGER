@@ -86,26 +86,11 @@ jobs:
           releaseBody: |
             ## Palworld Server Manager v__VERSION__
 
-            This release introduces major stability fixes, UI/UX overhauls for the Mod Manager, automated Windows Defender Firewall rules, and public server listing visibility fixes.
+            This release introduces server installation stage progress tracking fixes and background task execution window suppression.
 
             ### 🚀 New Features & Improvements
-            - **REST API Mod Discovery Migration:** Shifted mod searches away from the deprecated/offline `search.nexusmods.com` service to the official authenticated `api.nexusmods.com` REST API. Supports smart keyword filtering, direct Mod ID queries, and Nexus link parses.
-            - **Interactive Mod Details Modal:** Click on any mod in the discover grid to view details, platform tags, authors, download statistics, and full BBCode/Markdown-parsed descriptions.
-            - **Native BBCode & Markdown Rendering:** Custom HTML renderer parses Nexus BBCode tags and Modrinth Markdown formats on the fly for safe native displaying.
-            - **Mod Type Classification Guide:** Details tab distinguishes between Standard Asset Mods (`/Paks/`) and Script/Logic Mods (`/LogicMods/`), checks if the **UE4SS framework** is installed on the server, and provides a direct installer if missing.
-            - **Nexus Mods Free Account Fallback:** Gracefully intercepts 403 Forbidden API errors on free accounts. Displays a friendly manual guide and direct browser link instead of crashing.
-            - **Inline Manual Importing:** Added an "Import Downloaded File" button inside the details modal and warning popups to pick local `.zip` or `.pak` files directly.
-            - **Automated Local Zip Unpacking:** Refactored the local file manager to automatically unpack and extract `.pak` assets from imported `.zip` archives.
-            - **Automated Firewall Port Allocation:** Port auto-allocation and server creation wizards now automatically execute Windows Defender rules, setting up inbound UDP/TCP exceptions for Game, RCON, and REST API ports.
-            - **UAC Elevation Privilege Split:** Configured manifest profiles to run under standard user privileges in dev mode (resolving OS Error 740 elevation crashes) and enforce admin mode exclusively in production release builds.
-            - **Community Server Visibility:** Automatically appends `EpicApp=PalServer` and `-publiclobby` parameters on startup to list servers in the public in-game server browser.
-
-            ### 🛠️ Visual & UX Refinements
-            - Added container translate-up and border shadow animations on card hovers.
-            - Implemented image scale-zoom transitions for card thumbnails.
-            - Added vector SVG icons for authors and download metrics.
-            - Integrated `formatNumber` to format large numbers (e.g. `407.4k` instead of raw integers).
-            - Updated NEXUS and MODRINTH platform badges.
+            - **Suppress CLI Window Popups:** Added `CREATE_NO_WINDOW` flags to all Windows command executions (firewall rules, server registry queries, etc.) to run background CLI tasks silently, resolving repeated PowerShell window popups.
+            - **Server Installation Stage Progress:** Mapped pipeline stages to camelCase variants to match backend Rust serialization. Ensured active stage state hydrates correctly for crash recovery, and added `formatStageName` to display user-friendly stage labels (e.g., `Checking Updates`).
 
             ---
             _Developed by Sanjay._

@@ -94,6 +94,12 @@ const tabs: { id: ServerTab; label: string }[] = [
   { id: 'firewall', label: 'Firewall' },
 ];
 
+const formatStageName = (stage?: string) => {
+  if (!stage) return 'Preparing';
+  const spaced = stage.replace(/([A-Z])/g, ' $1');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+};
+
 export const ServerDetail: React.FC = () => {
   const {
     servers,
@@ -107,6 +113,8 @@ export const ServerDetail: React.FC = () => {
 
   const [liveStats, setLiveStats] = useState<any>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteFiles, setDeleteFiles] = useState(false);
+  const [backupFirst, setBackupFirst] = useState(true);
 
   const server = servers.find((s) => s.id === selectedServerId);
 
@@ -175,14 +183,16 @@ export const ServerDetail: React.FC = () => {
   };
 
   const handleDelete = () => {
+    setDeleteFiles(false);
+    setBackupFirst(true);
     setIsDeleteModalOpen(true);
   };
 
   const handleConfirmDelete = async () => {
     setIsDeleteModalOpen(false);
     try {
-      await tauriCommands.deleteServer(server.id, true);
-      showNotification('success', 'Server deleted');
+      await tauriCommands.deleteServer(server.id, backupFirst, deleteFiles);
+      showNotification('success', deleteFiles ? 'Server and installation files deleted' : 'Server profile deleted');
       const updated = await tauriCommands.getServers();
       setServers(updated);
       setCurrentView('dashboard');
@@ -412,7 +422,34 @@ export const ServerDetail: React.FC = () => {
             <p className="text-xs text-dark-300 leading-relaxed">
               Are you sure you want to delete server <strong className="text-dark-100 font-bold">"{server.name}"</strong>? This will remove all configuration settings. This action cannot be undone.
             </p>
-            
+
+            {/* Options */}
+            <div className="space-y-3 pt-1">
+              <label className="flex items-start gap-2.5 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={backupFirst}
+                  onChange={(e) => setBackupFirst(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/20"
+                />
+                <span className="text-xs text-dark-300 group-hover:text-dark-200 transition-colors selection:bg-transparent">
+                  Create a backup before deleting configuration
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2.5 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={deleteFiles}
+                  onChange={(e) => setDeleteFiles(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-error-500/30 bg-dark-800 text-error-500 focus:ring-error-500/20"
+                />
+                <span className="text-xs text-dark-300 group-hover:text-error-400/90 transition-colors selection:bg-transparent">
+                  Delete server installation directory & files from disk (Cannot be undone)
+                </span>
+              </label>
+            </div>
+
             {/* Action buttons */}
             <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
@@ -452,6 +489,10 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
   const [autoStartEnabled, setAutoStartEnabled] = useState(server.autoStart ?? false);
 
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [isRunningDiag, setIsRunningDiag] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+
   const logEndRef = useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -481,6 +522,14 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
     log: '',
     speed: 0,
     eta: null,
+    stage: 'Preparing',
+    speedBps: 0,
+    avgSpeedBps: 0,
+    peakSpeedBps: 0,
+    diskWriteSpeedBps: 0,
+    diskReadSpeedBps: 0,
+    cdnServer: '',
+    elapsedSeconds: 0,
   };
 
   const fetchDetails = useCallback(async () => {
@@ -494,12 +543,55 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
       
       const autoUpdateVal = await tauriCommands.getSetting(`auto_update_enabled_${server.id}`);
       setAutoUpdateEnabled(autoUpdateVal === 'true');
+
+      const activeState = await tauriCommands.getActiveInstallationState(server.id);
+      if (activeState) {
+        setInstallState(server.id, {
+          isInstalling: activeState.isInstalling,
+          stage: activeState.stage,
+          progress: activeState.progress,
+          status: activeState.status,
+          bytesDownloaded: activeState.bytesDownloaded,
+          bytesTotal: activeState.bytesTotal,
+          log: activeState.log,
+          speed: activeState.speedBps,
+          speedBps: activeState.speedBps,
+          avgSpeedBps: activeState.avgSpeedBps,
+          peakSpeedBps: activeState.peakSpeedBps,
+          diskWriteSpeedBps: activeState.diskWriteSpeedBps,
+          diskReadSpeedBps: activeState.diskReadSpeedBps,
+          eta: activeState.etaSeconds,
+          cdnServer: activeState.cdnServer,
+          elapsedSeconds: activeState.elapsedSeconds,
+        });
+      }
     } catch (e) {
       console.error("Failed to fetch extended server details:", e);
     } finally {
       setIsLoadingDetails(false);
     }
-  }, [server.id, server.installPath]);
+  }, [server.id, server.installPath, setInstallState]);
+
+  const runDiag = async () => {
+    setIsRunningDiag(true);
+    try {
+      const res = await tauriCommands.runInstallationDiagnostics(server.id);
+      setDiagnostics(res);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsRunningDiag(false);
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const res = await tauriCommands.getServerInstallationHistory(server.id);
+      setHistory(res);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const checkSteamcmd = async () => {
     try {
@@ -515,10 +607,20 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
     fetchDetails();
   }, [fetchDetails]);
 
+  useEffect(() => {
+    if (server.id) {
+      runDiag();
+      fetchHistory();
+    }
+  }, [server.id, installState.isInstalling]);
+
   // Auto-scroll the log console to bottom when it changes
   useEffect(() => {
     if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      const container = logEndRef.current.parentElement;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
     }
   }, [installState.log]);
 
@@ -555,28 +657,25 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
     setInstallState(server.id, {
       isInstalling: true,
       progress: 0,
-      status: 'starting',
-      log: `Downloading Palworld Dedicated Server via SteamCMD (Branch: ${selectedBranch})...\nThis may take several minutes.\n`,
+      status: 'Preparing',
+      log: `Starting Palworld Dedicated Server Installation (Branch: ${selectedBranch})...\n`,
       speed: 0,
       eta: null,
+      stage: 'Preparing',
+      speedBps: 0,
+      avgSpeedBps: 0,
+      peakSpeedBps: 0,
+      diskWriteSpeedBps: 0,
+      diskReadSpeedBps: 0,
+      cdnServer: 'Connecting...',
+      elapsedSeconds: 0,
     });
     try {
       showNotification('info', 'Starting Palworld server installation...');
-      const result = await tauriCommands.installPalworldServer(server.installPath, selectedBranch);
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + result + '\n✓ Installation finished successfully!',
-      }));
-      showNotification('success', 'Server installed successfully via SteamCMD');
-      fetchDetails();
+      await tauriCommands.startServerInstallation(server.id, selectedBranch);
     } catch (e: any) {
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + `\n✗ Error: ${e}`,
-      }));
-      showNotification('error', `Installation failed: ${e}`);
-    } finally {
-      setInstallState(server.id, {
-        isInstalling: false,
-      });
+      setInstallState(server.id, { isInstalling: false });
+      showNotification('error', `Failed to start installation: ${e}`);
     }
   };
 
@@ -584,28 +683,25 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
     setInstallState(server.id, {
       isInstalling: true,
       progress: 0,
-      status: 'updating',
-      log: `Checking and updating Palworld Dedicated Server via SteamCMD (Branch: ${selectedBranch})...\n`,
+      status: 'Preparing',
+      log: `Starting server update (Branch: ${selectedBranch})...\n`,
       speed: 0,
       eta: null,
+      stage: 'Preparing',
+      speedBps: 0,
+      avgSpeedBps: 0,
+      peakSpeedBps: 0,
+      diskWriteSpeedBps: 0,
+      diskReadSpeedBps: 0,
+      cdnServer: 'Connecting...',
+      elapsedSeconds: 0,
     });
     try {
-      showNotification('info', 'Starting server update...');
-      const result = await tauriCommands.updatePalworldServer(server.installPath, selectedBranch);
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + result + '\n✓ Update finished successfully!',
-      }));
-      showNotification('success', 'Server updated successfully');
-      fetchDetails();
+      showNotification('info', 'Starting Palworld server update...');
+      await tauriCommands.startServerInstallation(server.id, selectedBranch);
     } catch (e: any) {
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + `\n✗ Error: ${e}`,
-      }));
-      showNotification('error', `Update failed: ${e}`);
-    } finally {
-      setInstallState(server.id, {
-        isInstalling: false,
-      });
+      setInstallState(server.id, { isInstalling: false });
+      showNotification('error', `Failed to start update: ${e}`);
     }
   };
 
@@ -613,28 +709,37 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
     setInstallState(server.id, {
       isInstalling: true,
       progress: 0,
-      status: 'validating',
-      log: `Validating Palworld Dedicated Server files (Branch: ${selectedBranch})...\n`,
+      status: 'Preparing',
+      log: `Starting file validation (Branch: ${selectedBranch})...\n`,
       speed: 0,
       eta: null,
+      stage: 'Preparing',
+      speedBps: 0,
+      avgSpeedBps: 0,
+      peakSpeedBps: 0,
+      diskWriteSpeedBps: 0,
+      diskReadSpeedBps: 0,
+      cdnServer: 'Connecting...',
+      elapsedSeconds: 0,
     });
     try {
       showNotification('info', 'Starting file validation...');
-      const result = await tauriCommands.installPalworldServer(server.installPath, selectedBranch);
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + result + '\n✓ Validation finished successfully!',
-      }));
-      showNotification('success', 'Server files validated successfully');
+      await tauriCommands.startServerInstallation(server.id, selectedBranch);
+    } catch (e: any) {
+      setInstallState(server.id, { isInstalling: false });
+      showNotification('error', `Failed to start validation: ${e}`);
+    }
+  };
+
+  const handleCancelInstallation = async () => {
+    try {
+      showNotification('info', 'Cancelling server installation...');
+      await tauriCommands.cancelServerInstallation(server.id);
+      showNotification('success', 'Installation cancelled successfully');
+      setInstallState(server.id, { isInstalling: false });
       fetchDetails();
     } catch (e: any) {
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + `\n✗ Error: ${e}`,
-      }));
-      showNotification('error', `Validation failed: ${e}`);
-    } finally {
-      setInstallState(server.id, {
-        isInstalling: false,
-      });
+      showNotification('error', `Failed to cancel: ${e}`);
     }
   };
 
@@ -644,22 +749,23 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
       await tauriCommands.updateServerBranch(server.id, newBranch);
       showNotification('info', `Branch updated to ${newBranch}. Validating files...`);
       
-      // Auto validate files on branch change
       setInstallState(server.id, {
         isInstalling: true,
         progress: 0,
-        status: 'changing branch',
+        status: 'Preparing',
         log: `Changing branch to ${newBranch} and validating server files...\n`,
         speed: 0,
         eta: null,
+        stage: 'Preparing',
+        speedBps: 0,
+        avgSpeedBps: 0,
+        peakSpeedBps: 0,
+        diskWriteSpeedBps: 0,
+        diskReadSpeedBps: 0,
+        cdnServer: 'Connecting...',
+        elapsedSeconds: 0,
       });
-      
-      const result = await tauriCommands.installPalworldServer(server.installPath, newBranch);
-      setInstallState(server.id, (prev) => ({
-        log: prev.log + result + `\n✓ Re-validation on branch ${newBranch} successful!`,
-      }));
-      showNotification('success', `Server files successfully validated on branch: ${newBranch}`);
-      fetchDetails();
+      await tauriCommands.startServerInstallation(server.id, newBranch);
     } catch (err: any) {
       showNotification('error', `Failed to change branch / validate: ${err}`);
       setInstallState(server.id, { isInstalling: false });
@@ -671,6 +777,17 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
       await tauriCommands.openFolder(server.installPath);
     } catch (e: any) {
       showNotification('error', `Failed to open folder: ${e}`);
+    }
+  };
+
+  const getDiagStatusColor = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'online': case 'excellent': case 'healthy': case 'ok': case 'ready': case 'configured':
+        return 'text-success-400 border-success-500/20 bg-success-500/5';
+      case 'poor': case 'low':
+        return 'text-warning-400 border-warning-500/20 bg-warning-500/5';
+      default:
+        return 'text-error-400 border-error-500/20 bg-error-500/5';
     }
   };
 
@@ -735,41 +852,42 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
 
       {/* SteamCMD Installation Panel */}
       {!isActive && (
-        <div className="glass-card p-5 space-y-4 relative z-20">
-          <div className="flex items-center justify-between">
+        <div className="glass-card p-6 space-y-6 relative z-20 overflow-hidden border border-dark-800/80 bg-dark-900/20">
+          {/* Header row */}
+          <div className="flex items-center justify-between border-b border-dark-800/60 pb-4">
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-dark-200">
-                  Server Update & Installation (SteamCMD)
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
+                  Server Installation & Updates
                 </h3>
-                {isInstalled === true && (
-                  <span className="text-[10px] text-success-400 font-bold bg-success-500/10 px-2 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">
-                    🟢 Installed
+                {isInstalled === true ? (
+                  <span className="text-[10px] text-success-400 font-extrabold bg-success-500/10 px-2.5 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">
+                    Installed
                   </span>
-                )}
-                {isInstalled === false && (
-                  <span className="text-[10px] text-error-400 font-bold bg-error-500/10 px-2 py-0.5 rounded border border-error-500/20 uppercase tracking-wider">
-                    🔴 Not Installed
+                ) : (
+                  <span className="text-[10px] text-error-400 font-extrabold bg-error-500/10 px-2.5 py-0.5 rounded border border-error-500/20 uppercase tracking-wider animate-pulse">
+                    Not Installed
                   </span>
                 )}
               </div>
               <p className="text-xs text-dark-500 mt-1">
-                Install, download, or update Palworld dedicated server files anonymously from SteamCMD.
+                Download, update, and validate server files using high-speed SteamCMD streaming.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-dark-400">SteamCMD:</span>
+            
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-dark-400 font-medium">SteamCMD Status:</span>
               {steamcmdInstalled === null ? (
-                <span className="text-xs text-dark-500">Checking...</span>
+                <span className="text-xs text-dark-500 animate-pulse">Checking...</span>
               ) : steamcmdInstalled ? (
-                <span className="text-xs text-success-400 font-medium bg-success-500/10 px-2 py-0.5 rounded-full border border-success-500/20">
+                <span className="text-xs text-success-400 font-bold bg-success-500/10 px-3 py-1 rounded-full border border-success-500/20">
                   Ready
                 </span>
               ) : (
                 <button
                   onClick={handleInstallSteamcmd}
                   disabled={installState.isInstalling}
-                  className="btn-primary text-xs py-1 px-2.5"
+                  className="btn-primary text-xs py-1.5 px-3 rounded-lg shadow-lg active:scale-95 transition-all"
                 >
                   Install SteamCMD
                 </button>
@@ -777,166 +895,419 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-4 border-t border-dark-800/60 pt-4">
-            <div className="flex items-center gap-6">
+          {/* Config Controls Row (Hidden when installing) */}
+          {!installState.isInstalling && (
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-dark-400 font-bold uppercase tracking-wider">Beta Branch:</label>
+                  <CustomSelect
+                    options={[
+                      { value: 'public', label: 'Public Release' },
+                      { value: 'experimental', label: 'Experimental Beta' },
+                      { value: 'preview', label: 'Preview Branch' },
+                      { value: 'development', label: 'Developer Beta' },
+                    ]}
+                    value={selectedBranch}
+                    onChange={handleBranchChange}
+                    disabled={installState.isInstalling || steamcmdInstalled === false}
+                    className="w-48"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
+                  <input
+                    type="checkbox"
+                    id={`auto-update-toggle-${server.id}`}
+                    checked={autoUpdateEnabled}
+                    onChange={async (e) => {
+                      const checked = e.target.checked;
+                      setAutoUpdateEnabled(checked);
+                      try {
+                        await tauriCommands.setSetting(`auto_update_enabled_${server.id}`, checked ? 'true' : 'false');
+                        showNotification('success', checked ? 'Auto-Update enabled' : 'Auto-Update disabled');
+                      } catch (err: any) {
+                        showNotification('error', `Failed to save setting: ${err}`);
+                      }
+                    }}
+                    className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                  />
+                  <label htmlFor={`auto-update-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                    Auto-Update Server
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
+                  <input
+                    type="checkbox"
+                    id={`auto-start-toggle-${server.id}`}
+                    checked={autoStartEnabled}
+                    onChange={async (e) => {
+                      const checked = e.target.checked;
+                      setAutoStartEnabled(checked);
+                      try {
+                        await tauriCommands.updateServerAutoStart(server.id, checked);
+                        showNotification('success', checked ? 'Auto-Start enabled' : 'Auto-Start disabled');
+                      } catch (err: any) {
+                        showNotification('error', `Failed to update auto-start setting: ${err}`);
+                      }
+                    }}
+                    className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                  />
+                  <label htmlFor={`auto-start-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                    Auto-Start Server
+                  </label>
+                </div>
+              </div>
+
               <div className="flex items-center gap-3">
-                <label className="text-xs text-dark-400 font-semibold uppercase tracking-wider">Beta Branch:</label>
-                <CustomSelect
-                  options={[
-                    { value: 'public', label: 'Public Release' },
-                    { value: 'experimental', label: 'Experimental Beta' },
-                    { value: 'preview', label: 'Preview Branch' },
-                    { value: 'development', label: 'Developer Beta' },
-                  ]}
-                  value={selectedBranch}
-                  onChange={handleBranchChange}
-                  disabled={installState.isInstalling || steamcmdInstalled === false}
-                  className="w-48"
-                />
-              </div>
-
-               <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
-                <input
-                  type="checkbox"
-                  id={`auto-update-toggle-${server.id}`}
-                  checked={autoUpdateEnabled}
-                  onChange={async (e) => {
-                    const checked = e.target.checked;
-                    setAutoUpdateEnabled(checked);
-                    try {
-                      await tauriCommands.setSetting(`auto_update_enabled_${server.id}`, checked ? 'true' : 'false');
-                      showNotification('success', checked ? 'Auto-Update enabled' : 'Auto-Update disabled');
-                    } catch (err: any) {
-                      showNotification('error', `Failed to save setting: ${err}`);
-                    }
-                  }}
-                  className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
-                />
-                <label htmlFor={`auto-update-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
-                  Auto-Update Server
-                </label>
-              </div>
-
-              <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
-                <input
-                  type="checkbox"
-                  id={`auto-start-toggle-${server.id}`}
-                  checked={autoStartEnabled}
-                  onChange={async (e) => {
-                    const checked = e.target.checked;
-                    setAutoStartEnabled(checked);
-                    try {
-                      await tauriCommands.updateServerAutoStart(server.id, checked);
-                      showNotification('success', checked ? 'Auto-Start enabled' : 'Auto-Start disabled');
-                    } catch (err: any) {
-                      showNotification('error', `Failed to update auto-start setting: ${err}`);
-                    }
-                  }}
-                  className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
-                />
-                <label htmlFor={`auto-start-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
-                  Auto-Start Server
-                </label>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5">
-              {isInstalled ? (
-                <>
-                  <button
-                    onClick={handleUpdateServer}
-                    disabled={installState.isInstalling || steamcmdInstalled === false}
-                    className="btn-primary text-xs flex items-center gap-2"
-                  >
-                    Update Server
-                  </button>
-                  <button
-                    onClick={handleValidateFiles}
-                    disabled={installState.isInstalling || steamcmdInstalled === false}
-                    className="btn-ghost text-xs border border-dark-700/50 hover:border-dark-600 flex items-center gap-2 text-dark-200"
-                    title="Verify files integrity"
-                  >
-                    Validate Files
-                  </button>
+                {isInstalled ? (
+                  <>
+                    <button
+                      onClick={handleUpdateServer}
+                      disabled={installState.isInstalling || steamcmdInstalled === false}
+                      className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-4 py-2 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
+                    >
+                      Update Server
+                    </button>
+                    <button
+                      onClick={handleValidateFiles}
+                      disabled={installState.isInstalling || steamcmdInstalled === false}
+                      className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-dark-200"
+                      title="Verify files integrity"
+                    >
+                      Validate Files
+                    </button>
+                    <button
+                      onClick={handleInstallServer}
+                      disabled={installState.isInstalling || steamcmdInstalled === false}
+                      className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-error-400 hover:text-error-300"
+                      title="Re-download all server files"
+                    >
+                      Reinstall
+                    </button>
+                  </>
+                ) : (
                   <button
                     onClick={handleInstallServer}
                     disabled={installState.isInstalling || steamcmdInstalled === false}
-                    className="btn-ghost text-xs border border-dark-700/50 hover:border-dark-600 flex items-center gap-2 text-error-400 hover:text-error-300"
-                    title="Re-download all server files"
+                    className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-6 py-2.5 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
                   >
-                    Reinstall
+                    Install Server (SteamCMD)
                   </button>
-                </>
-              ) : (
-                <button
-                  onClick={handleInstallServer}
-                  disabled={installState.isInstalling || steamcmdInstalled === false}
-                  className="btn-primary text-xs flex items-center gap-2"
-                >
-                  Install Server (SteamCMD)
-                </button>
-              )}
-              <button
-                onClick={handleOpenFolder}
-                className="btn-ghost text-xs border border-dark-700/50 hover:border-dark-600 flex items-center gap-2 text-dark-400 hover:text-dark-200"
-              >
-                Open Install Folder
-              </button>
-            </div>
-          </div>
-
-          {installState.isInstalling && installState.progress !== null && (
-            <div className="mt-4 space-y-3 animate-fade-in p-4 rounded-xl bg-dark-950/40 border border-dark-800/60">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-primary-400 font-medium capitalize flex items-center gap-1.5">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500"></span>
-                  </span>
-                  {installState.status || 'Installing'}
-                </span>
-                <span className="text-dark-300 font-semibold font-mono">
-                  {installState.progress.toFixed(1)}%
-                </span>
-              </div>
-              
-              <div className="w-full bg-dark-950/80 border border-dark-800 rounded-full h-3 overflow-hidden p-[2px]">
-                <div
-                  className="bg-gradient-to-r from-primary-500 to-cyan-400 h-full rounded-full transition-all duration-300 relative overflow-hidden"
-                  style={{ width: `${installState.progress}%` }}
-                >
-                  <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/10 to-transparent animate-pulse"></div>
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center text-[10px] text-dark-500 font-mono">
-                <div>
-                  {installState.speed > 0 && (
-                    <span>SPEED: <strong className="text-dark-300">{formatBytes(installState.speed)}/s</strong></span>
-                  )}
-                  {installState.eta !== null && installState.eta > 0 && (
-                    <span className="ml-4">ETA: <strong className="text-dark-300">{formatUptime(installState.eta)}</strong></span>
-                  )}
-                </div>
-                {installState.bytesTotal > 0 && (
-                  <span>
-                    {(installState.bytesDownloaded / (1024 * 1024)).toFixed(1)} MB / {(installState.bytesTotal / (1024 * 1024)).toFixed(1)} MB
-                  </span>
                 )}
+                <button
+                  onClick={handleOpenFolder}
+                  className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-dark-400 hover:text-dark-200"
+                >
+                  Open Install Folder
+                </button>
               </div>
             </div>
           )}
 
-          {installState.log && (
-            <div className="mt-3">
-              <div className="text-[10px] font-semibold text-dark-500 uppercase tracking-wider mb-1">
-                Installation Log Output
+          {/* Active Installation Dashboard */}
+          {installState.isInstalling && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-4 border-t border-dark-800/40">
+              
+              {/* Left Column: Progress circle, Timeline, Performance stats */}
+              <div className="lg:col-span-5 space-y-6">
+                
+                {/* Circular Progress Panel */}
+                <div className="glass-card p-5 flex items-center gap-5 border border-dark-800/60 bg-dark-950/30">
+                  <div className="relative flex items-center justify-center h-24 w-24">
+                    <svg className="w-full h-full transform -rotate-90">
+                      <circle
+                        cx="48"
+                        cy="48"
+                        r="40"
+                        stroke="#11131a"
+                        strokeWidth="6"
+                        fill="transparent"
+                      />
+                      <circle
+                        cx="48"
+                        cy="48"
+                        r="40"
+                        stroke="url(#progress-gradient)"
+                        strokeWidth="6"
+                        fill="transparent"
+                        strokeDasharray={`${2 * Math.PI * 40}`}
+                        strokeDashoffset={`${2 * Math.PI * 40 - ((installState.progress || 0) / 100) * 2 * Math.PI * 40}`}
+                        className="transition-all duration-300 ease-out"
+                      />
+                      <defs>
+                        <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                          <stop offset="0%" stopColor="#3b82f6" />
+                          <stop offset="100%" stopColor="#22d3ee" />
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                    <div className="absolute flex flex-col items-center">
+                      <span className="text-lg font-black text-dark-100 font-mono">
+                        {installState.progress !== null ? `${installState.progress.toFixed(0)}%` : '—'}
+                      </span>
+                      <span className="text-[8px] text-dark-500 font-bold uppercase tracking-wider">
+                        {formatStageName(installState.stage)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 space-y-1">
+                    <div className="text-xs font-bold text-dark-200">
+                      {installState.status || 'Processing installation...'}
+                    </div>
+                    <div className="text-[10px] text-dark-400 font-mono flex flex-col gap-0.5">
+                      {installState.bytesTotal > 0 && (
+                        <span>
+                          {formatBytes(installState.bytesDownloaded)} / {formatBytes(installState.bytesTotal)}
+                        </span>
+                      )}
+                      {installState.eta !== null && installState.eta > 0 && (
+                        <span>
+                          Time Remaining: <strong className="text-cyan-400">{formatUptime(installState.eta)}</strong>
+                        </span>
+                      )}
+                      <span>
+                        Elapsed Time: <strong className="text-dark-300">{formatUptime(installState.elapsedSeconds || 0)}</strong>
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleCancelInstallation}
+                      className="mt-2 text-[10px] font-bold text-error-400 hover:text-error-300 bg-error-500/5 hover:bg-error-500/10 border border-error-500/20 rounded px-2.5 py-1 uppercase tracking-wider active:scale-95 transition-all"
+                    >
+                      Cancel Installation
+                    </button>
+                  </div>
+                </div>
+
+                {/* Timeline Panel */}
+                <div className="glass-card p-5 border border-dark-800/60 space-y-4 hover:border-dark-700/80 transition-all duration-300">
+                  <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
+                    Pipeline Stages
+                  </h4>
+                  
+                  <div className="relative pl-8 space-y-6 border-l border-dark-800/60 ml-3">
+                    {[
+                      { key: 'preparing', label: 'Preparing Environment', desc: 'Resolving paths and binaries', match: ['preparing', 'checkingUpdates', 'initializingRuntime'] },
+                      { key: 'connecting', label: 'Connecting to Steam', desc: 'Logging in anonymously', match: ['connecting', 'authenticating'] },
+                      { key: 'manifest', label: 'Fetching Build Manifest', desc: 'Reading app branch configuration', match: ['fetchingManifest'] },
+                      { key: 'allocating', label: 'Allocating Disk Space', desc: 'Reserving target folder space', match: ['allocatingDiskSpace'] },
+                      { key: 'downloading', label: 'Downloading', desc: 'Transferring app files', match: ['downloading'] },
+                      { key: 'verifying', label: 'Verifying Integrity', desc: 'Checking block checksums', match: ['verifying'] },
+                      { key: 'finalizing', label: 'Finalizing Installation', desc: 'Validating build completion', match: ['installing', 'finalizing', 'completed'] },
+                    ].map((step, idx) => {
+                      const curIdx = [
+                        ['preparing', 'checkingUpdates', 'initializingRuntime'],
+                        ['connecting', 'authenticating'],
+                        ['fetchingManifest'],
+                        ['allocatingDiskSpace'],
+                        ['downloading'],
+                        ['verifying'],
+                        ['installing', 'finalizing', 'completed'],
+                      ].findIndex(stages => stages.includes(installState.stage || 'preparing'));
+                      
+                      const isCompleted = idx < curIdx || installState.stage === 'completed';
+                      const isActive = idx === curIdx && installState.stage !== 'completed';
+                      
+                      return (
+                        <div key={step.key} className="relative flex items-start gap-1">
+                          <span 
+                            className={`absolute -left-[44px] top-0 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${
+                              isCompleted
+                                ? 'bg-success-950 border-success-500 text-success-400'
+                                : isActive
+                                ? 'bg-primary-950 border-primary-500 text-primary-400 shadow-md shadow-primary-500/20'
+                                : 'bg-dark-900 border-dark-800 text-dark-500'
+                            } transition-all duration-300`}
+                          >
+                            {isCompleted ? (
+                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            ) : isActive ? (
+                              <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500"></span>
+                              </span>
+                            ) : (
+                              <span className="font-mono text-[9px]">{idx + 1}</span>
+                            )}
+                          </span>
+                          
+                          <div className="space-y-0.5">
+                            <div className={`text-xs font-bold transition-colors ${isActive ? 'text-primary-400' : isCompleted ? 'text-dark-300' : 'text-dark-500'}`}>
+                              {step.label}
+                            </div>
+                            <div className="text-[10px] text-dark-500 leading-normal">{step.desc}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Performance Stats Mini-Dashboard */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="glass-card p-3 border border-dark-800/60 bg-dark-950/20 border-l-2 border-l-cyan-500 pl-3">
+                    <span className="text-[9px] font-bold text-dark-500 uppercase tracking-wider">Network Speed</span>
+                    <div className="text-sm font-black text-cyan-400 font-mono mt-1">
+                      {formatBytes(installState.speedBps || 0)}/s
+                    </div>
+                    <div className="text-[9px] text-dark-500 mt-0.5 font-mono">
+                      Peak: {formatBytes(installState.peakSpeedBps || 0)}/s
+                    </div>
+                  </div>
+                  
+                  <div className="glass-card p-3 border border-dark-800/60 bg-dark-950/20 border-l-2 border-l-warning-500 pl-3">
+                    <span className="text-[9px] font-bold text-dark-500 uppercase tracking-wider">Disk IO</span>
+                    <div className="text-sm font-black text-warning-400 font-mono mt-1">
+                      W: {formatBytes(installState.diskWriteSpeedBps || 0)}/s
+                    </div>
+                    <div className="text-[9px] text-dark-500 mt-0.5 font-mono">
+                      R: {formatBytes(installState.diskReadSpeedBps || 0)}/s
+                    </div>
+                  </div>
+
+                  <div className="col-span-2 glass-card p-3 border border-dark-800/60 bg-dark-950/20 flex justify-between items-center text-xs">
+                    <span className="text-dark-500">Steam CDN node</span>
+                    <span className="font-bold text-dark-300 font-mono text-[10px] truncate max-w-[200px]" title={installState.cdnServer}>
+                      {installState.cdnServer || 'Detecting CDN node...'}
+                    </span>
+                  </div>
+                </div>
+
               </div>
-              <div className="relative rounded-lg overflow-hidden border border-dark-800 bg-dark-950/80">
-                <pre className="console-output text-[11px] h-36 overflow-y-auto whitespace-pre-wrap font-mono p-3 leading-relaxed text-dark-300">
-                  {installState.log}
-                  <div ref={logEndRef} />
-                </pre>
+
+              {/* Right Column: Live Logs console, Diagnostics panel, History list */}
+              <div className="lg:col-span-7 space-y-6">
+                
+                {/* Virtualized Console Logs */}
+                <div className="glass-card border border-dark-800 bg-dark-950 overflow-hidden flex flex-col h-[320px]">
+                  <div className="flex justify-between items-center px-4 py-2 border-b border-dark-800 bg-dark-900/60 text-xs">
+                    <span className="text-dark-400 font-bold uppercase tracking-wider font-mono">Terminal Output</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          if (installState.log) {
+                            navigator.clipboard.writeText(installState.log);
+                            showNotification('success', 'Console log copied to clipboard');
+                          }
+                        }}
+                        className="text-[10px] text-dark-400 hover:text-dark-200 uppercase tracking-wider font-bold"
+                      >
+                        Copy
+                      </button>
+                      <button
+                        onClick={() => {
+                          setInstallState(server.id, { log: '' });
+                        }}
+                        className="text-[10px] text-error-400 hover:text-error-300 uppercase tracking-wider font-bold"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed text-dark-300 bg-dark-950/80">
+                    <pre className="whitespace-pre-wrap word-break-all font-mono">
+                      {installState.log}
+                      <div ref={logEndRef} />
+                    </pre>
+                  </div>
+                </div>
+
+                {/* Diagnostics Panel */}
+                <div className="glass-card p-5 border border-dark-800/80 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
+                      SteamCMD Pre-Flight Diagnostics
+                    </h4>
+                    <button
+                      onClick={runDiag}
+                      disabled={isRunningDiag}
+                      className="text-[10px] font-bold text-primary-400 hover:text-primary-300 uppercase tracking-wider"
+                    >
+                      {isRunningDiag ? 'Running...' : 'Run Diag'}
+                    </button>
+                  </div>
+
+                  {diagnostics ? (
+                    <div className="space-y-2.5 text-xs">
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.steamStatus)}`}>
+                          <span>Steam Servers</span>
+                          <span className="font-bold uppercase text-[10px]">{diagnostics.steamStatus}</span>
+                        </div>
+                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.internetPing)}`}>
+                          <span>Network Speed</span>
+                          <span className="font-bold uppercase text-[10px]">{diagnostics.internetPing}</span>
+                        </div>
+                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.diskSpace)}`}>
+                          <span>Disk Capacity</span>
+                          <span className="font-bold uppercase text-[10px]">{diagnostics.diskSpace}</span>
+                        </div>
+                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.writePermissions)}`}>
+                          <span>Folder Locks</span>
+                          <span className="font-bold uppercase text-[10px]">{diagnostics.writePermissions}</span>
+                        </div>
+                      </div>
+
+                      {diagnostics.issues && diagnostics.issues.length > 0 && (
+                        <div className="bg-error-500/5 border border-error-500/20 rounded-xl p-3.5 space-y-2">
+                          <span className="text-[10px] font-extrabold text-error-400 uppercase tracking-wider">Detected Issues</span>
+                          {diagnostics.issues.map((issue: any, i: number) => (
+                            <div key={i} className="text-xs space-y-1 border-t border-error-500/10 pt-2 first:border-0 first:pt-0">
+                              <div className="font-bold text-error-300">{issue.category}: {issue.cause}</div>
+                              <div className="text-dark-400 text-[11px] leading-relaxed">{issue.description}</div>
+                              <div className="text-success-400 text-[10px] font-semibold">Recommended: {issue.recommendedFix}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-dark-500 animate-pulse text-center py-2">
+                      Loading diagnostics indices...
+                    </div>
+                  )}
+                </div>
+
+                {/* History list */}
+                {history && history.length > 0 && (
+                  <div className="glass-card p-5 border border-dark-850 space-y-3">
+                    <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
+                      Installation History Logs
+                    </h4>
+                    
+                    <div className="space-y-3 max-h-[140px] overflow-y-auto pr-1">
+                      {history.slice(0, 5).map((entry) => (
+                        <div key={entry.id} className="flex justify-between items-start text-xs border-b border-dark-800/40 pb-2.5 last:border-0 last:pb-0 gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-bold text-dark-300">
+                              {entry.status === 'completed' ? `Build ${entry.version || 'unknown'}` : 'Installation Failed'}
+                            </div>
+                            {entry.status !== 'completed' && entry.notes && (
+                              <div className="text-[10px] text-error-400/80 mt-1 leading-relaxed break-words max-w-sm">
+                                {entry.notes}
+                              </div>
+                            )}
+                            <div className="text-[10px] text-dark-500 mt-1">{new Date(entry.createdAt).toLocaleString()}</div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${entry.status === 'completed' ? 'bg-success-500/10 text-success-400 border border-success-500/20' : 'bg-error-500/10 text-error-400 border border-error-500/20'}`}>
+                              {entry.status}
+                            </span>
+                            <div className="text-[9px] text-dark-400 font-mono mt-1">
+                              {formatBytes(entry.downloadedSize)} in {formatUptime(entry.durationSeconds)}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
               </div>
             </div>
           )}

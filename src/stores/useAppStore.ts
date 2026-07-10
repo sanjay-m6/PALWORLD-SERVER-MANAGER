@@ -90,6 +90,15 @@ export interface InstallState {
   speed: number;
   eta: number | null;
   lastUpdatedTime: number;
+  // Reworked engine metrics
+  stage?: string;
+  speedBps?: number;
+  avgSpeedBps?: number;
+  peakSpeedBps?: number;
+  diskWriteSpeedBps?: number;
+  diskReadSpeedBps?: number;
+  cdnServer?: string;
+  elapsedSeconds?: number;
 }
 
 // Store

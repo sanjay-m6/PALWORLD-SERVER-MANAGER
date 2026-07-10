@@ -23,10 +23,10 @@ impl SteamCmdService {
         self.base_dir.join("steamcmd")
     }
 
-    fn write_optimization_config(&self) {
+    pub fn write_optimization_config(&self) {
         let cfg_path = self.get_steamcmd_dir().join("steam_dev.cfg");
         let cfg_content = "\
-@nClientDownloadEnableHTTP2PlatformWindows 0
+@nClientDownloadEnableHTTP2PlatformWindows 1
 @fDownloadRateImprovementToAddAnotherConnection 1.1
 @cMaxInitialDownloadSources 15
 ";
@@ -88,7 +88,6 @@ impl SteamCmdService {
 
         log::info!("[STEAMCMD] Installing Palworld server to {}", install_path);
 
-        use tokio::io::AsyncBufReadExt;
         use tauri::Emitter;
 
         #[derive(Clone, serde::Serialize)]
@@ -116,7 +115,7 @@ impl SteamCmdService {
             "+login".to_string(),
             "anonymous".to_string(),
             "+@nClientDownloadEnableHTTP2PlatformWindows".to_string(),
-            "0".to_string(),
+            "1".to_string(),
             "+@fDownloadRateImprovementToAddAnotherConnection".to_string(),
             "1.1".to_string(),
             "+@cMaxInitialDownloadSources".to_string(),
@@ -136,18 +135,40 @@ impl SteamCmdService {
         args.push("validate".to_string());
         args.push("+quit".to_string());
 
-        let mut child = tokio::process::Command::new(&steamcmd_exe)
-            .args(&args)
+        let mut cmd = tokio::process::Command::new(&steamcmd_exe);
+        cmd.args(&args)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+            .stderr(std::process::Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let mut child = cmd.spawn()
             .context("Failed to spawn SteamCMD")?;
 
         use tokio::io::AsyncReadExt;
         let mut stdout = child.stdout.take().context("Failed to get stdout")?;
+        let mut stderr = child.stderr.take().context("Failed to get stderr")?;
+
+        // Spawn a background task to drain stderr to prevent deadlock
+        let stderr_handle = tokio::spawn(async move {
+            let mut err_buffer = [0u8; 1024];
+            let mut accumulated_err = Vec::new();
+            while let Ok(n) = stderr.read(&mut err_buffer).await {
+                if n == 0 {
+                    break;
+                }
+                accumulated_err.extend_from_slice(&err_buffer[..n]);
+            }
+            accumulated_err
+        });
+
         let mut buffer = [0u8; 1024];
         let mut accumulated = Vec::new();
         let mut full_stdout = String::new();
+        let mut last_progress_pct = -1.0f32;
 
         // e.g. "Update state (0x61) downloading, progress: 1.25 (1254321 / 100000000)"
         let progress_re = regex::Regex::new(
@@ -169,23 +190,35 @@ impl SteamCmdService {
                             full_stdout.push_str(trimmed);
                             full_stdout.push('\n');
 
-                            let _ = app_handle.emit("install-log", InstallLogPayload {
-                                install_path: install_path.to_string(),
-                                line: format!("{}\n", trimmed),
-                            });
-
                             if let Some(caps) = progress_re.captures(trimmed) {
                                 let status = caps.get(2).map_or("", |m| m.as_str());
                                 let progress: f32 = caps.get(3).map_or(0.0, |m| m.as_str().parse().unwrap_or(0.0));
                                 let downloaded: u64 = caps.get(4).map_or(0, |m| m.as_str().parse().unwrap_or(0));
                                 let total: u64 = caps.get(5).map_or(0, |m| m.as_str().parse().unwrap_or(0));
 
-                                let _ = app_handle.emit("install-progress", InstallProgressPayload {
+                                // Throttle progress log and IPC events to prevent UI freezing
+                                let should_emit = (progress - last_progress_pct).abs() >= 0.5 || progress >= 100.0;
+                                if should_emit {
+                                    last_progress_pct = progress;
+
+                                    let _ = app_handle.emit("install-log", InstallLogPayload {
+                                        install_path: install_path.to_string(),
+                                        line: format!("{}\n", trimmed),
+                                    });
+
+                                    let _ = app_handle.emit("install-progress", InstallProgressPayload {
+                                        install_path: install_path.to_string(),
+                                        status: status.to_string(),
+                                        progress,
+                                        bytes_downloaded: downloaded,
+                                        bytes_total: total,
+                                    });
+                                }
+                            } else {
+                                // Always emit non-progress lines immediately
+                                let _ = app_handle.emit("install-log", InstallLogPayload {
                                     install_path: install_path.to_string(),
-                                    status: status.to_string(),
-                                    progress,
-                                    bytes_downloaded: downloaded,
-                                    bytes_total: total,
+                                    line: format!("{}\n", trimmed),
                                 });
                             }
                         }
@@ -214,19 +247,8 @@ impl SteamCmdService {
 
         let status = child.wait().await?;
         if !status.success() {
-            let stderr = child.stderr.take();
-            let stderr_str = if let Some(stderr_stream) = stderr {
-                let mut reader = tokio::io::BufReader::new(stderr_stream);
-                let mut err_line = String::new();
-                let mut err_accum = String::new();
-                while reader.read_line(&mut err_line).await.unwrap_or(0) > 0 {
-                    err_accum.push_str(&err_line);
-                    err_line.clear();
-                }
-                err_accum
-            } else {
-                "Unknown error".to_string()
-            };
+            let stderr_bytes = stderr_handle.await.unwrap_or_default();
+            let stderr_str = String::from_utf8_lossy(&stderr_bytes).into_owned();
             log::error!("[STEAMCMD] Install failed: {}", stderr_str);
             anyhow::bail!("SteamCMD failed with exit code {:?}. stderr: {}", status.code(), stderr_str);
         }

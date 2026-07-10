@@ -476,3 +476,38 @@ pub struct ExtendedServerDetails {
     pub disk_free_bytes: u64,
     pub disk_total_bytes: u64,
 }
+
+// ─── Installation History ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallationHistoryEntry {
+    pub id: i64,
+    pub server_id: i64,
+    pub version: String,
+    pub branch: String,
+    pub status: String,
+    pub downloaded_size: u64,
+    pub duration_seconds: u32,
+    pub average_speed_bps: f64,
+    pub peak_speed_bps: f64,
+    pub validation_result: String,
+    pub notes: String,
+    pub created_at: String,
+}
+
+// ─── Installation Recovery ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallationRecoveryState {
+    pub server_id: i64,
+    pub is_installing: bool,
+    pub stage: String,
+    pub progress: f32,
+    pub status: String,
+    pub bytes_downloaded: u64,
+    pub bytes_total: u64,
+    pub logs: String,
+    pub updated_at: String,
+}

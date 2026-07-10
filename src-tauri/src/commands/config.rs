@@ -189,9 +189,16 @@ New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -Direc
         temp_file.to_string_lossy().replace('\\', "/")
     );
 
-    let output = std::process::Command::new("powershell")
-        .args(&["-Command", &cmd])
-        .output()
+    let mut cmd_obj = std::process::Command::new("powershell");
+    cmd_obj.args(&["-Command", &cmd]);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd_obj.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = cmd_obj.output()
         .map_err(|e| format!("Failed to start PowerShell UAC prompt: {}", e))?;
 
     let _ = std::fs::remove_file(&temp_file);
@@ -218,13 +225,20 @@ pub struct FirewallStatus {
 #[tauri::command]
 pub async fn check_firewall_status(server_name: String) -> Result<FirewallStatus, String> {
     let filter = format!("Palworld - {} - *", server_name);
-    let output = std::process::Command::new("powershell")
-        .args(&[
-            "-NoProfile",
-            "-Command",
-            &format!("Get-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue | Select-Object DisplayName, Enabled | ConvertTo-Json", filter)
-        ])
-        .output()
+    let mut cmd_obj = std::process::Command::new("powershell");
+    cmd_obj.args(&[
+        "-NoProfile",
+        "-Command",
+        &format!("Get-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue | Select-Object DisplayName, Enabled | ConvertTo-Json", filter)
+    ]);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd_obj.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = cmd_obj.output()
         .map_err(|e| e.to_string())?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();

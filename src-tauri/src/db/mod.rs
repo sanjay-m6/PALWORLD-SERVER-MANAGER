@@ -29,6 +29,43 @@ impl Database {
         // Run migration for branch column if it doesn't exist
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN branch TEXT DEFAULT 'public'", []);
 
+        // Migration for installation_history table
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS installation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_id INTEGER NOT NULL,
+                version TEXT DEFAULT '',
+                branch TEXT DEFAULT 'public',
+                status TEXT DEFAULT 'completed',
+                downloaded_size INTEGER DEFAULT 0,
+                duration_seconds INTEGER DEFAULT 0,
+                average_speed_bps REAL DEFAULT 0.0,
+                peak_speed_bps REAL DEFAULT 0.0,
+                validation_result TEXT DEFAULT 'passed',
+                notes TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+            )",
+            [],
+        );
+
+        // Migration for installation_recovery table
+        let _ = conn.execute(
+            "CREATE TABLE IF NOT EXISTS installation_recovery (
+                server_id INTEGER PRIMARY KEY,
+                is_installing INTEGER DEFAULT 0,
+                stage TEXT DEFAULT '',
+                progress REAL DEFAULT 0.0,
+                status TEXT DEFAULT '',
+                bytes_downloaded INTEGER DEFAULT 0,
+                bytes_total INTEGER DEFAULT 0,
+                logs TEXT DEFAULT '',
+                updated_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+            )",
+            [],
+        );
+
         Ok(Database {
             conn: Mutex::new(conn),
         })
@@ -373,6 +410,140 @@ impl Database {
         conn.execute(
             "UPDATE scheduler_tasks SET enabled = ?1 WHERE id = ?2",
             params![enabled, task_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ─── Installation CRUD ──────────────────────────────────────────────────
+
+    pub fn add_install_history(
+        &self,
+        server_id: i64,
+        version: &str,
+        branch: &str,
+        status: &str,
+        downloaded_size: u64,
+        duration_seconds: u32,
+        average_speed: f64,
+        peak_speed: f64,
+        validation_result: &str,
+        notes: &str,
+    ) -> Result<i64, String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO installation_history (
+                server_id, version, branch, status, downloaded_size, 
+                duration_seconds, average_speed_bps, peak_speed_bps, 
+                validation_result, notes, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
+            params![
+                server_id,
+                version,
+                branch,
+                status,
+                downloaded_size,
+                duration_seconds,
+                average_speed,
+                peak_speed,
+                validation_result,
+                notes
+            ],
+        ).map_err(|e| e.to_string())?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn get_install_history(&self, server_id: i64) -> Result<Vec<crate::models::InstallationHistoryEntry>, String> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, server_id, version, branch, status, downloaded_size, 
+                    duration_seconds, average_speed_bps, peak_speed_bps, 
+                    validation_result, notes, created_at
+             FROM installation_history WHERE server_id = ?1 ORDER BY created_at DESC"
+        ).map_err(|e| e.to_string())?;
+
+        let history = stmt.query_map([server_id], |row| {
+            Ok(crate::models::InstallationHistoryEntry {
+                id: row.get(0)?,
+                server_id: row.get(1)?,
+                version: row.get::<_, String>(2).unwrap_or_default(),
+                branch: row.get::<_, String>(3).unwrap_or_else(|_| "public".to_string()),
+                status: row.get::<_, String>(4).unwrap_or_else(|_| "completed".to_string()),
+                downloaded_size: row.get::<_, i64>(5).unwrap_or(0) as u64,
+                duration_seconds: row.get::<_, u32>(6).unwrap_or(0),
+                average_speed_bps: row.get::<_, f64>(7).unwrap_or(0.0),
+                peak_speed_bps: row.get::<_, f64>(8).unwrap_or(0.0),
+                validation_result: row.get::<_, String>(9).unwrap_or_else(|_| "passed".to_string()),
+                notes: row.get::<_, String>(10).unwrap_or_default(),
+                created_at: row.get::<_, String>(11).unwrap_or_default(),
+            })
+        }).map_err(|e| e.to_string())?;
+
+        Ok(history.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn save_install_recovery(
+        &self,
+        server_id: i64,
+        is_installing: bool,
+        stage: &str,
+        progress: f32,
+        status: &str,
+        bytes_downloaded: u64,
+        bytes_total: u64,
+        logs: &str,
+    ) -> Result<(), String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO installation_recovery (
+                server_id, is_installing, stage, progress, status, 
+                bytes_downloaded, bytes_total, logs, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))",
+            params![
+                server_id,
+                is_installing as i32,
+                stage,
+                progress,
+                status,
+                bytes_downloaded as i64,
+                bytes_total as i64,
+                logs
+            ],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn get_install_recovery(&self, server_id: i64) -> Result<Option<crate::models::InstallationRecoveryState>, String> {
+        let conn = self.get_connection()?;
+        match conn.query_row(
+            "SELECT server_id, is_installing, stage, progress, status, 
+                    bytes_downloaded, bytes_total, logs, updated_at
+             FROM installation_recovery WHERE server_id = ?1",
+            [server_id],
+            |row| {
+                Ok(crate::models::InstallationRecoveryState {
+                    server_id: row.get(0)?,
+                    is_installing: row.get::<_, i32>(1)? != 0,
+                    stage: row.get(2)?,
+                    progress: row.get(3)?,
+                    status: row.get(4)?,
+                    bytes_downloaded: row.get::<_, i64>(5)? as u64,
+                    bytes_total: row.get::<_, i64>(6)? as u64,
+                    logs: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            },
+        ) {
+            Ok(state) => Ok(Some(state)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub fn clear_install_recovery(&self, server_id: i64) -> Result<(), String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "DELETE FROM installation_recovery WHERE server_id = ?1",
+            params![server_id],
         ).map_err(|e| e.to_string())?;
         Ok(())
     }

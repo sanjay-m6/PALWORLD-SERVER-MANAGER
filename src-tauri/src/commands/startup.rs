@@ -11,14 +11,21 @@ pub fn get_startup_enabled() -> Result<bool, String> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        let output = Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                "PalworldServerManager",
-            ])
-            .output()
+        let mut cmd = Command::new("reg");
+        cmd.args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            "PalworldServerManager",
+        ]);
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let output = cmd.output()
             .map_err(|e| format!("Registry query failed: {}", e))?;
 
         Ok(output.status.success())
@@ -43,19 +50,26 @@ pub fn set_startup_enabled(enabled: bool) -> Result<(), String> {
                 .map_err(|e| format!("Failed to get exe path: {}", e))?;
             let exe_str = exe_path.to_string_lossy();
 
-            let output = Command::new("reg")
-                .args([
-                    "add",
-                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                    "/v",
-                    "PalworldServerManager",
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    &format!("\"{}\"", exe_str),
-                    "/f",
-                ])
-                .output()
+            let mut cmd = Command::new("reg");
+            cmd.args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "PalworldServerManager",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &format!("\"{}\"", exe_str),
+                "/f",
+            ]);
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            let output = cmd.output()
                 .map_err(|e| format!("Registry write failed: {}", e))?;
 
             if !output.status.success() {
@@ -65,15 +79,22 @@ pub fn set_startup_enabled(enabled: bool) -> Result<(), String> {
                 ));
             }
         } else {
-            let output = Command::new("reg")
-                .args([
-                    "delete",
-                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                    "/v",
-                    "PalworldServerManager",
-                    "/f",
-                ])
-                .output()
+            let mut cmd = Command::new("reg");
+            cmd.args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "PalworldServerManager",
+                "/f",
+            ]);
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            let output = cmd.output()
                 .map_err(|e| format!("Registry delete failed: {}", e))?;
 
             if !output.status.success() {

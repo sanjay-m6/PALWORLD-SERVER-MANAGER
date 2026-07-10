@@ -12,6 +12,7 @@ use services::process_manager::ProcessManager;
 use services::rcon::RconService;
 use services::scheduler::SchedulerService;
 use services::steamcmd::SteamCmdService;
+use services::installation_manager::InstallationManager;
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
 use tauri::Manager;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub log_watcher: LogWatcherService,
     pub scheduler: Arc<SchedulerService>,
     pub steamcmd: SteamCmdService,
+    pub installation_manager: Arc<InstallationManager>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -81,7 +83,7 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
                     } else {
                         println!("✅ Corrupted DB backed up to: {:?}", backup_path);
                     }
-                    Database::new(db_path)
+                    Database::new(db_path.clone())
                         .map_err(|e| format!("failed to initialize database after reset: {}", e))?
                 }
             };
@@ -165,6 +167,8 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             let rcon_service = RconService::new();
             let scheduler = Arc::new(SchedulerService::new(app_handle.clone()));
             let steamcmd = SteamCmdService::new(app_dir.clone());
+            let db_for_installer = Database::new(db_path.clone()).expect("Failed to open DB for installer");
+            let installation_manager = Arc::new(InstallationManager::new(db_for_installer));
 
             // Manage AppState
             app.manage(AppState {
@@ -175,6 +179,7 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
                 log_watcher,
                 scheduler: scheduler.clone(),
                 steamcmd,
+                installation_manager,
             });
 
             app.manage(RconState(rcon_service));
@@ -313,6 +318,12 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::system::open_popout_window,
             commands::system::get_server_extended_details,
             commands::system::open_folder,
+            // Installation commands
+            commands::installation::start_server_installation,
+            commands::installation::cancel_server_installation,
+            commands::installation::get_active_installation_state,
+            commands::installation::get_server_installation_history,
+            commands::installation::run_installation_diagnostics,
             // Scheduler commands
             commands::scheduler::get_tasks,
             commands::scheduler::create_task,
