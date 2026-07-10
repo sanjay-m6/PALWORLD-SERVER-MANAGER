@@ -8,6 +8,7 @@ import { LogsTab } from '../tabs/LogsTab';
 import { PlayersTab } from '../tabs/PlayersTab';
 import { SchedulerTab } from '../tabs/SchedulerTab';
 import { ModsTab } from '../tabs/ModsTab';
+import { FirewallTab } from '../tabs/FirewallTab';
 import { CustomSelect } from '../ui/CustomSelect';
 
 // SVG Icons for Tabs
@@ -63,6 +64,12 @@ const SchedulerIcon = () => (
   </svg>
 );
 
+const FirewallIcon = () => (
+  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+    <path d="M10.3 2.2a1 1 0 00-1.6 0l-5 4a1 1 0 00-.4.8v5c0 4.1 3.5 7.4 7 8a1 1 0 00.6 0c3.5-.6 7-3.9 7-8v-5a1 1 0 00-.4-.8l-5-4z" />
+  </svg>
+);
+
 const tabIcons: Record<ServerTab, React.ComponentType> = {
   overview: OverviewIcon,
   config: ConfigIcon,
@@ -72,6 +79,7 @@ const tabIcons: Record<ServerTab, React.ComponentType> = {
   mods: ModsIcon,
   logs: LogsIcon,
   scheduler: SchedulerIcon,
+  firewall: FirewallIcon,
 };
 
 const tabs: { id: ServerTab; label: string }[] = [
@@ -83,6 +91,7 @@ const tabs: { id: ServerTab; label: string }[] = [
   { id: 'mods', label: 'Mod Manager' },
   { id: 'logs', label: 'Logs' },
   { id: 'scheduler', label: 'Scheduler' },
+  { id: 'firewall', label: 'Firewall' },
 ];
 
 export const ServerDetail: React.FC = () => {
@@ -372,6 +381,9 @@ export const ServerDetail: React.FC = () => {
         </div>
         <div className={activeServerTab === 'scheduler' ? 'h-full block' : 'hidden'}>
           <SchedulerTab key={server.id} serverId={server.id} />
+        </div>
+        <div className={activeServerTab === 'firewall' ? 'h-full block' : 'hidden'}>
+          <FirewallTab key={server.id} serverId={server.id} />
         </div>
       </div>
 

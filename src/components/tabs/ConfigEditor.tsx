@@ -102,10 +102,10 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
 
   const filteredFields = searchQuery.trim() !== ''
     ? configFields.filter((f) =>
-        f.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.key.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (f.description && f.description.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
+      f.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      f.key.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (f.description && f.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    )
     : configFields.filter((f) => f.category === activeCategory);
 
   const categories = [...new Set(configFields.map((f) => f.category))];
@@ -138,6 +138,49 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
     setIsDirty(true);
   };
 
+  const [isAllocatingPorts, setIsAllocatingPorts] = useState(false);
+
+  const handleAutoAllocatePorts = async () => {
+    setIsAllocatingPorts(true);
+    try {
+      const ports = await tauriCommands.allocatePorts(serverId);
+      setConfig((prev: any) => ({
+        ...prev,
+        publicPort: ports.gamePort,
+        rconPort: ports.rconPort,
+        restApiPort: ports.restApiPort,
+      }));
+      setIsDirty(true);
+      showNotification(
+        'success',
+        `Ports allocated successfully! Game Port: ${ports.gamePort}, RCON Port: ${ports.rconPort}, REST API Port: ${ports.restApiPort}`
+      );
+    } catch (e: any) {
+      showNotification('error', `Failed to allocate ports: ${e}`);
+    } finally {
+      setIsAllocatingPorts(false);
+    }
+  };
+
+  const handleAllocateIndividualPort = async (key: string) => {
+    setIsAllocatingPorts(true);
+    try {
+      const ports = await tauriCommands.allocatePorts(serverId);
+      let allocatedPort = 0;
+      if (key === 'publicPort') allocatedPort = ports.gamePort;
+      else if (key === 'rconPort') allocatedPort = ports.rconPort;
+      else if (key === 'restApiPort') allocatedPort = ports.restApiPort;
+
+      handleFieldChange(key, allocatedPort);
+      showNotification('success', `Assigned available port: ${allocatedPort}`);
+    } catch (e: any) {
+      showNotification('error', `Failed to allocate port: ${e}`);
+    } finally {
+      setIsAllocatingPorts(false);
+    }
+  };
+
+
   const handleSave = async () => {
     try {
       if (viewMode === 'raw') {
@@ -169,11 +212,10 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
             onClick={() => {
               setViewMode('visual');
             }}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-              viewMode === 'visual'
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${viewMode === 'visual'
                 ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
                 : 'text-dark-400 hover:text-dark-200'
-            }`}
+              }`}
           >
             Visual Editor
           </button>
@@ -182,11 +224,10 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
               setViewMode('raw');
               loadRawConfig();
             }}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-              viewMode === 'raw'
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${viewMode === 'raw'
                 ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
                 : 'text-dark-400 hover:text-dark-200'
-            }`}
+              }`}
           >
             Raw INI
           </button>
@@ -234,6 +275,15 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
               Unsaved changes
             </span>
           )}
+          {viewMode === 'visual' && (
+            <button
+              onClick={handleAutoAllocatePorts}
+              disabled={isAllocatingPorts}
+              className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/30 hover:border-primary-500/50 font-bold text-xs py-1.5 px-3 rounded-lg uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-50"
+            >
+              {isAllocatingPorts ? 'Allocating...' : 'Auto-Allocate Ports'}
+            </button>
+          )}
           <button onClick={handleSave} className="btn-success text-xs py-1.5 px-4">
             Save Config
           </button>
@@ -251,11 +301,10 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
                   setActiveCategory(cat);
                   setSearchQuery('');
                 }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                  activeCategory === cat && searchQuery.trim() === ''
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-all ${activeCategory === cat && searchQuery.trim() === ''
                     ? 'text-primary-400 bg-primary-500/10'
                     : 'text-dark-400 hover:text-dark-200 hover:bg-dark-700/30'
-                }`}
+                  }`}
               >
                 {cat}
               </button>
@@ -309,35 +358,45 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
                   </div>
                   <div className="w-48">
                     {field.type === 'number' && (
-                      <input
-                        type="number"
-                        value={config[field.key] ?? 1}
-                        onChange={(e) =>
-                          handleFieldChange(field.key, parseFloat(e.target.value))
-                        }
-                        min={field.min}
-                        max={field.max}
-                        step={field.step}
-                        className="input-field text-xs font-mono text-left w-full"
-                      />
+                      <div className="flex gap-2 w-full">
+                        <input
+                          type="number"
+                          value={config[field.key] ?? 1}
+                          onChange={(e) =>
+                            handleFieldChange(field.key, parseFloat(e.target.value))
+                          }
+                          min={field.min}
+                          max={field.max}
+                          step={field.step}
+                          className="input-field text-xs font-mono text-left flex-1 min-w-0"
+                        />
+                        {(field.key === 'publicPort' || field.key === 'rconPort' || field.key === 'restApiPort') && (
+                          <button
+                            onClick={() => handleAllocateIndividualPort(field.key)}
+                            disabled={isAllocatingPorts}
+                            className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-50 shrink-0"
+                            title="Find and assign an available port"
+                          >
+                            Assign
+                          </button>
+                        )}
+                      </div>
                     )}
                     {field.type === 'boolean' && (
                       <button
                         onClick={() =>
                           handleFieldChange(field.key, !config[field.key])
                         }
-                        className={`w-10 h-5 rounded-full transition-all relative ${
-                          config[field.key]
+                        className={`w-10 h-5 rounded-full transition-all relative ${config[field.key]
                             ? 'bg-primary-500/30 border border-primary-500/50'
                             : 'bg-dark-700/50 border border-dark-600/30'
-                        }`}
+                          }`}
                       >
                         <div
-                          className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${
-                            config[field.key]
+                          className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${config[field.key]
                               ? 'left-5 bg-primary-400'
                               : 'left-0.5 bg-dark-500'
-                          }`}
+                            }`}
                         />
                       </button>
                     )}

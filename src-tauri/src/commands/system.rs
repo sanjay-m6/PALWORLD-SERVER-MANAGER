@@ -286,6 +286,7 @@ pub async fn install_mod(
 
     let file_name = source_path.file_name()
         .ok_or_else(|| "Invalid file name".to_string())?;
+    let file_name_str = file_name.to_string_lossy().to_string();
 
     let base_path = std::path::PathBuf::from(&install_path);
     let paks_dir = base_path.join("Pal").join("Content").join("Paks");
@@ -297,9 +298,34 @@ pub async fn install_mod(
     };
 
     std::fs::create_dir_all(&dest_dir).map_err(|e| format!("Failed to create mod directory: {}", e))?;
-    let dest_path = dest_dir.join(file_name);
 
-    std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy mod file: {}", e))?;
+    let is_zip = file_name_str.ends_with(".zip");
+    if is_zip {
+        let file = std::fs::File::open(&source_path).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid zip archive: {}", e))?;
+        let mut extracted_any = false;
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+            if let Some(out_path) = file.enclosed_name() {
+                if out_path.to_string_lossy().ends_with(".pak") {
+                    let dest_path = dest_dir.join(out_path.file_name().unwrap());
+                    let mut outfile = std::fs::File::create(&dest_path).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+                    extracted_any = true;
+                }
+            }
+        }
+        if !extracted_any {
+            return Err("No .pak files found inside the selected zip archive.".to_string());
+        }
+    } else {
+        let mut final_file_name = file_name_str.clone();
+        if !final_file_name.ends_with(".pak") {
+            final_file_name = format!("{}.pak", final_file_name);
+        }
+        let dest_path = dest_dir.join(&final_file_name);
+        std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy mod file: {}", e))?;
+    }
 
     Ok(())
 }
@@ -745,6 +771,7 @@ pub struct SearchResult {
     pub name: String,
     pub title: String,
     pub description: String,
+    pub summary: String,
     pub author: String,
     pub downloads: String,
     pub rating: f64,
@@ -753,35 +780,71 @@ pub struct SearchResult {
     pub source: String,
     pub url: String,
     pub download_url: Option<String>,
+    pub picture_url: Option<String>,
 }
 
 #[tauri::command]
 pub async fn search_mods_online(
+    state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<SearchResult>, String> {
+    let api_key = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_setting("nexus_api_key")?.unwrap_or_default()
+    };
+
+    if api_key.is_empty() {
+        return Err("Nexus Mods API key is not configured. Please save your API key in settings first.".to_string());
+    }
+
     let mut results = Vec::new();
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .build()
         .map_err(|e| e.to_string())?;
 
-    // 1. Search Nexus Mods (Public Search API)
-    let nexus_url = format!("https://search.nexusmods.com/mods?terms={}&game_id=5674", urlencoding::encode(&query));
-    if let Ok(response) = client.get(&nexus_url).send().await {
-        if let Ok(nexus_res) = response.json::<serde_json::Value>().await {
-            if let Some(arr) = nexus_res.as_array() {
-                for item in arr {
-                    let title = item["name"].as_str().unwrap_or("").to_string();
-                    let author = item["username"].as_str().unwrap_or("").to_string();
-                    let downloads = item["downloads"].as_i64().unwrap_or(0).to_string();
-                    let desc = item["summary"].as_str().unwrap_or("").to_string();
-                    let mod_id = item["mod_id"].as_i64().unwrap_or(0);
+    let query_trimmed = query.trim();
+
+    // Check if the query is a Mod ID (number) or a Nexus Mods URL containing the mod ID
+    let mut searched_mod_id = None;
+    if let Ok(id) = query_trimmed.parse::<i64>() {
+        searched_mod_id = Some(id);
+    } else if query_trimmed.contains("nexusmods.com/") {
+        // Parse ID from URL: e.g., https://www.nexusmods.com/palworld/mods/146
+        if let Some(pos) = query_trimmed.find("/mods/") {
+            let start = pos + 6;
+            let id_str: String = query_trimmed[start..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(id) = id_str.parse::<i64>() {
+                searched_mod_id = Some(id);
+            }
+        }
+    }
+
+    if let Some(mod_id) = searched_mod_id {
+        let url = format!("https://api.nexusmods.com/v1/games/palworld/mods/{}.json", mod_id);
+        let response = client.get(&url)
+            .header("apikey", &api_key)
+            .send()
+            .await;
+
+        if let Ok(resp) = response {
+            if let Ok(mod_info) = resp.json::<serde_json::Value>().await {
+                if let Some(name) = mod_info["name"].as_str() {
+                    let summary = mod_info["summary"].as_str().unwrap_or("").to_string();
+                    let description = mod_info["description"].as_str().unwrap_or("").to_string();
+                    let author = mod_info["author"].as_str().unwrap_or("").to_string();
+                    let downloads = mod_info["mod_downloads"].as_i64().unwrap_or(0).to_string();
                     let url = format!("https://www.nexusmods.com/palworld/mods/{}", mod_id);
+                    let picture_url = mod_info["picture_url"].as_str().map(|s| s.to_string());
 
                     results.push(SearchResult {
                         name: format!("nexus_{}.pak", mod_id),
-                        title,
-                        description: desc,
+                        title: name.to_string(),
+                        description,
+                        summary,
                         author,
                         downloads,
                         rating: 4.8,
@@ -790,7 +853,86 @@ pub async fn search_mods_online(
                         source: "nexus".to_string(),
                         url,
                         download_url: None,
+                        picture_url,
                     });
+                }
+            }
+        }
+    } else {
+        // Fetch trending mods
+        let trending_url = "https://api.nexusmods.com/v1/games/palworld/mods/trending.json";
+        if let Ok(resp) = client.get(trending_url).header("apikey", &api_key).send().await {
+            if let Ok(arr) = resp.json::<serde_json::Value>().await {
+                if let Some(mods) = arr.as_array() {
+                    for m in mods {
+                        let name = m["name"].as_str().unwrap_or("");
+                        let summary = m["summary"].as_str().unwrap_or("");
+                        let description = m["description"].as_str().unwrap_or("");
+                        let author = m["author"].as_str().unwrap_or("");
+                        let mod_id = m["mod_id"].as_i64().unwrap_or(0);
+                        let picture_url = m["picture_url"].as_str().map(|s| s.to_string());
+                        
+                        let query_lower = query.to_lowercase();
+                        if query_lower == "pal" || name.to_lowercase().contains(&query_lower) || summary.to_lowercase().contains(&query_lower) {
+                            let item_name = format!("nexus_{}.pak", mod_id);
+                            if !results.iter().any(|r| r.name == item_name) {
+                                results.push(SearchResult {
+                                    name: item_name,
+                                    title: name.to_string(),
+                                    description: description.to_string(),
+                                    summary: summary.to_string(),
+                                    author: author.to_string(),
+                                    downloads: m["mod_downloads"].as_i64().unwrap_or(0).to_string(),
+                                    rating: 4.8,
+                                    category: "Nexus Mods".to_string(),
+                                    compat: "v0.2.4.0+".to_string(),
+                                    source: "nexus".to_string(),
+                                    url: format!("https://www.nexusmods.com/palworld/mods/{}", mod_id),
+                                    download_url: None,
+                                    picture_url,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fetch latest added mods
+        let latest_url = "https://api.nexusmods.com/v1/games/palworld/mods/latestadded.json";
+        if let Ok(resp) = client.get(latest_url).header("apikey", &api_key).send().await {
+            if let Ok(arr) = resp.json::<serde_json::Value>().await {
+                if let Some(mods) = arr.as_array() {
+                    for m in mods {
+                        let name = m["name"].as_str().unwrap_or("");
+                        let summary = m["summary"].as_str().unwrap_or("");
+                        let description = m["description"].as_str().unwrap_or("");
+                        let author = m["author"].as_str().unwrap_or("");
+                        let mod_id = m["mod_id"].as_i64().unwrap_or(0);
+                        let picture_url = m["picture_url"].as_str().map(|s| s.to_string());
+                        
+                        let query_lower = query.to_lowercase();
+                        if query_lower == "pal" || name.to_lowercase().contains(&query_lower) || summary.to_lowercase().contains(&query_lower) {
+                            let item_name = format!("nexus_{}.pak", mod_id);
+                            if !results.iter().any(|r| r.name == item_name) {
+                                results.push(SearchResult {
+                                    name: item_name,
+                                    title: name.to_string(),
+                                    description: description.to_string(),
+                                    summary: summary.to_string(),
+                                    author: author.to_string(),
+                                    downloads: m["mod_downloads"].as_i64().unwrap_or(0).to_string(),
+                                    rating: 4.8,
+                                    category: "Nexus Mods".to_string(),
+                                    compat: "v0.2.4.0+".to_string(),
+                                    source: "nexus".to_string(),
+                                    url: format!("https://www.nexusmods.com/palworld/mods/{}", mod_id),
+                                    download_url: None,
+                                    picture_url,
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -812,6 +954,13 @@ pub async fn search_mods_online(
                     let project_id = hit["project_id"].as_str().unwrap_or("").to_string();
                     let slug = hit["slug"].as_str().unwrap_or("").to_string();
                     let url = format!("https://modrinth.com/mod/{}", slug);
+                    let picture_url = hit["icon_url"].as_str().map(|s| s.to_string());
+                    
+                    let summary = if desc.len() > 120 {
+                        format!("{}...", &desc[..120].trim())
+                    } else {
+                        desc.clone()
+                    };
 
                     let mut download_url = None;
                     let versions_url = format!("https://api.modrinth.com/v2/project/{}/version", project_id);
@@ -835,6 +984,7 @@ pub async fn search_mods_online(
                         name: format!("{}.pak", slug),
                         title,
                         description: desc,
+                        summary,
                         author,
                         downloads,
                         rating: 4.9,
@@ -843,6 +993,7 @@ pub async fn search_mods_online(
                         source: "modrinth".to_string(),
                         url,
                         download_url,
+                        picture_url,
                     });
                 }
             }
@@ -875,6 +1026,10 @@ pub async fn download_nexus_mod_via_api(
     let files_json = files_resp.json::<serde_json::Value>().await
         .map_err(|e| format!("Failed to parse files JSON: {}", e))?;
 
+    if let Some(msg) = files_json["message"].as_str() {
+        return Err(format!("Nexus Mods API error: {}", msg));
+    }
+
     let files_list = files_json["files"].as_array()
         .ok_or_else(|| "No files found for this mod".to_string())?;
 
@@ -893,6 +1048,10 @@ pub async fn download_nexus_mod_via_api(
 
     let dl_link_json = dl_link_resp.json::<serde_json::Value>().await
         .map_err(|e| format!("Failed to parse download link JSON: {}", e))?;
+
+    if let Some(msg) = dl_link_json["message"].as_str() {
+        return Err(format!("Nexus Mods API error: {}", msg));
+    }
 
     let links = dl_link_json.as_array()
         .ok_or_else(|| "Download links response is invalid".to_string())?;

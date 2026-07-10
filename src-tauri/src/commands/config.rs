@@ -94,6 +94,203 @@ pub async fn save_server_config(
 }
 
 #[tauri::command]
+pub async fn allocate_ports(
+    state: State<'_, AppState>,
+    server_id: i64,
+) -> Result<crate::models::ServerPorts, String> {
+    fn is_port_free_tcp_and_udp(port: u16) -> bool {
+        let tcp_ok = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
+        let udp_ok = std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok();
+        tcp_ok && udp_ok
+    }
+
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection()?;
+
+    let mut stmt = conn.prepare("SELECT game_port, rcon_port, rest_api_port FROM servers WHERE id != ?1")
+        .map_err(|e| e.to_string())?;
+    
+    let port_rows = stmt.query_map([server_id], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+    }).map_err(|e| e.to_string())?;
+
+    let mut reserved_game_ports = std::collections::HashSet::new();
+    let mut reserved_rcon_ports = std::collections::HashSet::new();
+    let mut reserved_rest_ports = std::collections::HashSet::new();
+
+    for row in port_rows {
+        if let Ok((game, rcon, rest)) = row {
+            reserved_game_ports.insert(game as u16);
+            reserved_rcon_ports.insert(rcon as u16);
+            reserved_rest_ports.insert(rest as u16);
+        }
+    }
+
+    let current_ports: Option<(u16, u16, u16)> = conn.query_row(
+        "SELECT game_port, rcon_port, rest_api_port FROM servers WHERE id = ?1",
+        [server_id],
+        |row| Ok((row.get::<_, i64>(0)? as u16, row.get::<_, i64>(1)? as u16, row.get::<_, i64>(2)? as u16))
+    ).ok();
+
+    let (cur_game, cur_rcon, cur_rest) = current_ports.unwrap_or((0, 0, 0));
+
+    let mut game_port = 8211;
+    while reserved_game_ports.contains(&game_port) || (game_port != cur_game && !is_port_free_tcp_and_udp(game_port)) {
+        game_port += 1;
+    }
+
+    let mut rcon_port = 25575;
+    while reserved_rcon_ports.contains(&rcon_port) || (rcon_port != cur_rcon && !is_port_free_tcp_and_udp(rcon_port)) {
+        rcon_port += 1;
+    }
+
+    let mut rest_api_port = 8212;
+    while reserved_rest_ports.contains(&rest_api_port) || rest_api_port == game_port || (rest_api_port != cur_rest && !is_port_free_tcp_and_udp(rest_api_port)) {
+        rest_api_port += 1;
+    }
+
+    Ok(crate::models::ServerPorts {
+        game_port,
+        rcon_port,
+        rest_api_port,
+    })
+}
+
+#[tauri::command]
+pub async fn open_firewall_ports(
+    server_name: String,
+    game_port: u16,
+    rcon_port: u16,
+    rest_api_port: u16,
+) -> Result<(), String> {
+    let ps1_content = format!(
+        "Remove-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (UDP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (TCP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (UDP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (TCP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (UDP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -ErrorAction SilentlyContinue
+New-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {1}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {1}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {2}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {2}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {3}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {3}",
+        server_name, game_port, rcon_port, rest_api_port
+    );
+
+    let mut temp_file = std::env::temp_dir();
+    temp_file.push("palworld_firewall.ps1");
+    std::fs::write(&temp_file, ps1_content)
+        .map_err(|e| format!("Failed to write temporary script: {}", e))?;
+
+    let cmd = format!(
+        "Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"{}\"' -Verb RunAs -Wait",
+        temp_file.to_string_lossy().replace('\\', "/")
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(&["-Command", &cmd])
+        .output()
+        .map_err(|e| format!("Failed to start PowerShell UAC prompt: {}", e))?;
+
+    let _ = std::fs::remove_file(&temp_file);
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        if err.contains("canceled") || err.contains("cancelled") {
+            return Err("Firewall configuration was cancelled or UAC permission was denied.".to_string());
+        }
+        return Err(format!("Failed to execute UAC command: {}", err));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FirewallStatus {
+    pub game_port_allowed: bool,
+    pub rcon_port_allowed: bool,
+    pub rest_api_port_allowed: bool,
+}
+
+#[tauri::command]
+pub async fn check_firewall_status(server_name: String) -> Result<FirewallStatus, String> {
+    let filter = format!("Palworld - {} - *", server_name);
+    let output = std::process::Command::new("powershell")
+        .args(&[
+            "-NoProfile",
+            "-Command",
+            &format!("Get-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue | Select-Object DisplayName, Enabled | ConvertTo-Json", filter)
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let mut game_tcp = false;
+    let mut game_udp = false;
+    let mut rcon_tcp = false;
+    let mut rcon_udp = false;
+    let mut rest_tcp = false;
+    let mut rest_udp = false;
+
+    if output.status.success() && !stdout.is_empty() {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            let items = if val.is_array() {
+                val.as_array().unwrap().clone()
+            } else {
+                vec![val]
+            };
+
+            for item in items {
+                if let Some(display_name) = item.get("DisplayName").and_then(|d| d.as_str()) {
+                    let enabled_val = item.get("Enabled");
+                    let enabled = if let Some(b) = enabled_val.and_then(|v| v.as_bool()) {
+                        b
+                    } else if let Some(s) = enabled_val.and_then(|v| v.as_str()) {
+                        s == "True" || s == "1"
+                    } else if let Some(i) = enabled_val.and_then(|v| v.as_i64()) {
+                        i == 1
+                    } else {
+                        false
+                    };
+
+                    if enabled {
+                        if display_name.contains("Game Port") {
+                            if display_name.contains("(TCP)") {
+                                game_tcp = true;
+                            } else if display_name.contains("(UDP)") {
+                                game_udp = true;
+                            }
+                        } else if display_name.contains("RCON Port") {
+                            if display_name.contains("(TCP)") {
+                                rcon_tcp = true;
+                            } else if display_name.contains("(UDP)") {
+                                rcon_udp = true;
+                            }
+                        } else if display_name.contains("REST API Port") {
+                            if display_name.contains("(TCP)") {
+                                rest_tcp = true;
+                            } else if display_name.contains("(UDP)") {
+                                rest_udp = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(FirewallStatus {
+        game_port_allowed: game_tcp && game_udp,
+        rcon_port_allowed: rcon_tcp && rcon_udp,
+        rest_api_port_allowed: rest_tcp && rest_udp,
+    })
+}
+
+#[tauri::command]
 pub async fn get_raw_config(
     state: State<'_, AppState>,
     server_id: i64,

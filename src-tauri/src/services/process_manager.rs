@@ -120,6 +120,8 @@ impl ProcessManager {
             format!("-port={}", game_port),
             "-stdout".to_string(),
             "-FORCELOGFLUSH".to_string(),
+            "EpicApp=PalServer".to_string(),
+            "-publiclobby".to_string(),
         ];
 
         // Add RCON args

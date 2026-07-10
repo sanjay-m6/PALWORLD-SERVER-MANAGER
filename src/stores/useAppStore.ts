@@ -77,7 +77,7 @@ export interface LogLine {
 
 // Views
 export type AppView = 'dashboard' | 'create-server' | 'server-detail' | 'settings';
-export type ServerTab = 'overview' | 'config' | 'rcon' | 'players' | 'backups' | 'logs' | 'mods' | 'scheduler';
+export type ServerTab = 'overview' | 'config' | 'rcon' | 'players' | 'backups' | 'logs' | 'mods' | 'scheduler' | 'firewall';
 
 // Install progress state
 export interface InstallState {

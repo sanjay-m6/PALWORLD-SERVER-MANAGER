@@ -264,6 +264,9 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             // Config commands
             commands::config::get_server_config,
             commands::config::save_server_config,
+            commands::config::allocate_ports,
+            commands::config::open_firewall_ports,
+            commands::config::check_firewall_status,
             commands::config::get_raw_config,
             commands::config::save_raw_config,
             commands::config::get_config_presets,

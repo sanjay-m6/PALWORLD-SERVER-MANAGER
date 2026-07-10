@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { tauriCommands } from '../../lib/tauri';
 import { useAppStore, type Player } from '../../stores/useAppStore';
 
@@ -22,27 +22,80 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [isLoadingWhitelist, setIsLoadingWhitelist] = useState(false);
   const [newWhitelistId, setNewWhitelistId] = useState('');
 
+  const server = useAppStore((state) => state.servers.find((s) => s.id === serverId));
+  const isServerRunning = server?.status === 'running';
   const isConnected = rconConnected[serverId] ?? false;
+
+  const [autoConnect, setAutoConnect] = useState(() => localStorage.getItem(`rcon_autoconnect_${serverId}`) !== 'false');
+  const autoConnectAttempted = useRef(false);
+
+  useEffect(() => {
+    autoConnectAttempted.current = false;
+  }, [serverId]);
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const val = localStorage.getItem(`rcon_autoconnect_${serverId}`) !== 'false';
+      setAutoConnect(val);
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [serverId]);
+
+  useEffect(() => {
+    if (isServerRunning && !isConnected && autoConnect && !autoConnectAttempted.current) {
+      autoConnectAttempted.current = true;
+      tauriCommands.rconConnect(serverId).catch(() => {});
+    }
+  }, [serverId, isServerRunning, isConnected, autoConnect]);
+
+  const [isEnabling, setIsEnabling] = useState(false);
+
+  const handleEnableRcon = async () => {
+    setIsEnabling(true);
+    try {
+      const config = await tauriCommands.getServerConfig(serverId);
+      config.rconEnabled = true;
+      await tauriCommands.saveServerConfig(serverId, config);
+      showNotification('success', 'RCON enabled in configuration. Restarting server to apply...');
+      
+      if (isServerRunning) {
+        await tauriCommands.restartServer(serverId);
+        showNotification('success', 'Server is restarting to enable RCON.');
+      } else {
+        showNotification('success', 'RCON enabled. Start the server to connect.');
+      }
+      
+      const servers = await tauriCommands.getServers();
+      useAppStore.getState().setServers(servers);
+    } catch (e: any) {
+      showNotification('error', `Failed to enable RCON: ${e}`);
+    } finally {
+      setIsEnabling(false);
+    }
+  };
+
+
 
   // --- Actions ---
   const loadPlayers = useCallback(async () => {
-    if (!isConnected) return;
+    if (!isServerRunning) return;
     setIsLoadingPlayers(true);
     try {
       const data = await tauriCommands.getPlayerList(serverId);
-      setPlayers(data);
+      setPlayers(data || []);
     } catch (e: any) {
       showNotification('error', `Failed to get players: ${e}`);
     } finally {
       setIsLoadingPlayers(false);
     }
-  }, [serverId, isConnected, showNotification]);
+  }, [serverId, isServerRunning, showNotification]);
 
   const loadBanList = useCallback(async () => {
     setIsLoadingBans(true);
     try {
       const data = await tauriCommands.getBanList(serverId);
-      setBannedIds(data);
+      setBannedIds(data || []);
     } catch (e: any) {
       showNotification('error', `Failed to load ban list: ${e}`);
     } finally {
@@ -54,7 +107,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     setIsLoadingWhitelist(true);
     try {
       const data = await tauriCommands.getWhitelist(serverId);
-      setWhitelistIds(data);
+      setWhitelistIds(data || []);
     } catch (e: any) {
       showNotification('error', `Failed to load whitelist: ${e}`);
     } finally {
@@ -66,7 +119,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   useEffect(() => {
     if (activeSubTab === 'online') {
       loadPlayers();
-      if (isConnected) {
+      if (isServerRunning) {
         const interval = setInterval(loadPlayers, 15000);
         return () => clearInterval(interval);
       }
@@ -75,7 +128,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     } else if (activeSubTab === 'whitelist') {
       loadWhitelist();
     }
-  }, [serverId, activeSubTab, isConnected, loadPlayers, loadBanList, loadWhitelist]);
+  }, [serverId, activeSubTab, isServerRunning, loadPlayers, loadBanList, loadWhitelist]);
 
   const handleKick = async (steamId: string, name: string) => {
     if (!confirm(`Kick player "${name}"?`)) return;
@@ -91,7 +144,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const handleBan = async (steamId: string, name: string) => {
     if (!confirm(`Ban player "${name}"? They will not be able to rejoin.`)) return;
     try {
-      if (isConnected) {
+      if (isServerRunning) {
         await tauriCommands.banPlayer(serverId, steamId);
       }
       await tauriCommands.addToBanList(serverId, steamId);
@@ -111,7 +164,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     e.preventDefault();
     if (!newBanId.trim()) return;
     try {
-      if (isConnected) {
+      if (isServerRunning) {
         await tauriCommands.banPlayer(serverId, newBanId.trim());
       }
       await tauriCommands.addToBanList(serverId, newBanId.trim());
@@ -195,18 +248,48 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 {players.length}
               </span>
             </div>
-            {isConnected && (
+            {isServerRunning && (
               <button onClick={loadPlayers} className="btn-ghost text-xs py-1.5 px-3">
                 {isLoadingPlayers ? 'Refreshing...' : 'Refresh'}
               </button>
             )}
           </div>
 
-          {!isConnected ? (
+          {!isServerRunning ? (
             <div className="flex-1 flex items-center justify-center py-20">
               <div className="text-center">
-                <p className="text-dark-400 text-sm mb-2">RCON not connected</p>
-                <p className="text-dark-600 text-xs">Connect to RCON to view players</p>
+                <p className="text-dark-400 text-sm mb-2">Server Offline</p>
+                <p className="text-dark-600 text-xs">Start the server to monitor players</p>
+              </div>
+            </div>
+          ) : !server?.rconConfig.enabled ? (
+            <div className="flex-1 flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-warning-400 text-sm mb-2">RCON is Disabled</p>
+                <p className="text-dark-600 text-xs mb-4">RCON must be enabled in the configuration to view players.</p>
+                <button
+                  onClick={handleEnableRcon}
+                  disabled={isEnabling}
+                  className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 hover:text-primary-300 border border-primary-500/30 hover:border-primary-500/50 font-bold px-6 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-50"
+                >
+                  {isEnabling ? 'Enabling RCON...' : 'Enable RCON & Restart Server'}
+                </button>
+              </div>
+            </div>
+          ) : !isConnected && isLoadingPlayers ? (
+            <div className="flex-1 flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-dark-400 text-sm mb-2">Connecting to RCON...</p>
+              </div>
+            </div>
+          ) : !isConnected ? (
+            <div className="flex-1 flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-error-400 text-sm mb-2">RCON Connection Failed</p>
+                <p className="text-dark-600 text-xs">Ensure RCON is enabled in server configuration</p>
+                <button onClick={loadPlayers} className="mt-3 btn-primary text-xs py-1.5 px-3">
+                  Retry Connection
+                </button>
               </div>
             </div>
           ) : players.length === 0 ? (
@@ -355,3 +438,4 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     </div>
   );
 };
+

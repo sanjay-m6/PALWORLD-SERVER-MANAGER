@@ -25,46 +25,34 @@ export const CreateServer: React.FC = () => {
     autoStart: false,
   });
 
+  const handleAutoAllocate = async () => {
+    try {
+      const ports = await tauriCommands.allocatePorts(0);
+      setForm((prev) => ({
+        ...prev,
+        gamePort: ports.gamePort,
+        rconPort: ports.rconPort,
+        restApiPort: ports.restApiPort,
+      }));
+    } catch (err) {
+      console.error('Failed to allocate ports:', err);
+    }
+  };
+
   useEffect(() => {
-    const autoAllocatePorts = async () => {
-      try {
-        const servers = await tauriCommands.getServers();
-        
-        let maxGamePort = 8211;
-        let maxRconPort = 25575;
-        let maxRestPort = 8212;
-        
-        if (servers.length > 0) {
-          servers.forEach((s: any) => {
-            if (s.gamePort >= maxGamePort) maxGamePort = s.gamePort + 1;
-            if (s.rconPort >= maxRconPort) maxRconPort = s.rconPort + 1;
-            if (s.restApiPort >= maxRestPort) maxRestPort = s.restApiPort + 1;
-          });
-          
-          setForm((prev) => ({
-            ...prev,
-            gamePort: maxGamePort,
-            rconPort: maxRconPort,
-            restApiPort: maxRestPort,
-          }));
-        }
-      } catch (err) {
-        console.error('Failed to query existing servers for port allocation:', err);
-      }
-    };
-    autoAllocatePorts();
+    handleAutoAllocate();
   }, []);
 
   const updateField = (field: string, value: any) => {
     setForm((prev) => {
       const next = { ...prev, [field]: value };
-      
+
       // Auto-update path if not manually edited and we are editing the server name
       if (field === 'name' && !isPathManuallyEdited) {
         const cleanedName = value.replace(/[\\/:*?"<>|]/g, '').trim();
         next.installPath = cleanedName ? `C:\\PalworldServers\\${cleanedName}` : '';
       }
-      
+
       return next;
     });
   };
@@ -119,6 +107,18 @@ export const CreateServer: React.FC = () => {
 
       showNotification('success', `Server "${server.name}" created successfully`);
 
+      // Auto-configure firewall ports for the new server
+      try {
+        await tauriCommands.openFirewallPorts(
+          server.name,
+          form.gamePort,
+          form.rconPort,
+          form.restApiPort
+        );
+      } catch (fwErr) {
+        console.warn('Failed to auto-configure firewall for new server:', fwErr);
+      }
+
       // Refresh and navigate
       const servers = await tauriCommands.getServers();
       setServers(servers);
@@ -165,21 +165,19 @@ export const CreateServer: React.FC = () => {
           {[1, 2, 3].map((s) => (
             <React.Fragment key={s}>
               <div
-                className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-all ${
-                  s === step
+                className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-all ${s === step
                     ? 'bg-primary-500/20 text-primary-400 border border-primary-500/40'
                     : s < step
-                    ? 'bg-success-500/20 text-success-400 border border-success-500/40'
-                    : 'bg-dark-800 text-dark-500 border border-dark-700/30'
-                }`}
+                      ? 'bg-success-500/20 text-success-400 border border-success-500/40'
+                      : 'bg-dark-800 text-dark-500 border border-dark-700/30'
+                  }`}
               >
                 {s < step ? '✓' : s}
               </div>
               {s < 3 && (
                 <div
-                  className={`flex-1 h-px ${
-                    s < step ? 'bg-success-500/40' : 'bg-dark-700/30'
-                  }`}
+                  className={`flex-1 h-px ${s < step ? 'bg-success-500/40' : 'bg-dark-700/30'
+                    }`}
                 />
               )}
             </React.Fragment>
@@ -259,11 +257,10 @@ export const CreateServer: React.FC = () => {
                   <button
                     key={p.id}
                     onClick={() => updateField('preset', p.id)}
-                    className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${
-                      form.preset === p.id
+                    className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${form.preset === p.id
                         ? 'border-primary-500/40 bg-primary-500/10 text-primary-400'
                         : 'border-dark-700/30 bg-dark-800/30 text-dark-300 hover:border-dark-600/50'
-                    }`}
+                      }`}
                   >
                     <span className="text-lg">{p.icon}</span>
                     <div>
@@ -286,46 +283,87 @@ export const CreateServer: React.FC = () => {
         {/* Step 2: Network & Security */}
         {step === 2 && (
           <div className="glass-card p-6 space-y-5">
-            <h2 className="text-sm font-semibold text-dark-200 uppercase tracking-wider">
-              Network & Security
-            </h2>
+            <div className="flex items-center justify-between pb-1 border-b border-dark-800/40">
+              <h2 className="text-sm font-semibold text-dark-200 uppercase tracking-wider">
+                Network & Security
+              </h2>
+              <button
+                onClick={handleAutoAllocate}
+                className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+              >
+                Auto-Allocate Ports
+              </button>
+            </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-medium text-dark-400 mb-1.5">
                   Game Port
                 </label>
-                <input
-                  id="create-game-port"
-                  type="number"
-                  value={form.gamePort}
-                  onChange={(e) => updateField('gamePort', parseInt(e.target.value))}
-                  className="input-field font-mono"
-                />
+                <div className="flex gap-2">
+                  <input
+                    id="create-game-port"
+                    type="number"
+                    value={form.gamePort}
+                    onChange={(e) => updateField('gamePort', parseInt(e.target.value))}
+                    className="input-field font-mono flex-1 min-w-0"
+                  />
+                  <button
+                    onClick={async () => {
+                      const ports = await tauriCommands.allocatePorts(0);
+                      updateField('gamePort', ports.gamePort);
+                    }}
+                    className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                  >
+                    Assign
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-dark-400 mb-1.5">
                   RCON Port
                 </label>
-                <input
-                  id="create-rcon-port"
-                  type="number"
-                  value={form.rconPort}
-                  onChange={(e) => updateField('rconPort', parseInt(e.target.value))}
-                  className="input-field font-mono"
-                />
+                <div className="flex gap-2">
+                  <input
+                    id="create-rcon-port"
+                    type="number"
+                    value={form.rconPort}
+                    onChange={(e) => updateField('rconPort', parseInt(e.target.value))}
+                    className="input-field font-mono flex-1 min-w-0"
+                  />
+                  <button
+                    onClick={async () => {
+                      const ports = await tauriCommands.allocatePorts(0);
+                      updateField('rconPort', ports.rconPort);
+                    }}
+                    className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                  >
+                    Assign
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-dark-400 mb-1.5">
                   REST API Port
                 </label>
-                <input
-                  id="create-rest-port"
-                  type="number"
-                  value={form.restApiPort}
-                  onChange={(e) => updateField('restApiPort', parseInt(e.target.value))}
-                  className="input-field font-mono"
-                />
+                <div className="flex gap-2">
+                  <input
+                    id="create-rest-port"
+                    type="number"
+                    value={form.restApiPort}
+                    onChange={(e) => updateField('restApiPort', parseInt(e.target.value))}
+                    className="input-field font-mono flex-1 min-w-0"
+                  />
+                  <button
+                    onClick={async () => {
+                      const ports = await tauriCommands.allocatePorts(0);
+                      updateField('restApiPort', ports.restApiPort);
+                    }}
+                    className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                  >
+                    Assign
+                  </button>
+                </div>
               </div>
             </div>
 

@@ -26,6 +26,12 @@ export const tauriCommands = {
   getServerConfig: (serverId: number) => invoke<any>('get_server_config', { serverId }),
   saveServerConfig: (serverId: number, config: any) =>
     invoke<void>('save_server_config', { serverId, config }),
+  allocatePorts: (serverId: number) =>
+    invoke<{ gamePort: number; rconPort: number; restApiPort: number }>('allocate_ports', { serverId }),
+  openFirewallPorts: (serverName: string, gamePort: number, rconPort: number, restApiPort: number) =>
+    invoke<void>('open_firewall_ports', { serverName, gamePort, rconPort, restApiPort }),
+  checkFirewallStatus: (serverName: string) =>
+    invoke<{ gamePortAllowed: boolean; rconPortAllowed: boolean; restApiPortAllowed: boolean }>('check_firewall_status', { serverName }),
   getRawConfig: (serverId: number) => invoke<string>('get_raw_config', { serverId }),
   saveRawConfig: (serverId: number, content: string) =>
     invoke<void>('save_raw_config', { serverId, content }),
@@ -277,6 +283,15 @@ export function setupEventListeners() {
     } else {
       store.showNotification('info', data.message);
     }
+  });
+
+  // RCON status events
+  listen<{
+    server_id: number;
+    connected: boolean;
+  }>('rcon-status', (event) => {
+    const data = event.payload;
+    useAppStore.getState().setRconConnected(data.server_id, data.connected);
   });
 }
 
