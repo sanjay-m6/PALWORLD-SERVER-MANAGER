@@ -380,7 +380,7 @@ impl InstallationManager {
         server_id: i64,
         install_path: String,
         branch: String,
-        steamcmd_dir: PathBuf,
+        _steamcmd_dir: PathBuf,
         steamcmd_exe: PathBuf,
         state: Arc<Mutex<InstallState>>,
         mut cancel_rx: oneshot::Receiver<()>,
@@ -390,17 +390,39 @@ impl InstallationManager {
         let mut child = self.launch_steamcmd(install_path.clone(), branch.clone(), steamcmd_exe)?;
         let child_pid = child.id();
         
+        let stdout = child.stdout.take().context("Stdout piped handle corrupted")?;
         let stderr = child.stderr.take().context("Stderr piped handle corrupted")?;
         
         // Output channel streams lines
         let (log_tx, mut log_rx) = tokio::sync::mpsc::channel::<String>(100);
+        let log_tx_stdout = log_tx.clone();
         let log_tx_stderr = log_tx.clone();
-        
-        let log_file_path = steamcmd_dir.join("logs").join("console_log.txt");
-        let _ = std::fs::remove_file(&log_file_path);
-        
-        let mut last_read_offset = 0u64;
-        let log_tx_tick = log_tx.clone();
+
+        // Spawn async reader task for stdout
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut reader = stdout;
+            let mut buf = [0u8; 1024];
+            let mut accumulated = Vec::new();
+            while let Ok(n) = reader.read(&mut buf).await {
+                if n == 0 { break; }
+                for &byte in &buf[..n] {
+                    if byte == b'\n' || byte == b'\r' {
+                        if !accumulated.is_empty() {
+                            let line = String::from_utf8_lossy(&accumulated).into_owned();
+                            let _ = log_tx_stdout.send(line).await;
+                            accumulated.clear();
+                        }
+                    } else {
+                        accumulated.push(byte);
+                    }
+                }
+            }
+            if !accumulated.is_empty() {
+                let line = String::from_utf8_lossy(&accumulated).into_owned();
+                let _ = log_tx_stdout.send(line).await;
+            }
+        });
 
         // Spawn async reader task for stderr
         tokio::spawn(async move {
@@ -519,43 +541,11 @@ impl InstallationManager {
                 _ = interval.tick() => {
                     let duration_secs = start_instant.elapsed().as_secs();
                     
-                    // Read new lines from console_log.txt
-                    if log_file_path.exists() {
-                        if let Ok(mut file) = std::fs::File::open(&log_file_path) {
-                            use std::io::{Seek, Read};
-                            if let Ok(file_len) = file.metadata().map(|m| m.len()) {
-                                if file_len < last_read_offset {
-                                    last_read_offset = 0;
-                                }
-                                if file_len > last_read_offset {
-                                    if file.seek(std::io::SeekFrom::Start(last_read_offset)).is_ok() {
-                                        let mut buffer = vec![0u8; (file_len - last_read_offset) as usize];
-                                        if file.read_exact(&mut buffer).is_ok() {
-                                            last_read_offset = file_len;
-                                            let mut accumulated = Vec::new();
-                                            for byte in buffer {
-                                                if byte == b'\n' || byte == b'\r' {
-                                                    if !accumulated.is_empty() {
-                                                        let line = String::from_utf8_lossy(&accumulated).into_owned();
-                                                        let _ = log_tx_tick.send(line).await;
-                                                        accumulated.clear();
-                                                    }
-                                                } else {
-                                                    accumulated.push(byte);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
                     // Freeze Stall Detection (Checked first to prevent MutexGuard across await)
                     let last_log_elapsed = last_log_time.elapsed().as_secs();
-                    if last_log_elapsed >= 40 {
+                    if last_log_elapsed >= 600 {
                         let _ = child.kill().await;
-                        anyhow::bail!("SteamCMD stalled. No console output for 40 seconds. Aborting install.");
+                        anyhow::bail!("SteamCMD stalled. No console output for 10 minutes. Aborting install.");
                     }
                     
                     let mut st = state.lock().unwrap();
@@ -591,7 +581,7 @@ impl InstallationManager {
                         }
                     }
                     
-                    if last_log_elapsed >= 20 {
+                    if last_log_elapsed >= 180 {
                         st.status = "Checking Steam Servers (Stall detected)...".to_string();
                         st.cdn_server = "Checking packet loss...".to_string();
                     }
@@ -665,7 +655,7 @@ impl InstallationManager {
         let mut cmd = tokio::process::Command::new(&steamcmd_exe);
         cmd.args(&args)
             .current_dir(steamcmd_dir)
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
         #[cfg(target_os = "windows")]

@@ -94,7 +94,17 @@ pub async fn delete_server(
 ) -> Result<(), String> {
     let install_path = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.get_server_install_path(server_id)?
+        match db.get_server_install_path(server_id) {
+            Ok(path) => path,
+            Err(e) => {
+                if e.contains("Query returned no rows") || e.contains("Server not found") {
+                    // Server already deleted or not in database, return success to clear UI state
+                    log::warn!("[SERVER] delete_server called for server_id {} which is not in the database", server_id);
+                    return Ok(());
+                }
+                return Err(e);
+            }
+        }
     };
 
     // Stop server if running to release file handles
@@ -118,13 +128,9 @@ pub async fn delete_server(
         )?;
     }
 
-    // Delete from database (cascades to backups, tasks, mods)
-    {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.delete_server(server_id)?;
-    }
-
     // Delete actual server directory from local machine if requested
+    // This is done BEFORE database deletion so that if it fails, the database record
+    // is kept and the deletion can be retried.
     if delete_files {
         let path = std::path::Path::new(&install_path);
         if path.exists() && path.is_dir() {
@@ -132,6 +138,12 @@ pub async fn delete_server(
             std::fs::remove_dir_all(path)
                 .map_err(|e| format!("Failed to delete server folder: {}", e))?;
         }
+    }
+
+    // Delete from database (cascades to backups, tasks, mods)
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.delete_server(server_id)?;
     }
 
     Ok(())
