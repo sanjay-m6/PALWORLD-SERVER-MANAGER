@@ -79,7 +79,7 @@ const RichDescriptionRenderer: React.FC<{ text: string; source: string }> = ({ t
       html = html.replace(/\[i\]([\s\S]*?)\[\/i\]/gi, '<em>$1</em>');
       html = html.replace(/\[u\]([\s\S]*?)\[\/u\]/gi, '<u>$1</u>');
       html = html.replace(/\[color=(#[0-9a-fA-F]+|[a-zA-Z]+)\]([\s\S]*?)\[\/color\]/gi, '<span style="color: $1">$2</span>');
-      html = html.replace(/\[size=(\d+)\]([\s\S]*?)\[\/size\]/gi, (match, size, inner) => {
+      html = html.replace(/\[size=(\d+)\]([\s\S]*?)\[\/size\]/gi, (_match, size, inner) => {
         const sizeMap: Record<string, string> = {
           '1': '0.75rem',
           '2': '0.875rem',
@@ -802,7 +802,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 <p className="text-[10px] text-dark-500 mt-0.5">Manage priorities, active states, and parameters for loaded pak assets.</p>
               </div>
               <button
-                onClick={handleInstallLocal}
+                onClick={() => handleInstallLocal()}
                 disabled={installing}
                 className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold"
               >
