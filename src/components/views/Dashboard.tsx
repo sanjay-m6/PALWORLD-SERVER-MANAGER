@@ -543,25 +543,33 @@ export const Dashboard: React.FC = () => {
                     </div>
 
                     {/* Quick Preset Selector */}
-                    <select
-                      value={server.preset}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => handleApplyPreset(server.id, e.target.value)}
-                      className="bg-dark-900/80 border border-dark-700/50 text-[9px] text-dark-300 font-bold px-2 py-0.5 rounded focus:outline-none focus:border-primary-500/50"
-                    >
-                      <option value="Balanced">Balanced</option>
-                      <option value="Casual">Casual</option>
-                      <option value="PvP">PvP</option>
-                      <option value="Hardcore">Hardcore</option>
-                      <option value="Performance">Performance</option>
-                    </select>
+                    {server.isRemote ? (
+                      <span className="flex items-center gap-1 text-[8px] bg-primary-500/10 text-primary-400 border border-primary-500/20 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                        Remote
+                      </span>
+                    ) : (
+                      <select
+                        value={server.preset}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => handleApplyPreset(server.id, e.target.value)}
+                        className="bg-dark-900/80 border border-dark-700/50 text-[9px] text-dark-300 font-bold px-2 py-0.5 rounded focus:outline-none focus:border-primary-500/50"
+                      >
+                        <option value="Balanced">Balanced</option>
+                        <option value="Casual">Casual</option>
+                        <option value="PvP">PvP</option>
+                        <option value="Hardcore">Hardcore</option>
+                        <option value="Performance">Performance</option>
+                      </select>
+                    )}
                   </div>
 
                   {/* Info table */}
                   <div className="grid grid-cols-2 gap-y-3 text-[10px] mb-4 border-b border-dark-800 pb-3">
                     <div>
-                      <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">Game Port</span>
-                      <span className="text-dark-200 font-mono font-semibold">{server.ports.gamePort}</span>
+                      <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">{server.isRemote ? 'Remote Host' : 'Game Port'}</span>
+                      <span className="text-dark-200 font-mono font-semibold truncate block max-w-[120px]" title={server.isRemote ? `${server.host}:${server.ports.gamePort}` : undefined}>
+                        {server.isRemote ? server.host : server.ports.gamePort}
+                      </span>
                     </div>
                     <div>
                       <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">Max Players</span>
@@ -572,11 +580,13 @@ export const Dashboard: React.FC = () => {
                       <span className={`${
                         installState && installState.isInstalling
                           ? 'text-primary-400 animate-pulse font-bold'
-                          : installStatesMap[server.id] === false
+                          : installStatesMap[server.id] === false && !server.isRemote
                           ? 'text-red-400 font-mono font-bold'
                           : 'text-dark-200'
                       } capitalize font-semibold`}>
-                        {installState && installState.isInstalling
+                        {server.isRemote
+                          ? 'Remote Connection'
+                          : installState && installState.isInstalling
                           ? installState.status
                           : installStatesMap[server.id] === false
                           ? 'Not Installed'
@@ -592,7 +602,7 @@ export const Dashboard: React.FC = () => {
                   </div>
 
                   {/* Resource Monitors */}
-                  {isActive && stats && (
+                  {isActive && stats && !server.isRemote && (
                     <div className="space-y-3 mb-4">
                       {/* CPU Bar */}
                       <div>
@@ -627,7 +637,17 @@ export const Dashboard: React.FC = () => {
 
                 {/* Grid controls */}
                 <div className="space-y-2 pt-2 border-t border-dark-800">
-                  {installState && installState.isInstalling ? (
+                  {server.isRemote ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openServerDetail(server.id);
+                      }}
+                      className="btn-primary w-full py-1.5 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 border-none"
+                    >
+                      Manage Connection
+                    </button>
+                  ) : installState && installState.isInstalling ? (
                     <div className="space-y-1.5 py-1 px-1" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-between items-center text-[10px]">
                         <span className="text-primary-400 font-bold capitalize animate-pulse">{installState.status}</span>

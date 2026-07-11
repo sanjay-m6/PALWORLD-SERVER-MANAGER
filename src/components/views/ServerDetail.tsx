@@ -134,6 +134,12 @@ export const ServerDetail: React.FC = () => {
     }
   }, [server?.id, server?.status, refreshStats]);
 
+  useEffect(() => {
+    if (server?.isRemote && !['overview', 'rcon', 'players'].includes(activeServerTab)) {
+      setActiveServerTab('overview');
+    }
+  }, [server?.isRemote, activeServerTab, setActiveServerTab]);
+
   if (!server) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -191,8 +197,12 @@ export const ServerDetail: React.FC = () => {
   const handleConfirmDelete = async () => {
     setIsDeleteModalOpen(false);
     try {
-      await tauriCommands.deleteServer(server.id, backupFirst, deleteFiles);
-      showNotification('success', deleteFiles ? 'Server and installation files deleted' : 'Server profile deleted');
+      await tauriCommands.deleteServer(
+        server.id,
+        server.isRemote ? false : backupFirst,
+        server.isRemote ? false : deleteFiles
+      );
+      showNotification('success', server.isRemote ? 'Server connection removed' : deleteFiles ? 'Server and installation files deleted' : 'Server profile deleted');
       const updated = await tauriCommands.getServers();
       setServers(updated);
       setCurrentView('dashboard');
@@ -270,7 +280,14 @@ export const ServerDetail: React.FC = () => {
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          {isActive ? (
+          {server.isRemote ? (
+            <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-primary-400 bg-primary-500/10 border border-primary-500/20 rounded-lg">
+              <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 10-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0z" />
+              </svg>
+              Remote Connection
+            </span>
+          ) : isActive ? (
             <>
               <button
                 onClick={handleRestart}
@@ -298,14 +315,14 @@ export const ServerDetail: React.FC = () => {
             onClick={handleDelete}
             className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-error-400 hover:text-error-300 hover:bg-error-500/10 border border-error-500/20 hover:border-error-500/30 rounded-lg transition-all duration-200 active:scale-95"
           >
-            Delete Server
+            {server.isRemote ? 'Remove Connection' : 'Delete Server'}
           </button>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex items-center gap-0.5 px-6 border-b border-dark-700/30 bg-dark-900/20">
-        {tabs.map((tab) => {
+        {(server.isRemote ? tabs.filter(t => ['overview', 'rcon', 'players'].includes(t.id)) : tabs).map((tab) => {
           const Icon = tabIcons[tab.id];
           return (
             <button
@@ -415,40 +432,48 @@ export const ServerDetail: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
-              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Confirm Server Deletion</h2>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
+                {server.isRemote ? 'Remove Connection' : 'Confirm Server Deletion'}
+              </h2>
             </div>
             
             {/* Body text */}
             <p className="text-xs text-dark-300 leading-relaxed">
-              Are you sure you want to delete server <strong className="text-dark-100 font-bold">"{server.name}"</strong>? This will remove all configuration settings. This action cannot be undone.
+              {server.isRemote ? (
+                <>Are you sure you want to remove the connection to <strong className="text-dark-100 font-bold">"{server.name}"</strong>? This will only remove this profile from the application. The remote server will not be affected.</>
+              ) : (
+                <>Are you sure you want to delete server <strong className="text-dark-100 font-bold">"{server.name}"</strong>? This will remove all configuration settings. This action cannot be undone.</>
+              )}
             </p>
 
             {/* Options */}
-            <div className="space-y-3 pt-1">
-              <label className="flex items-start gap-2.5 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={backupFirst}
-                  onChange={(e) => setBackupFirst(e.target.checked)}
-                  className="w-4 h-4 mt-0.5 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/20"
-                />
-                <span className="text-xs text-dark-300 group-hover:text-dark-200 transition-colors selection:bg-transparent">
-                  Create a backup before deleting configuration
-                </span>
-              </label>
+            {!server.isRemote && (
+              <div className="space-y-3 pt-1">
+                <label className="flex items-start gap-2.5 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={backupFirst}
+                    onChange={(e) => setBackupFirst(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/20"
+                  />
+                  <span className="text-xs text-dark-300 group-hover:text-dark-200 transition-colors selection:bg-transparent">
+                    Create a backup before deleting configuration
+                  </span>
+                </label>
 
-              <label className="flex items-start gap-2.5 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={deleteFiles}
-                  onChange={(e) => setDeleteFiles(e.target.checked)}
-                  className="w-4 h-4 mt-0.5 rounded border-error-500/30 bg-dark-800 text-error-500 focus:ring-error-500/20"
-                />
-                <span className="text-xs text-dark-300 group-hover:text-error-400/90 transition-colors selection:bg-transparent">
-                  Delete server installation directory & files from disk (Cannot be undone)
-                </span>
-              </label>
-            </div>
+                <label className="flex items-start gap-2.5 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={deleteFiles}
+                    onChange={(e) => setDeleteFiles(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-error-500/30 bg-dark-800 text-error-500 focus:ring-error-500/20"
+                  />
+                  <span className="text-xs text-dark-300 group-hover:text-error-400/90 transition-colors selection:bg-transparent">
+                    Delete server installation directory & files from disk (Cannot be undone)
+                  </span>
+                </label>
+              </div>
+            )}
 
             {/* Action buttons */}
             <div className="flex items-center justify-end gap-2.5 pt-2">
@@ -462,7 +487,7 @@ export const ServerDetail: React.FC = () => {
                 onClick={handleConfirmDelete}
                 className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:text-error-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
               >
-                Delete Server
+                {server.isRemote ? 'Remove' : 'Delete Server'}
               </button>
             </div>
           </div>
@@ -475,7 +500,7 @@ export const ServerDetail: React.FC = () => {
 // ─── Overview Tab ───────────────────────────────────────────────────────────
 
 const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) => {
-  const { showNotification, installStates, setInstallState } = useAppStore();
+  const { showNotification, installStates, setInstallState, setServers } = useAppStore();
   const [steamcmdInstalled, setSteamcmdInstalled] = useState<boolean | null>(null);
 
   const [publicIp, setPublicIp] = useState('Fetching...');
@@ -492,6 +517,13 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [isRunningDiag, setIsRunningDiag] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isWipeModalOpen, setIsWipeModalOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [wipeConfirmText, setWipeConfirmText] = useState('');
+  const [isWiping, setIsWiping] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
 
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -624,6 +656,29 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
     }
   }, [installState.log]);
 
+  // Local timer to update elapsed seconds second-by-second when installing
+  useEffect(() => {
+    if (!installState.isInstalling) {
+      setElapsedTime(0);
+      return;
+    }
+
+    setElapsedTime(installState.elapsedSeconds || 0);
+
+    const timer = setInterval(() => {
+      setElapsedTime((prev) => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [installState.isInstalling]);
+
+  // Sync with authoritative backend ticks
+  useEffect(() => {
+    if (installState.isInstalling && installState.elapsedSeconds !== undefined) {
+      setElapsedTime(installState.elapsedSeconds);
+    }
+  }, [installState.elapsedSeconds, installState.isInstalling]);
+
   // Detect when installation finishes to show the modal
   const lastInstallStatus = useRef(installState.status);
   useEffect(() => {
@@ -637,6 +692,40 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   const dismissCompletionModal = () => {
     setShowCompletionModal(false);
     setInstallState(server.id, { status: '' });
+  };
+
+  const handleWipeSaves = async () => {
+    if (wipeConfirmText !== 'WIPE') return;
+    setIsWiping(true);
+    try {
+      await tauriCommands.wipeServer(server.id, true, false);
+      showNotification('success', 'Server save games wiped successfully!');
+      setIsWipeModalOpen(false);
+      setWipeConfirmText('');
+      fetchDetails();
+    } catch (e: any) {
+      showNotification('error', `Wipe failed: ${e}`);
+    } finally {
+      setIsWiping(false);
+    }
+  };
+
+  const handleResetConfig = async () => {
+    if (resetConfirmText !== 'RESET') return;
+    setIsWiping(true);
+    try {
+      await tauriCommands.wipeServer(server.id, false, true);
+      showNotification('success', 'Server configurations reset to default successfully!');
+      setIsResetModalOpen(false);
+      setResetConfirmText('');
+      const updated = await tauriCommands.getServers();
+      setServers(updated);
+      fetchDetails();
+    } catch (e: any) {
+      showNotification('error', `Reset failed: ${e}`);
+    } finally {
+      setIsWiping(false);
+    }
   };
 
   const handleInstallSteamcmd = async () => {
@@ -1069,7 +1158,7 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
                         </span>
                       )}
                       <span>
-                        Elapsed Time: <strong className="text-dark-300">{formatUptime(installState.elapsedSeconds || 0)}</strong>
+                        Elapsed Time: <strong className="text-dark-300">{formatUptime(elapsedTime)}</strong>
                       </span>
                     </div>
                     <button
@@ -1087,7 +1176,7 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
                     Pipeline Stages
                   </h4>
                   
-                  <div className="relative pl-8 space-y-6 border-l border-dark-800/60 ml-3">
+                  <div className="relative pl-8 space-y-6 border-l border-l-dark-800/60 ml-3">
                     {[
                       { key: 'preparing', label: 'Preparing Environment', desc: 'Resolving paths and binaries', match: ['preparing', 'checkingUpdates', 'initializingRuntime'] },
                       { key: 'connecting', label: 'Connecting to Steam', desc: 'Logging in anonymously', match: ['connecting', 'authenticating'] },
@@ -1097,18 +1186,19 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
                       { key: 'verifying', label: 'Verifying Integrity', desc: 'Checking block checksums', match: ['verifying'] },
                       { key: 'finalizing', label: 'Finalizing Installation', desc: 'Validating build completion', match: ['installing', 'finalizing', 'completed'] },
                     ].map((step, idx) => {
+                      const currentStage = (installState.stage || 'preparing').toLowerCase();
                       const curIdx = [
-                        ['preparing', 'checkingUpdates', 'initializingRuntime'],
+                        ['preparing', 'checkingupdates', 'initializingruntime'],
                         ['connecting', 'authenticating'],
-                        ['fetchingManifest'],
-                        ['allocatingDiskSpace'],
+                        ['fetchingmanifest'],
+                        ['allocatingdiskspace'],
                         ['downloading'],
                         ['verifying'],
                         ['installing', 'finalizing', 'completed'],
-                      ].findIndex(stages => stages.includes(installState.stage || 'preparing'));
+                      ].findIndex(stages => stages.includes(currentStage));
                       
-                      const isCompleted = idx < curIdx || installState.stage === 'completed';
-                      const isActive = idx === curIdx && installState.stage !== 'completed';
+                      const isCompleted = idx < curIdx || currentStage === 'completed';
+                      const isActive = idx === curIdx && currentStage !== 'completed';
                       
                       return (
                         <div key={step.key} className="relative flex items-start gap-1">
@@ -1497,6 +1587,153 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
           </div>
         </div>
       </div>
+
+      {/* Danger Zone */}
+      <div className="glass-card p-5 border border-error-500/10 bg-dark-900/10 space-y-4">
+        <h3 className="text-xs font-semibold text-error-400 uppercase tracking-wider flex items-center gap-1.5">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-error-500 shrink-0">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+          Danger Zone
+        </h3>
+        <p className="text-[11px] text-dark-450 leading-relaxed">
+          Critical operations that can cause permanent data loss or reset your server configurations.
+        </p>
+
+        <div className="divide-y divide-dark-800/40">
+          {/* Reset Config */}
+          <div className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+            <div className="pr-4">
+              <div className="text-xs font-bold text-dark-200">Reset Server Configuration</div>
+              <div className="text-[10px] text-dark-450 mt-1 max-w-lg leading-normal">
+                Restores all gameplay, combat, and survival configuration settings back to defaults.
+                Your server name, port configurations, and admin passwords will be preserved.
+              </div>
+            </div>
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              disabled={isActive || server.status === 'starting' || server.status === 'stopping' || server.status === 'updating'}
+              className="bg-warning-500/10 hover:bg-warning-500/20 text-warning-400 hover:text-warning-300 border border-warning-500/20 hover:border-warning-500/40 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            >
+              Reset Configuration
+            </button>
+          </div>
+
+          {/* Wipe Saves */}
+          <div className="flex items-center justify-between py-3 last:pb-0">
+            <div className="pr-4">
+              <div className="text-xs font-bold text-error-400">Wipe World & Save Games</div>
+              <div className="text-[10px] text-dark-450 mt-1 max-w-lg leading-normal">
+                Permanently deletes the entire world state, player progress, structures, and character files.
+                All game settings are retained, but player progress begins from scratch.
+              </div>
+            </div>
+            <button
+              onClick={() => setIsWipeModalOpen(true)}
+              disabled={isActive || server.status === 'starting' || server.status === 'stopping' || server.status === 'updating'}
+              className="bg-error-500/10 hover:bg-error-500/20 text-error-400 hover:text-error-300 border border-error-500/20 hover:border-error-500/40 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            >
+              Wipe Save Data
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Reset Configuration Modal */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm" onClick={() => { setIsResetModalOpen(false); setResetConfirmText(''); }} />
+          <div className="relative glass-card max-w-sm w-full border border-warning-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-5 animate-scale-in">
+            <div className="flex items-center gap-3 text-warning-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-warning-500/10 border border-warning-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Reset Server Configuration</h2>
+            </div>
+            <p className="text-xs text-dark-300 leading-relaxed">
+              This will restore all rule and gameplay configurations to their defaults. 
+              Ports, server passwords, and the server name will be preserved.
+            </p>
+            <div className="space-y-2">
+              <label className="text-[10px] text-dark-400 font-bold uppercase tracking-wider">
+                Type <span className="text-warning-400 font-mono">RESET</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                className="input-field text-xs font-mono text-center w-full bg-dark-950"
+                placeholder="RESET"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => { setIsResetModalOpen(false); setResetConfirmText(''); }}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResetConfig}
+                disabled={resetConfirmText !== 'RESET' || isWiping}
+                className="bg-warning-500/10 border border-warning-500/20 hover:bg-warning-500/20 text-warning-400 hover:text-warning-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 disabled:opacity-40"
+              >
+                {isWiping ? 'Resetting...' : 'Reset Config'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Wipe Save Games Modal */}
+      {isWipeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm" onClick={() => { setIsWipeModalOpen(false); setWipeConfirmText(''); }} />
+          <div className="relative glass-card max-w-sm w-full border border-error-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-5 animate-scale-in">
+            <div className="flex items-center gap-3 text-error-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-error-500/10 border border-error-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Wipe World & Save Games</h2>
+            </div>
+            <p className="text-xs text-dark-300 leading-relaxed">
+              This will permanently delete all player data, level progress, bases, and guilds on this server. 
+              <strong>This action cannot be undone.</strong>
+            </p>
+            <div className="space-y-2">
+              <label className="text-[10px] text-dark-400 font-bold uppercase tracking-wider">
+                Type <span className="text-error-400 font-mono">WIPE</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={wipeConfirmText}
+                onChange={(e) => setWipeConfirmText(e.target.value)}
+                className="input-field text-xs font-mono text-center w-full bg-dark-950 border-error-500/25 focus:border-error-500/40 focus:ring-1 focus:ring-error-500/15"
+                placeholder="WIPE"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => { setIsWipeModalOpen(false); setWipeConfirmText(''); }}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleWipeSaves}
+                disabled={wipeConfirmText !== 'WIPE' || isWiping}
+                className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:text-error-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 disabled:opacity-40"
+              >
+                {isWiping ? 'Wiping...' : 'Wipe Saves'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Completion Dialog Success Modal */}
       {showCompletionModal && (

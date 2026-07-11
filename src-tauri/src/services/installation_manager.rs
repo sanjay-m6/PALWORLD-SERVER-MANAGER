@@ -380,12 +380,32 @@ impl InstallationManager {
         server_id: i64,
         install_path: String,
         branch: String,
-        _steamcmd_dir: PathBuf,
+        steamcmd_dir: PathBuf,
         steamcmd_exe: PathBuf,
         state: Arc<Mutex<InstallState>>,
         mut cancel_rx: oneshot::Receiver<()>,
     ) -> Result<()> {
         log::info!("[INSTALL] Running installation loop for server ID {}", server_id);
+
+        // 1. Kill any existing orphaned steamcmd processes to release locks
+        {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            for (pid, process) in sys.processes() {
+                let name = process.name().to_string_lossy().to_lowercase();
+                if name == "steamcmd.exe" || name == "steamcmd" {
+                    log::info!("[INSTALL] Killing orphaned steamcmd process with PID {}", pid);
+                    let _ = process.kill();
+                }
+            }
+            // Give the OS a moment to release locks
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        let log_file_path = steamcmd_dir.join("logs").join("console_log.txt");
+        if log_file_path.exists() {
+            let _ = std::fs::remove_file(&log_file_path);
+        }
 
         let mut child = self.launch_steamcmd(install_path.clone(), branch.clone(), steamcmd_exe)?;
         let child_pid = child.id();
@@ -395,58 +415,79 @@ impl InstallationManager {
         
         // Output channel streams lines
         let (log_tx, mut log_rx) = tokio::sync::mpsc::channel::<String>(100);
-        let log_tx_stdout = log_tx.clone();
-        let log_tx_stderr = log_tx.clone();
+        let log_tx_file = log_tx.clone();
 
-        // Spawn async reader task for stdout
+        // Spawn async reader task for stdout to drain it (prevent blocking)
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut reader = stdout;
-            let mut buf = [0u8; 1024];
-            let mut accumulated = Vec::new();
+            let mut buf = [0u8; 4096];
             while let Ok(n) = reader.read(&mut buf).await {
                 if n == 0 { break; }
-                for &byte in &buf[..n] {
-                    if byte == b'\n' || byte == b'\r' {
-                        if !accumulated.is_empty() {
-                            let line = String::from_utf8_lossy(&accumulated).into_owned();
-                            let _ = log_tx_stdout.send(line).await;
-                            accumulated.clear();
-                        }
-                    } else {
-                        accumulated.push(byte);
-                    }
-                }
-            }
-            if !accumulated.is_empty() {
-                let line = String::from_utf8_lossy(&accumulated).into_owned();
-                let _ = log_tx_stdout.send(line).await;
             }
         });
 
-        // Spawn async reader task for stderr
+        // Spawn async reader task for stderr to drain it (prevent blocking)
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut reader = stderr;
-            let mut buf = [0u8; 1024];
-            let mut accumulated = Vec::new();
+            let mut buf = [0u8; 4096];
             while let Ok(n) = reader.read(&mut buf).await {
                 if n == 0 { break; }
-                for &byte in &buf[..n] {
-                    if byte == b'\n' || byte == b'\r' {
-                        if !accumulated.is_empty() {
-                            let line = String::from_utf8_lossy(&accumulated).into_owned();
-                            let _ = log_tx_stderr.send(format!("[STDERR] {}", line)).await;
-                            accumulated.clear();
-                        }
-                    } else {
-                        accumulated.push(byte);
+            }
+        });
+
+        // Spawn async reader task for console_log.txt
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            
+            // Wait for the log file to be created by SteamCMD
+            let mut file = None;
+            for _ in 0..100 { // try for 10 seconds
+                if log_file_path.exists() {
+                    if let Ok(f) = tokio::fs::File::open(&log_file_path).await {
+                        file = Some(f);
+                        break;
                     }
                 }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            if !accumulated.is_empty() {
-                let line = String::from_utf8_lossy(&accumulated).into_owned();
-                let _ = log_tx_stderr.send(format!("[STDERR] {}", line)).await;
+
+            let mut file = match file {
+                Some(f) => f,
+                None => {
+                    log::error!("[INSTALL] Failed to open SteamCMD console_log.txt after 10 seconds");
+                    return;
+                }
+            };
+
+            let mut accumulated = Vec::new();
+            let mut buf = [0u8; 1024];
+
+            loop {
+                match file.read(&mut buf).await {
+                    Ok(0) => {
+                        // EOF reached, wait a bit for new writes
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Ok(n) => {
+                        for &byte in &buf[..n] {
+                            if byte == b'\n' || byte == b'\r' {
+                                if !accumulated.is_empty() {
+                                    let line = String::from_utf8_lossy(&accumulated).into_owned();
+                                    let _ = log_tx_file.send(line).await;
+                                    accumulated.clear();
+                                }
+                            } else {
+                                accumulated.push(byte);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("[INSTALL] Error reading console_log.txt: {}", e);
+                        break;
+                    }
+                }
             }
         });
 
@@ -461,7 +502,7 @@ impl InstallationManager {
         // Regex definitions
         // Download state: Update state (0x61) downloading, progress: 26.49 (1608797781 / 6073520175)
         let dl_re = regex::Regex::new(
-            r"Update state \((0x[0-9a-fA-F]+)\) ([^,]+), progress: ([0-9.]+)\s+\((\d+)\s+/\s+(\d+)\)"
+            r"Update state \((0x[0-9a-fA-F]+)\) ([^,]+), progress: ([0-9.]+)\s*\((\d+)\s*/\s*(\d+)\)"
         ).unwrap();
         // Verification / Allocating: Update state (0x3) verifying, progress: 49.23
         let state_re = regex::Regex::new(
@@ -655,6 +696,7 @@ impl InstallationManager {
         let mut cmd = tokio::process::Command::new(&steamcmd_exe);
         cmd.args(&args)
             .current_dir(steamcmd_dir)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 

@@ -9,6 +9,9 @@ interface ModItem {
   is_logic_mod: boolean;
   enabled: boolean;
   size_bytes: number;
+  is_workshop_mod?: boolean;
+  author?: string;
+  version?: string;
 }
 
 interface ModPerformanceReport {
@@ -659,7 +662,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
 
   const handleToggle = async (mod: ModItem) => {
     try {
-      await tauriCommands.toggleMod(serverId, mod.name, mod.is_logic_mod, !mod.enabled);
+      await tauriCommands.toggleMod(serverId, mod.name, mod.is_logic_mod, !mod.enabled, mod.is_workshop_mod);
       showNotification('success', `Mod ${!mod.enabled ? 'enabled' : 'disabled'} successfully.`);
       fetchMods();
     } catch (err: any) {
@@ -670,7 +673,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const handleDelete = async (mod: ModItem) => {
     if (!confirm(`Are you sure you want to delete the mod "${mod.name}"?`)) return;
     try {
-      await tauriCommands.deleteMod(serverId, mod.name, mod.is_logic_mod, mod.enabled);
+      await tauriCommands.deleteMod(serverId, mod.name, mod.is_logic_mod, mod.enabled, mod.is_workshop_mod);
       showNotification('success', 'Mod deleted successfully.');
       fetchMods();
     } catch (err: any) {
@@ -839,17 +842,25 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                     }`}
                   >
                     <div className="flex-1 min-w-0 mr-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-dark-100 truncate block max-w-[220px]">{mod.name}</span>
-                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${
-                          mod.is_logic_mod ? 'bg-primary-500/10 text-primary-400 border border-primary-500/20' : 'bg-info-500/10 text-info-400 border border-info-500/20'
-                        }`}>
-                          {mod.is_logic_mod ? 'Logic' : 'Asset'}
-                        </span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-dark-100 truncate block max-w-[220px]" title={mod.name}>{mod.name}</span>
+                        {mod.is_workshop_mod ? (
+                          <span className="text-[8px] font-bold px-1.5 py-0.5 rounded uppercase bg-success-500/10 text-success-400 border border-success-500/20">
+                            Workshop Mod
+                          </span>
+                        ) : (
+                          <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                            mod.is_logic_mod ? 'bg-primary-500/10 text-primary-400 border border-primary-500/20' : 'bg-info-500/10 text-info-400 border border-info-500/20'
+                          }`}>
+                            {mod.is_logic_mod ? 'Logic' : 'Asset'}
+                          </span>
+                        )}
                       </div>
-                      <div className="flex items-center gap-4 mt-1.5 text-[9px] text-dark-500">
+                      <div className="flex items-center gap-4 mt-1.5 text-[9px] text-dark-500 flex-wrap">
                         <span>Size: {formatBytes(mod.size_bytes)}</span>
                         <span>Priority: #{idx + 1}</span>
+                        {mod.version && <span>Version: {mod.version}</span>}
+                        {mod.author && <span>Author: {mod.author}</span>}
                       </div>
                     </div>
 

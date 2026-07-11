@@ -1,7 +1,7 @@
 /// Server CRUD + Lifecycle Tauri Commands
 
 use crate::AppState;
-use crate::models::{CreateServerRequest, Server};
+use crate::models::{CreateServerRequest, Server, PalworldConfig};
 use crate::services::config_generator::ConfigGenerator;
 use tauri::{State, Manager};
 use crate::services::process_manager::StopReason;
@@ -72,9 +72,11 @@ pub async fn create_server(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let id = db.create_server(&request, &config_json)?;
 
-    // Write PalWorldSettings.ini to disk
+    // Write PalWorldSettings.ini to disk if not remote
     drop(db); // Release lock before file I/O
-    ConfigGenerator::write_config(&request.install_path, &config)?;
+    if !request.is_remote.unwrap_or(false) {
+        ConfigGenerator::write_config(&request.install_path, &config)?;
+    }
 
     // Fetch the created server
     let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -151,6 +153,20 @@ pub async fn delete_server(
 
 #[tauri::command]
 pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<(), String> {
+    // Check if remote
+    let is_remote = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        conn.query_row(
+            "SELECT is_remote FROM servers WHERE id = ?1",
+            [server_id],
+            |row| row.get::<_, i32>(0),
+        ).map(|v| v != 0).unwrap_or(false)
+    };
+    if is_remote {
+        return Err("Cannot start a remote server locally. It is managed externally.".to_string());
+    }
+
     // Get server info
     let (install_path, startup_args, game_port, rcon_port, admin_password) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -176,6 +192,19 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     if !crate::services::network::NetworkUtils::is_port_available(rcon_port) {
         return Err(format!("RCON Port {} is already in use. Please choose a different RCON port or stop the conflicting process.", rcon_port));
     }
+
+    // Sync config from DB to INI file right before starting
+    let config: PalworldConfig = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        let config_json: String = conn.query_row(
+            "SELECT config_json FROM servers WHERE id = ?1",
+            [server_id],
+            |row| row.get(0),
+        ).map_err(|e| format!("Failed to get server config: {}", e))?;
+        serde_json::from_str(&config_json).map_err(|e| format!("Failed to parse config: {}", e))?
+    };
+    ConfigGenerator::write_config(&install_path, &config)?;
 
     // Update status to starting
     {
@@ -257,6 +286,20 @@ pub async fn stop_server(
     server_id: i64,
     force: bool,
 ) -> Result<(), String> {
+    // Check if remote
+    let is_remote = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        conn.query_row(
+            "SELECT is_remote FROM servers WHERE id = ?1",
+            [server_id],
+            |row| row.get::<_, i32>(0),
+        ).map(|v| v != 0).unwrap_or(false)
+    };
+    if is_remote {
+        return Err("Cannot stop a remote server locally. It is managed externally.".to_string());
+    }
+
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.update_server_status(server_id, "stopping")?;
@@ -308,19 +351,59 @@ pub async fn get_server_status(
     state: State<'_, AppState>,
     server_id: i64,
 ) -> Result<serde_json::Value, String> {
-    let is_running = state.process_manager.is_server_running(server_id);
-    let pid = state.process_manager.get_server_pid(server_id);
-    let uptime = state.process_manager.get_server_uptime(server_id);
+    let (is_remote, host, rcon_port, status) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        conn.query_row(
+            "SELECT is_remote, host, rcon_port, status FROM servers WHERE id = ?1",
+            [server_id],
+            |row| Ok((
+                row.get::<_, i32>(0).unwrap_or(0) != 0,
+                row.get::<_, String>(1).unwrap_or_else(|_| "127.0.0.1".to_string()),
+                row.get::<_, u16>(2).unwrap_or(25575),
+                row.get::<_, String>(3).unwrap_or_else(|_| "stopped".to_string()),
+            )),
+        ).map_err(|e| e.to_string())?
+    };
 
-    let stats = pid.and_then(crate::services::system_analyzer::SystemAnalyzer::get_process_stats);
+    if is_remote {
+        let addr = format!("{}:{}", host, rcon_port);
+        let is_running = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        .map(|res| res.is_ok())
+        .unwrap_or(false);
 
-    Ok(serde_json::json!({
-        "isRunning": is_running,
-        "pid": pid,
-        "uptimeSeconds": uptime,
-        "cpuUsage": stats.as_ref().map(|s| s.cpu_usage),
-        "memoryMb": stats.as_ref().map(|s| s.memory_mb),
-    }))
+        let new_status = if is_running { "online" } else { "stopped" };
+        if new_status != status {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            db.update_server_status(server_id, new_status)?;
+        }
+
+        Ok(serde_json::json!({
+            "isRunning": is_running,
+            "pid": null,
+            "uptimeSeconds": null,
+            "cpuUsage": null,
+            "memoryMb": null,
+        }))
+    } else {
+        let is_running = state.process_manager.is_server_running(server_id);
+        let pid = state.process_manager.get_server_pid(server_id);
+        let uptime = state.process_manager.get_server_uptime(server_id);
+
+        let stats = pid.and_then(crate::services::system_analyzer::SystemAnalyzer::get_process_stats);
+
+        Ok(serde_json::json!({
+            "isRunning": is_running,
+            "pid": pid,
+            "uptimeSeconds": uptime,
+            "cpuUsage": stats.as_ref().map(|s| s.cpu_usage),
+            "memoryMb": stats.as_ref().map(|s| s.memory_mb),
+        }))
+    }
 }
 
 #[tauri::command]
@@ -352,6 +435,93 @@ pub async fn update_server_auto_start(
         "UPDATE servers SET auto_start = ?1 WHERE id = ?2",
         params![if auto_start { 1 } else { 0 }, server_id],
     ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn wipe_server(
+    state: State<'_, AppState>,
+    server_id: i64,
+    wipe_saves: bool,
+    wipe_configs: bool,
+) -> Result<(), String> {
+    // 1. Ensure the server is not running
+    if state.process_manager.is_server_running(server_id) {
+        return Err("Cannot wipe server data while the server is running. Please stop the server first.".to_string());
+    }
+
+    // 2. Get install path
+    let install_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_server_install_path(server_id)?
+    };
+
+    let install = std::path::PathBuf::from(&install_path);
+
+    // 3. Wipe Saves if requested
+    if wipe_saves {
+        let save_dir = install.join("Pal").join("Saved").join("SaveGames");
+        if save_dir.exists() {
+            log::info!("[SERVER] Wiping save games directory: {:?}", save_dir);
+            std::fs::remove_dir_all(&save_dir)
+                .map_err(|e| format!("Failed to delete SaveGames folder: {}", e))?;
+        }
+    }
+
+    // 4. Wipe/Reset Configs if requested
+    if wipe_configs {
+        // Load current config from DB
+        let current_config: PalworldConfig = {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            let conn = db.get_connection()?;
+            let config_json: String = conn.query_row(
+                "SELECT config_json FROM servers WHERE id = ?1",
+                [server_id],
+                |row| row.get(0),
+            ).map_err(|e| format!("Server config not found: {}", e))?;
+            serde_json::from_str(&config_json).map_err(|e| e.to_string())?
+        };
+
+        // Create default config
+        let mut default_config = PalworldConfig::default();
+
+        // Preserve ports, passwords, names, and api enables
+        default_config.server_name = current_config.server_name;
+        default_config.server_description = current_config.server_description;
+        default_config.public_port = current_config.public_port;
+        default_config.rcon_port = current_config.rcon_port;
+        default_config.rest_api_port = current_config.rest_api_port;
+        default_config.admin_password = current_config.admin_password;
+        default_config.server_password = current_config.server_password;
+        default_config.public_ip = current_config.public_ip;
+        default_config.region = current_config.region;
+        default_config.ban_list_url = current_config.ban_list_url;
+        default_config.rcon_enabled = current_config.rcon_enabled;
+        default_config.rest_api_enabled = current_config.rest_api_enabled;
+        default_config.useauth = current_config.useauth;
+        default_config.crossplay_platforms = current_config.crossplay_platforms;
+
+        let config_json = serde_json::to_string(&default_config).map_err(|e| e.to_string())?;
+
+        // Update DB
+        {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            db.update_server_config(server_id, &config_json)?;
+            db.update_server_ports_and_settings(
+                server_id,
+                default_config.public_port,
+                default_config.rcon_port,
+                default_config.rest_api_port,
+                default_config.server_player_max_num,
+                &default_config.admin_password,
+                &default_config.server_password,
+            )?;
+        }
+
+        // Write to INI file
+        ConfigGenerator::write_config(&install_path, &default_config)?;
+    }
+
     Ok(())
 }
 

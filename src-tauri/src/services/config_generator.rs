@@ -107,7 +107,17 @@ impl ConfigGenerator {
     /// Write the complete PalWorldSettings.ini to disk
     pub fn write_config(install_path: &str, config: &PalworldConfig) -> Result<(), String> {
         let settings_path = Self::get_settings_path(install_path);
-        let settings_map = crate::services::ini_parser::config_to_map(config);
+        let mut settings_map = if settings_path.exists() {
+            crate::services::ini_parser::read_settings_file(&settings_path).unwrap_or_default()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let new_map = crate::services::ini_parser::config_to_map(config);
+        for (k, v) in new_map {
+            settings_map.insert(k, v);
+        }
+
         crate::services::ini_parser::write_settings_file(&settings_path, &settings_map)
     }
 

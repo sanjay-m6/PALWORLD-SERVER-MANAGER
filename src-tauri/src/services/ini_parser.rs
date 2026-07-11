@@ -127,12 +127,12 @@ pub fn config_to_map(config: &crate::models::PalworldConfig) -> HashMap<String, 
     map.insert("PalDamageRateDefense".to_string(), format!("{:.6}", config.pal_damage_rate_defense));
     map.insert("PlayerDamageRateAttack".to_string(), format!("{:.6}", config.player_damage_rate_attack));
     map.insert("PlayerDamageRateDefense".to_string(), format!("{:.6}", config.player_damage_rate_defense));
-    map.insert("PlayerStomachDecreaseRate".to_string(), format!("{:.6}", config.player_stomach_decrease_rate));
-    map.insert("PlayerStaminaDecreaseRate".to_string(), format!("{:.6}", config.player_stamina_decrease_rate));
+    map.insert("PlayerStomachDecreaceRate".to_string(), format!("{:.6}", config.player_stomach_decrease_rate));
+    map.insert("PlayerStaminaDecreaceRate".to_string(), format!("{:.6}", config.player_stamina_decrease_rate));
     map.insert("PlayerAutoHPRegeneRate".to_string(), format!("{:.6}", config.player_auto_hp_regen_rate));
     map.insert("PlayerAutoHpRegeneRateInSleep".to_string(), format!("{:.6}", config.player_auto_hp_regen_rate_in_sleep));
-    map.insert("PalStomachDecreaseRate".to_string(), format!("{:.6}", config.pal_stomach_decrease_rate));
-    map.insert("PalStaminaDecreaseRate".to_string(), format!("{:.6}", config.pal_stamina_decrease_rate));
+    map.insert("PalStomachDecreaceRate".to_string(), format!("{:.6}", config.pal_stomach_decrease_rate));
+    map.insert("PalStaminaDecreaceRate".to_string(), format!("{:.6}", config.pal_stamina_decrease_rate));
     map.insert("PalAutoHPRegeneRate".to_string(), format!("{:.6}", config.pal_auto_hp_regen_rate));
     map.insert("PalAutoHpRegeneRateInSleep".to_string(), format!("{:.6}", config.pal_auto_hp_regen_rate_in_sleep));
     map.insert("DeathPenalty".to_string(), config.death_penalty.clone());
@@ -152,6 +152,8 @@ pub fn config_to_map(config: &crate::models::PalworldConfig) -> HashMap<String, 
     map.insert("bEnablePlayerToPlayerDamage".to_string(), config.enable_player_to_player_damage.to_string().capitalize_first());
     map.insert("bEnableFriendlyFire".to_string(), config.enable_friendly_fire.to_string().capitalize_first());
     map.insert("bEnableInvaderEnemy".to_string(), config.enable_invader_enemy.to_string().capitalize_first());
+    map.insert("bAllowGlobalPalboxExport".to_string(), config.allow_global_palbox_export.to_string().capitalize_first());
+    map.insert("bAllowGlobalPalboxImport".to_string(), config.allow_global_palbox_import.to_string().capitalize_first());
     map.insert("BaseCampMaxNum".to_string(), config.base_camp_max_num.to_string());
     map.insert("BaseCampMaxNumInGuild".to_string(), config.base_camp_max_num_in_guild.to_string());
     map.insert("BaseCampWorkerMaxNum".to_string(), config.base_camp_worker_max_num.to_string());
@@ -163,7 +165,7 @@ pub fn config_to_map(config: &crate::models::PalworldConfig) -> HashMap<String, 
     map.insert("ServerPlayerMaxNum".to_string(), config.server_player_max_num.to_string());
     map.insert("ServerName".to_string(), format!("\"{}\"", config.server_name));
     map.insert("ServerDescription".to_string(), format!("\"{}\"", config.server_description));
-    map.insert("AdminPassword".to_string(), format!("\"{}\"", config.admin_password));
+    map.insert("AdminPassword".to_string(), config.admin_password.trim().to_string());
     map.insert("ServerPassword".to_string(), format!("\"{}\"", config.server_password));
     map.insert("PublicPort".to_string(), config.public_port.to_string());
     map.insert("PublicIP".to_string(), format!("\"{}\"", config.public_ip));
@@ -179,6 +181,63 @@ pub fn config_to_map(config: &crate::models::PalworldConfig) -> HashMap<String, 
     map.insert("bEnableAimAssistPad".to_string(), config.enable_aim_assist_pad.to_string().capitalize_first());
     map.insert("bEnableAimAssistKeyboard".to_string(), config.enable_aim_assist_keyboard.to_string().capitalize_first());
     map.insert("SupplyDropSpan".to_string(), config.supply_drop_span.to_string());
+
+    // New 1.0.0 Settings
+    map.insert("RandomizerType".to_string(), config.randomizer_type.clone());
+    map.insert("RandomizerSeed".to_string(), format!("\"{}\"", config.randomizer_seed));
+    map.insert("bIsRandomizerPalLevelRandom".to_string(), config.is_randomizer_pal_level_random.to_string().capitalize_first());
+    map.insert("BuildObjectHpRate".to_string(), format!("{:.6}", config.build_object_hp_rate));
+    map.insert("bActiveUNKO".to_string(), config.active_unko.to_string().capitalize_first());
+    map.insert("PhysicsActiveDropItemMaxNum".to_string(), config.physics_active_drop_item_max_num.to_string());
+    map.insert("AutoSaveSpan".to_string(), format!("{:.6}", config.auto_save_span));
+    map.insert("bHardcore".to_string(), config.hardcore.to_string().capitalize_first());
+    map.insert("bPalLost".to_string(), config.pal_lost.to_string().capitalize_first());
+    map.insert("bCharacterRecreateInHardcore".to_string(), config.character_recreate_in_hardcore.to_string().capitalize_first());
+    map.insert("bEnableFastTravelOnlyBaseCamp".to_string(), config.enable_fast_travel_only_base_camp.to_string().capitalize_first());
+    map.insert("bIsStartLocationSelectByMap".to_string(), config.is_start_location_select_by_map.to_string().capitalize_first());
+    map.insert("bExistPlayerAfterLogout".to_string(), config.exist_player_after_logout.to_string().capitalize_first());
+    map.insert("bEnableDefenseOtherGuildPlayer".to_string(), config.enable_defense_other_guild_player.to_string().capitalize_first());
+    map.insert("bInvisibleOtherGuildBaseCampAreaFX".to_string(), config.invisible_other_guild_base_camp_area_fx.to_string().capitalize_first());
+    map.insert("bBuildAreaLimit".to_string(), config.build_area_limit.to_string().capitalize_first());
+    map.insert("ItemWeightRate".to_string(), format!("{:.6}", config.item_weight_rate));
+    map.insert("bAllowClientMod".to_string(), config.allow_client_mod.to_string().capitalize_first());
+    map.insert("bShowPlayerList".to_string(), config.show_player_list.to_string().capitalize_first());
+    map.insert("ChatPostLimitPerMinute".to_string(), config.chat_post_limit_per_minute.to_string());
+    map.insert("CrossplayPlatforms".to_string(), config.crossplay_platforms.clone());
+    map.insert("bIsUseBackupSaveData".to_string(), config.is_use_backup_save_data.to_string().capitalize_first());
+    map.insert("LogFormatType".to_string(), config.log_format_type.clone());
+    map.insert("bIsShowJoinLeftMessage".to_string(), config.is_show_join_left_message.to_string().capitalize_first());
+    map.insert("EnablePredatorBossPal".to_string(), config.enable_predator_boss_pal.to_string().capitalize_first());
+    map.insert("MaxBuildingLimitNum".to_string(), config.max_building_limit_num.to_string());
+    map.insert("ServerReplicatePawnCullDistance".to_string(), format!("{:.6}", config.server_replicate_pawn_cull_distance));
+    map.insert("EquipmentDurabilityDamageRate".to_string(), format!("{:.6}", config.equipment_durability_damage_rate));
+    map.insert("ItemContainerForceMarkDirtyInterval".to_string(), format!("{:.6}", config.item_container_force_mark_dirty_interval));
+    map.insert("PlayerDataPalStorageUpdateCheckTickInterval".to_string(), format!("{:.6}", config.player_data_pal_storage_update_check_tick_interval));
+    map.insert("ItemCorruptionMultiplier".to_string(), format!("{:.6}", config.item_corruption_multiplier));
+    map.insert("MonsterFarmActionSpeedRate".to_string(), format!("{:.6}", config.monster_farm_action_speed_rate));
+    map.insert("DenyTechnologyList".to_string(), format!("\"{}\"", config.deny_technology_list));
+    map.insert("GuildRejoinCooldownMinutes".to_string(), config.guild_rejoin_cooldown_minutes.to_string());
+    map.insert("AutoTransferMasterCheckIntervalSeconds".to_string(), format!("{:.6}", config.auto_transfer_master_check_interval_seconds));
+    map.insert("AutoTransferMasterThresholdDays".to_string(), config.auto_transfer_master_threshold_days.to_string());
+    map.insert("MaxGuildsPerFrame".to_string(), config.max_guilds_per_frame.to_string());
+    map.insert("BlockRespawnTime".to_string(), format!("{:.6}", config.block_respawn_time));
+    map.insert("RespawnPenaltyDurationThreshold".to_string(), format!("{:.6}", config.respawn_penalty_duration_threshold));
+    map.insert("RespawnPenaltyTimeScale".to_string(), format!("{:.6}", config.respawn_penalty_time_scale));
+    map.insert("bDisplayPvPItemNumOnWorldMap_BaseCamp".to_string(), config.display_pvp_item_num_on_world_map_base_camp.to_string().capitalize_first());
+    map.insert("bDisplayPvPItemNumOnWorldMap_Player".to_string(), config.display_pvp_item_num_on_world_map_player.to_string().capitalize_first());
+    map.insert("AdditionalDropItemWhenPlayerKillingInPvPMode".to_string(), format!("\"{}\"", config.additional_drop_item_when_player_killing_in_pvp_mode));
+    map.insert("AdditionalDropItemNumWhenPlayerKillingInPvPMode".to_string(), config.additional_drop_item_num_when_player_killing_in_pvp_mode.to_string());
+    map.insert("bAdditionalDropItemWhenPlayerKillingInPvPMode".to_string(), config.b_additional_drop_item_when_player_killing_in_pvp_mode.to_string().capitalize_first());
+    map.insert("bEnableVoiceChat".to_string(), config.enable_voice_chat.to_string().capitalize_first());
+    map.insert("VoiceChatMaxVolumeDistance".to_string(), format!("{:.6}", config.voice_chat_max_volume_distance));
+    map.insert("VoiceChatZeroVolumeDistance".to_string(), format!("{:.6}", config.voice_chat_zero_volume_distance));
+    map.insert("bAllowEnhanceStat_Health".to_string(), config.allow_enhance_stat_health.to_string().capitalize_first());
+    map.insert("bAllowEnhanceStat_Attack".to_string(), config.allow_enhance_stat_attack.to_string().capitalize_first());
+    map.insert("bAllowEnhanceStat_Stamina".to_string(), config.allow_enhance_stat_stamina.to_string().capitalize_first());
+    map.insert("bAllowEnhanceStat_Weight".to_string(), config.allow_enhance_stat_weight.to_string().capitalize_first());
+    map.insert("bAllowEnhanceStat_WorkSpeed".to_string(), config.allow_enhance_stat_work_speed.to_string().capitalize_first());
+    map.insert("bEnableBuildingPlayerUIdDisplay".to_string(), config.enable_building_player_uid_display.to_string().capitalize_first());
+    map.insert("BuildingNameDisplayCacheTTLSeconds".to_string(), config.building_name_display_cache_ttl_seconds.to_string());
 
     map
 }

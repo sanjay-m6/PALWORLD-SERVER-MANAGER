@@ -28,6 +28,8 @@ impl Database {
 
         // Run migration for branch column if it doesn't exist
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN branch TEXT DEFAULT 'public'", []);
+        let _ = conn.execute("ALTER TABLE servers ADD COLUMN host TEXT DEFAULT '127.0.0.1'", []);
+        let _ = conn.execute("ALTER TABLE servers ADD COLUMN is_remote INTEGER DEFAULT 0", []);
 
         // Migration for installation_history table
         let _ = conn.execute(
@@ -107,7 +109,7 @@ impl Database {
             "SELECT id, name, description, install_path, save_path, status, game_port, rcon_port, rcon_enabled,
                     rest_api_port, rest_api_enabled, max_players, admin_password, server_password, is_public,
                     preset, startup_args, crossplay_platforms, auto_start, auto_restart_schedule,
-                    created_at, last_started, config_json, branch
+                    created_at, last_started, config_json, branch, host, is_remote
              FROM servers ORDER BY id"
         ).map_err(|e| e.to_string())?;
 
@@ -154,6 +156,8 @@ impl Database {
                 last_started: row.get::<_, Option<String>>(21).ok().flatten(),
                 config_json: row.get::<_, String>(22).unwrap_or_else(|_| "{}".to_string()),
                 branch: row.get::<_, String>(23).unwrap_or_else(|_| "public".to_string()),
+                host: row.get::<_, String>(24).unwrap_or_else(|_| "127.0.0.1".to_string()),
+                is_remote: row.get::<_, bool>(25).unwrap_or(false),
             })
         }).map_err(|e| e.to_string())?;
 
@@ -165,8 +169,8 @@ impl Database {
         conn.execute(
             "INSERT INTO servers (name, description, install_path, preset, game_port, rcon_port,
                                   rest_api_port, max_players, admin_password, server_password,
-                                  is_public, auto_start, config_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                  is_public, auto_start, config_json, host, is_remote)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 req.name,
                 req.description.as_deref().unwrap_or(""),
@@ -181,6 +185,8 @@ impl Database {
                 req.is_public,
                 req.auto_start,
                 config_json,
+                req.host.as_deref().unwrap_or("127.0.0.1"),
+                req.is_remote.unwrap_or(false) as i32,
             ],
         ).map_err(|e| e.to_string())?;
 

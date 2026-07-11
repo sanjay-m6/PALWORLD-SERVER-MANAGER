@@ -75,32 +75,75 @@ pub async fn download_workshop_mod(
         .join(&workshop_id);
 
     if workshop_content_dir.exists() {
-        // Copy mod files to the server's Paks directory
-        let paks_dir = std::path::Path::new(&install_path)
-            .join("Pal")
-            .join("Content")
-            .join("Paks");
-        
-        std::fs::create_dir_all(&paks_dir)
-            .map_err(|e| format!("Failed to create Paks directory: {}", e))?;
+        // Look for Info.json (official mod loader structure)
+        if let Some(info_json_path) = find_info_json(&workshop_content_dir) {
+            let mod_src_dir = info_json_path.parent().unwrap();
+            
+            // Dest is Mods/Workshop/<workshop_id>
+            let dest_dir = std::path::Path::new(&install_path)
+                .join("Mods")
+                .join("Workshop")
+                .join(&workshop_id);
 
-        let mut copied_files = Vec::new();
-        copy_dir_contents(&workshop_content_dir, &paks_dir, &mut copied_files)
-            .map_err(|e| format!("Failed to copy mod files: {}", e))?;
+            std::fs::create_dir_all(&dest_dir)
+                .map_err(|e| format!("Failed to create Mods/Workshop directory: {}", e))?;
 
-        let mod_name = if copied_files.is_empty() {
-            format!("Workshop_{}", workshop_id)
+            let mut copied_files = Vec::new();
+            copy_dir_contents(mod_src_dir, &dest_dir, &mut copied_files)
+                .map_err(|e| format!("Failed to copy mod files to workshop directory: {}", e))?;
+
+            // Read Info.json to get PackageName
+            let mut package_name = format!("Workshop_{}", workshop_id);
+            if let Ok(info_content) = std::fs::read_to_string(dest_dir.join("Info.json")) {
+                if let Ok(info) = serde_json::from_str::<serde_json::Value>(&info_content) {
+                    if let Some(name) = info.get("PackageName").and_then(|v| v.as_str()) {
+                        package_name = name.to_string();
+                    }
+                }
+            }
+
+            // Enable mod in PalModSettings.ini
+            let ini_path = std::path::Path::new(&install_path)
+                .join("Mods")
+                .join("PalModSettings.ini");
+            
+            enable_mod_in_ini(&ini_path, &package_name)?;
+
+            log::info!("[WORKSHOP] Successfully installed official mod {} as {}", workshop_id, package_name);
+
+            Ok(WorkshopDownloadResult {
+                success: true,
+                message: format!("Successfully downloaded and installed official Workshop Mod \"{}\".", package_name),
+                mod_name: Some(package_name),
+            })
         } else {
-            copied_files[0].clone()
-        };
+            // Fallback: Copy mod files to the server's Paks directory (legacy)
+            let paks_dir = std::path::Path::new(&install_path)
+                .join("Pal")
+                .join("Content")
+                .join("Paks");
+            
+            std::fs::create_dir_all(&paks_dir)
+                .map_err(|e| format!("Failed to create Paks directory: {}", e))?;
 
-        log::info!("[WORKSHOP] Successfully installed workshop item {} ({} files)", workshop_id, copied_files.len());
+            let mut copied_files = Vec::new();
+            copy_dir_contents(&workshop_content_dir, &paks_dir, &mut copied_files)
+                .map_err(|e| format!("Failed to copy mod files: {}", e))?;
 
-        Ok(WorkshopDownloadResult {
-            success: true,
-            message: format!("Successfully downloaded and installed workshop item {}. {} files copied.", workshop_id, copied_files.len()),
-            mod_name: Some(mod_name),
-        })
+            let mod_name = if copied_files.is_empty() {
+                format!("Workshop_{}", workshop_id)
+            } else {
+                copied_files[0].clone()
+            };
+
+            log::info!("[WORKSHOP] Successfully installed legacy workshop item {} ({} files)", workshop_id, copied_files.len());
+
+            Ok(WorkshopDownloadResult {
+                success: true,
+                message: format!("Successfully downloaded and installed legacy workshop item. {} files copied to Paks.", copied_files.len()),
+                mod_name: Some(mod_name),
+            })
+        }
     } else {
         log::error!("[WORKSHOP] Download failed. SteamCMD output: {}", stdout);
         Ok(WorkshopDownloadResult {
@@ -241,5 +284,72 @@ fn copy_dir_contents(
             copied_files.push(file_name);
         }
     }
+    Ok(())
+}
+
+fn find_info_json(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.file_name().unwrap_or_default() == "Info.json" {
+                return Some(path);
+            }
+            if path.is_dir() {
+                if let Some(found) = find_info_json(&path) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn enable_mod_in_ini(ini_path: &std::path::Path, package_name: &str) -> Result<(), String> {
+    let mut lines = Vec::new();
+    let mut section_found = false;
+    let mut global_enable_found = false;
+    let mut mod_already_active = false;
+
+    if ini_path.exists() {
+        let content = std::fs::read_to_string(ini_path)
+            .map_err(|e| format!("Failed to read PalModSettings.ini: {}", e))?;
+        
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "[PalModSettings]" {
+                section_found = true;
+            } else if trimmed.starts_with("[") {
+                section_found = false;
+            }
+            if section_found && trimmed.starts_with("bGlobalEnableMod") {
+                global_enable_found = true;
+                lines.push("bGlobalEnableMod=true".to_string());
+                continue;
+            }
+            if section_found && trimmed == &format!("ActiveModList={}", package_name) {
+                mod_already_active = true;
+            }
+            lines.push(line.to_string());
+        }
+    }
+
+    if !section_found {
+        lines.push("[PalModSettings]".to_string());
+    }
+    if !global_enable_found {
+        lines.push("bGlobalEnableMod=true".to_string());
+    }
+    if !mod_already_active {
+        lines.push(format!("ActiveModList={}", package_name));
+    }
+
+    if let Some(parent) = ini_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Mods directory: {}", e))?;
+    }
+
+    std::fs::write(ini_path, lines.join("\n") + "\n")
+        .map_err(|e| format!("Failed to write PalModSettings.ini: {}", e))?;
+
     Ok(())
 }

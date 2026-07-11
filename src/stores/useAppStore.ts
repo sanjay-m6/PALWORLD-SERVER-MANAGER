@@ -37,6 +37,8 @@ export interface Server {
   lastStarted: string | null;
   configJson: string;
   branch: string;
+  host: string;
+  isRemote: boolean;
 }
 
 // Backup model

@@ -266,6 +266,7 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::server::get_server_status,
             commands::server::update_server_branch,
             commands::server::update_server_auto_start,
+            commands::server::wipe_server,
             // Config commands
             commands::config::get_server_config,
             commands::config::save_server_config,
@@ -318,6 +319,7 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::system::open_popout_window,
             commands::system::get_server_extended_details,
             commands::system::open_folder,
+            commands::system::parse_existing_server_config,
             // Installation commands
             commands::installation::start_server_installation,
             commands::installation::cancel_server_installation,

@@ -21,6 +21,8 @@ export const tauriCommands = {
     invoke<void>('update_server_branch', { serverId, branch }),
   updateServerAutoStart: (serverId: number, autoStart: boolean) =>
     invoke<void>('update_server_auto_start', { serverId, autoStart }),
+  wipeServer: (serverId: number, wipeSaves: boolean, wipeConfigs: boolean) =>
+    invoke<void>('wipe_server', { serverId, wipeSaves, wipeConfigs }),
 
   // Config commands
   getServerConfig: (serverId: number) => invoke<any>('get_server_config', { serverId }),
@@ -78,6 +80,18 @@ export const tauriCommands = {
     invoke<void>('open_folder', { path }),
   getServerExtendedDetails: (serverId: number) =>
     invoke<any>('get_server_extended_details', { serverId }),
+  parseExistingServerConfig: (installPath: string) =>
+    invoke<{
+      name: string;
+      description: string;
+      installPath: string;
+      gamePort: number;
+      rconPort: number;
+      restApiPort: number;
+      maxPlayers: number;
+      adminPassword: string;
+      serverPassword: string | null;
+    }>('parse_existing_server_config', { installPath }),
   // Installation Commands
   startServerInstallation: (serverId: number, branch: string) =>
     invoke<void>('start_server_installation', { serverId, branch }),
@@ -98,10 +112,10 @@ export const tauriCommands = {
     invoke<any[]>('list_installed_mods', { serverId }),
   installMod: (serverId: number, sourceFilePath: string, isLogicMod: boolean) =>
     invoke<void>('install_mod', { serverId, sourceFilePath, isLogicMod }),
-  toggleMod: (serverId: number, modName: string, isLogicMod: boolean, enable: boolean) =>
-    invoke<void>('toggle_mod', { serverId, modName, isLogicMod, enable }),
-  deleteMod: (serverId: number, modName: string, isLogicMod: boolean, enabled: boolean) =>
-    invoke<void>('delete_mod', { serverId, modName, isLogicMod, enabled }),
+  toggleMod: (serverId: number, modName: string, isLogicMod: boolean, enable: boolean, isWorkshopMod?: boolean) =>
+    invoke<void>('toggle_mod', { serverId, modName, isLogicMod, enable, isWorkshopMod }),
+  deleteMod: (serverId: number, modName: string, isLogicMod: boolean, enabled: boolean, isWorkshopMod?: boolean) =>
+    invoke<void>('delete_mod', { serverId, modName, isLogicMod, enabled, isWorkshopMod }),
   getModPerformanceReport: (serverId: number) =>
     invoke<any[]>('get_mod_performance_report', { serverId }),
   checkModConflicts: (serverId: number) =>
@@ -324,14 +338,17 @@ listen<{
 // ─── Utility: Format Uptime ─────────────────────────────────────────────────
 
 export function formatUptime(seconds: number | null | undefined): string {
-  if (!seconds || seconds <= 0) return '—';
+  if (seconds === null || seconds === undefined || seconds < 0) return '—';
+  if (seconds === 0) return '0s';
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
 
   if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 // ─── Utility: Format Bytes ──────────────────────────────────────────────────

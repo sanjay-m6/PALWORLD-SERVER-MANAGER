@@ -13,6 +13,7 @@ interface ConfigField {
   max?: number;
   step?: number;
   description?: string;
+  isImportant?: boolean;
 }
 
 const configFields: ConfigField[] = [
@@ -22,10 +23,12 @@ const configFields: ConfigField[] = [
   { key: 'nightTimeSpeedRate', label: 'Night Speed', type: 'number', category: 'Gameplay', min: 0.1, max: 10, step: 0.1, description: 'Nighttime progression speed rate. Higher values make nights pass faster.' },
   { key: 'expRate', label: 'EXP Rate', type: 'number', category: 'Gameplay', min: 0.1, max: 20, step: 0.1, description: 'EXP gain multiplier for players.' },
   { key: 'palCaptureRate', label: 'Pal Capture Rate', type: 'number', category: 'Gameplay', min: 0.1, max: 10, step: 0.1, description: 'Capture success rate multiplier for capturing Pals.' },
-  { key: 'palSpawnNumRate', label: 'Pal Spawn Rate', type: 'number', category: 'Gameplay', min: 0.1, max: 5, step: 0.1, description: 'Pal spawn quantity multiplier. Higher values increase processing load.' },
+  { key: 'palSpawnNumRate', label: 'Pal Spawn Rate', type: 'number', category: 'Gameplay', min: 0.1, max: 5, step: 0.1, description: 'Pal spawn quantity multiplier. Higher values increase processing load.', isImportant: true },
   { key: 'workSpeedRate', label: 'Work Speed', type: 'number', category: 'Gameplay', min: 0.1, max: 10, step: 0.1, description: 'Pal work speed multiplier at base camps.' },
   { key: 'deathPenalty', label: 'Death Penalty', type: 'select', category: 'Gameplay', options: ['None', 'Item', 'ItemAndEquipment', 'All'], description: 'Penalty applied to players when they die.' },
   { key: 'isMultiplay', label: 'Multiplayer Enabled', type: 'boolean', category: 'Gameplay', description: 'Enables multiplayer synchronization on the server.' },
+  { key: 'allowGlobalPalboxExport', label: 'Allow Global Palbox Export', type: 'boolean', category: 'Gameplay', description: 'Allows players to save character data to the Global Palbox.' },
+  { key: 'allowGlobalPalboxImport', label: 'Allow Global Palbox Import', type: 'boolean', category: 'Gameplay', description: 'Allows players to load character data from the Global Palbox.' },
 
   // Combat
   { key: 'playerDamageRateAttack', label: 'Player ATK Rate', type: 'number', category: 'Combat', min: 0.1, max: 10, step: 0.1, description: 'Multiplier for damage dealt by players.' },
@@ -47,7 +50,7 @@ const configFields: ConfigField[] = [
   { key: 'palStaminaDecreaseRate', label: 'Pal Stamina Drain', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Multiplier for Pal stamina consumption rate.' },
   { key: 'palAutoHpRegenRate', label: 'Pal HP Regen Rate', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Natural health regeneration speed for Pals.' },
   { key: 'palAutoHpRegenRateInSleep', label: 'Pal HP Regen in Sleep', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Pal natural health regeneration rate while inside the Palbox.' },
-  { key: 'enableNonLoginPenalty', label: 'Offline Penalty', type: 'boolean', category: 'Survival', description: 'Applies offline penalties to structures or players while logged out.' },
+  { key: 'enableNonLoginPenalty', label: 'Offline Penalty', type: 'boolean', category: 'Survival', description: 'Applies offline penalties to structures or players while logged out.', isImportant: true },
   { key: 'enableFastTravel', label: 'Fast Travel', type: 'boolean', category: 'Survival', description: 'Enables the use of fast-travel points across the map.' },
   { key: 'canPickupOtherGuildDeathPenaltyDrop', label: 'Loot Other Death Drops', type: 'boolean', category: 'Survival', description: 'Allows players to loot death drops belonging to other guilds.' },
 
@@ -62,8 +65,8 @@ const configFields: ConfigField[] = [
   { key: 'enableInvaderEnemy', label: 'Base Raids', type: 'boolean', category: 'World & Building', description: 'Enables random enemy raids on player base camps.' },
   { key: 'baseCampMaxNum', label: 'Max Camps (Global)', type: 'number', category: 'World & Building', min: 1, max: 100, step: 1, description: 'Maximum number of base camps allowed globally across the server.' },
   { key: 'baseCampMaxNumInGuild', label: 'Max Bases Per Guild', type: 'number', category: 'World & Building', min: 1, max: 20, step: 1, description: 'Maximum number of base camps a single guild can build. Raises processing load.' },
-  { key: 'baseCampWorkerMaxNum', label: 'Max Base Workers', type: 'number', category: 'World & Building', min: 1, max: 50, step: 1, description: 'Maximum number of active Pals working in a base (max 50). Raises processing load.' },
-  { key: 'dropItemMaxNum', label: 'Max Dropped Items', type: 'number', category: 'World & Building', min: 100, max: 10000, step: 100, description: 'Maximum number of dropped items allowed on the ground before disappearing.' },
+  { key: 'baseCampWorkerMaxNum', label: 'Max Base Workers', type: 'number', category: 'World & Building', min: 1, max: 50, step: 1, description: 'Maximum number of active Pals working in a base (max 50). Raises processing load.', isImportant: true },
+  { key: 'dropItemMaxNum', label: 'Max Dropped Items', type: 'number', category: 'World & Building', min: 100, max: 10000, step: 100, description: 'Maximum number of dropped items allowed on the ground before disappearing.', isImportant: true },
   { key: 'dropItemMaxNumUnko', label: 'Max Dropped Dung', type: 'number', category: 'World & Building', min: 10, max: 1000, step: 10, description: 'Maximum number of dropped dung items allowed on the ground.' },
   { key: 'dropItemAliveMaxHours', label: 'Item Decay Time (hrs)', type: 'number', category: 'World & Building', min: 0.5, max: 48, step: 0.5, description: 'Time in hours before dropped items on the ground decay and disappear.' },
   { key: 'autoResetGuildNoOnlinePlayers', label: 'Auto Reset Offline Guilds', type: 'boolean', category: 'World & Building', description: 'Automatically deletes guild structures and base Pals if members remain offline.' },
@@ -71,12 +74,12 @@ const configFields: ConfigField[] = [
   { key: 'supplyDropSpan', label: 'Supply Drop Interval (min)', type: 'number', category: 'World & Building', min: 10, max: 1440, step: 10, description: 'Cooldown timer in minutes between supply drop and meteorite spawn events.' },
 
   // Server Settings
-  { key: 'serverPlayerMaxNum', label: 'Max Players', type: 'number', category: 'Server Settings', min: 1, max: 128, step: 1, description: 'Maximum number of concurrent players allowed on the server.' },
+  { key: 'serverPlayerMaxNum', label: 'Max Players', type: 'number', category: 'Server Settings', min: 1, max: 128, step: 1, description: 'Maximum number of concurrent players allowed on the server.', isImportant: true },
   { key: 'coopPlayerMaxNum', label: 'Max Coop Players', type: 'number', category: 'Server Settings', min: 1, max: 10, step: 1, description: 'Maximum number of players allowed in a single coop lobby.' },
   { key: 'guildPlayerMaxNum', label: 'Max Guild Players', type: 'number', category: 'Server Settings', min: 1, max: 100, step: 1, description: 'Maximum number of players allowed in a single guild.' },
   { key: 'serverName', label: 'Server Name', type: 'string', category: 'Server Settings', description: 'Display name of the server in the public server list.' },
   { key: 'serverDescription', label: 'Description', type: 'string', category: 'Server Settings', description: 'Description of the server shown in the server list.' },
-  { key: 'adminPassword', label: 'Admin Password', type: 'string', category: 'Server Settings', description: 'Password required to execute admin RCON/console commands.' },
+  { key: 'adminPassword', label: 'Admin Password', type: 'string', category: 'Server Settings', description: 'Password required to execute admin RCON/console commands.', isImportant: true },
   { key: 'serverPassword', label: 'Server Password', type: 'string', category: 'Server Settings', description: 'Password required for players to connect to the server.' },
   { key: 'publicPort', label: 'Public Port', type: 'number', category: 'Server Settings', description: 'Port number used by client connections (default: 8211).' },
   { key: 'publicIp', label: 'Public IP Override', type: 'string', category: 'Server Settings', description: 'Explicit external public IP address of the server.' },
@@ -89,6 +92,63 @@ const configFields: ConfigField[] = [
   // REST API
   { key: 'restApiEnabled', label: 'REST API Enabled', type: 'boolean', category: 'REST API', description: 'Enables the REST API web service for server monitoring.' },
   { key: 'restApiPort', label: 'REST API Port', type: 'number', category: 'REST API', description: 'Port number used by the REST API server.' },
+
+  // New 1.0.0 Settings
+  { key: 'randomizerType', label: 'Randomizer Type', type: 'select', category: 'Gameplay', options: ['None', 'Region', 'All'], description: 'Spawns randomization type.' },
+  { key: 'randomizerSeed', label: 'Randomizer Seed', type: 'string', category: 'Gameplay', description: 'Seed for spawn randomization.' },
+  { key: 'isRandomizerPalLevelRandom', label: 'Random Pal Levels', type: 'boolean', category: 'Gameplay', description: 'Fully random wild Pal levels vs area-range randomization.' },
+  { key: 'buildObjectHpRate', label: 'Build Object HP Rate', type: 'number', category: 'World & Building', min: 0.1, max: 10, step: 0.1, description: 'Health multiplier for player-built structures.' },
+  { key: 'activeUnko', label: 'Active Dung', type: 'boolean', category: 'World & Building', description: 'Enables dung drop active physics/spawns.' },
+  { key: 'physicsActiveDropItemMaxNum', label: 'Max Active Physics Drops', type: 'number', category: 'Performance', description: 'Max dropped items using physics behavior (-1 = unlimited).' },
+  { key: 'autoSaveSpan', label: 'Auto Save Span (sec)', type: 'number', category: 'World & Building', min: 10, max: 3600, step: 10, description: 'Interval in seconds between auto saves.', isImportant: true },
+  { key: 'hardcore', label: 'Hardcore Mode', type: 'boolean', category: 'Gameplay', description: 'Enables Hardcore mode (no respawning on death).' },
+  { key: 'palLost', label: 'Pal Lost on Death', type: 'boolean', category: 'Gameplay', description: 'Pals in inventory are permanently lost upon player death.' },
+  { key: 'characterRecreateInHardcore', label: 'Recreate Hardcore Character', type: 'boolean', category: 'Gameplay', description: 'Allows recreating characters on death in Hardcore.' },
+  { key: 'enableFastTravelOnlyBaseCamp', label: 'Fast Travel Base Only', type: 'boolean', category: 'Survival', description: 'Restricts fast travel usage to base-to-base travel only.' },
+  { key: 'isStartLocationSelectByMap', label: 'Start Location Map Selection', type: 'boolean', category: 'Gameplay', description: 'Allows new players to choose their start location on the map.' },
+  { key: 'existPlayerAfterLogout', label: 'Sleep on Logout', type: 'boolean', category: 'Survival', description: 'Character sleeps in place on disconnect instead of despawning.' },
+  { key: 'enableDefenseOtherGuildPlayer', label: 'Defense Other Guild Player', type: 'boolean', category: 'Combat', description: 'Enables base defenses targeting other guild players.' },
+  { key: 'invisibleOtherGuildBaseCampAreaFX', label: 'Hide Other Guild Area FX', type: 'boolean', category: 'World & Building', description: 'Hides base boundary border FX for other guilds.' },
+  { key: 'buildAreaLimit', label: 'Build Area Limit', type: 'boolean', category: 'World & Building', description: 'Prevents building near fast travel points or boss arenas.' },
+  { key: 'itemWeightRate', label: 'Item Weight Multiplier', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Weight multiplier applied to items.' },
+  { key: 'allowClientMod', label: 'Allow Client Mods', type: 'boolean', category: 'Server Settings', description: 'Allows modded clients to connect to the server.' },
+  { key: 'showPlayerList', label: 'Show Player List', type: 'boolean', category: 'Server Settings', description: 'Shows player list in the ESC game menu.' },
+  { key: 'chatPostLimitPerMinute', label: 'Chat Rate Limit', type: 'number', category: 'Server Settings', min: 0, max: 200, step: 5, description: 'Maximum chat messages allowed per player per minute (0 = disabled).' },
+  { key: 'crossplayPlatforms', label: 'Crossplay Platforms', type: 'string', category: 'Server Settings', description: 'Allowed crossplay platforms, format: (Steam,Xbox,PS5,Mac)' },
+  { key: 'isUseBackupSaveData', label: 'Use Save Backups', type: 'boolean', category: 'World & Building', description: 'Enables automated save backups (increases disk load).', isImportant: true },
+  { key: 'logFormatType', label: 'Log Format Type', type: 'select', category: 'Server Settings', options: ['Text', 'Json'], description: 'Format type of the server console logs.' },
+  { key: 'isShowJoinLeftMessage', label: 'Show Join/Leave Messages', type: 'boolean', category: 'Server Settings', description: 'Enables join/leave announcements in dedicated server chat.' },
+  { key: 'enablePredatorBossPal', label: 'Predator Boss Pal', type: 'boolean', category: 'Gameplay', description: 'Enables wild predator boss Pal behavior.' },
+  { key: 'maxBuildingLimitNum', label: 'Max Building Limit', type: 'number', category: 'Performance', min: 0, max: 100000, step: 100, description: 'Per-player building count cap (0 = unlimited).' },
+  { key: 'serverReplicatePawnCullDistance', label: 'Pawn Cull Distance', type: 'number', category: 'Performance', min: 1000, max: 50000, step: 500, description: 'Pal sync culling distance from players (in cm).', isImportant: true },
+  { key: 'equipmentDurabilityDamageRate', label: 'Durability Damage Rate', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Equipment durability loss multiplier.' },
+  { key: 'itemContainerForceMarkDirtyInterval', label: 'Container Force Sync Int', type: 'number', category: 'Performance', min: 0.1, max: 10, step: 0.1, description: 'Force re-sync interval (sec) while container UI is open.' },
+  { key: 'playerDataPalStorageUpdateCheckTickInterval', label: 'Pal Storage Tick Int', type: 'number', category: 'Performance', min: 0.1, max: 10, step: 0.1, description: 'Pal storage state validation check tick interval (sec).' },
+  { key: 'itemCorruptionMultiplier', label: 'Item Decay Rate', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Multiplier for decay speed of perishable items.' },
+  { key: 'monsterFarmActionSpeedRate', label: 'Ranch Speed Rate', type: 'number', category: 'World & Building', min: 0.1, max: 10, step: 0.1, description: 'Production speed multiplier for Pals grazing at bases.', isImportant: true },
+  { key: 'denyTechnologyList', label: 'Deny Technology List', type: 'string', category: 'World & Building', description: 'Disabled technology IDs, e.g., ("PALBOX","RepairBench")' },
+  { key: 'guildRejoinCooldownMinutes', label: 'Guild Rejoin Cooldown', type: 'number', category: 'Server Settings', min: 0, max: 1440, step: 10, description: 'Cooldown period in minutes required before rejoining a guild.' },
+  { key: 'autoTransferMasterCheckIntervalSeconds', label: 'Master Transfer Check', type: 'number', category: 'World & Building', min: 60, max: 86400, step: 60, description: 'Interval in seconds between guild master inactivity checks.' },
+  { key: 'autoTransferMasterThresholdDays', label: 'Master Transfer Inactive Days', type: 'number', category: 'World & Building', min: 1, max: 90, step: 1, description: 'Inactivity threshold in days before guild master transfers to active members.' },
+  { key: 'maxGuildsPerFrame', label: 'Max Guilds Per Frame', type: 'number', category: 'Performance', min: 1, max: 100, step: 1, description: 'Maximum guild logic ticks processed per tick frame.' },
+  { key: 'blockRespawnTime', label: 'Respawn Cooldown (sec)', type: 'number', category: 'Survival', min: 1, max: 300, step: 1, description: 'Cooldown period in seconds before respawning after death.' },
+  { key: 'respawnPenaltyDurationThreshold', label: 'Respawn Penalty Inactivity', type: 'number', category: 'Survival', min: 0, max: 3600, step: 10, description: 'Survival-time threshold in seconds for triggering respawn penalty.' },
+  { key: 'respawnPenaltyTimeScale', label: 'Respawn Penalty Scale', type: 'number', category: 'Survival', min: 0.1, max: 10, step: 0.1, description: 'Multiplier applied to respawn cooldown when penalty is active.' },
+  { key: 'displayPvpItemNumOnWorldMapBaseCamp', label: 'Show PvP Base Items on Map', type: 'boolean', category: 'Combat', description: 'Shows PvP item quantities per base camp on map.' },
+  { key: 'displayPvpItemNumOnWorldMapPlayer', label: 'Show PvP Player Locations', type: 'boolean', category: 'Combat', description: 'Shows player locations and PvP item counts on map.' },
+  { key: 'additionalDropItemWhenPlayerKillingInPvPMode', label: 'PvP Kill Extra Item ID', type: 'string', category: 'Combat', description: 'Item ID of the extra item dropped on PvP player kill.' },
+  { key: 'additionalDropItemNumWhenPlayerKillingInPvPMode', label: 'PvP Kill Extra Item Qty', type: 'number', category: 'Combat', min: 1, max: 100, step: 1, description: 'Quantity of extra item dropped on PvP player kill.' },
+  { key: 'bAdditionalDropItemWhenPlayerKillingInPvPMode', label: 'Enable PvP Kill Extra Drop', type: 'boolean', category: 'Combat', description: 'Enables extra item drop on PvP player kill.' },
+  { key: 'enableVoiceChat', label: 'In-game Voice Chat', type: 'boolean', category: 'Survival', description: 'Enables proximity/guild in-game voice chat.' },
+  { key: 'voiceChatMaxVolumeDistance', label: 'Voice Volume Max Dist', type: 'number', category: 'Survival', min: 100, max: 50000, step: 100, description: 'Distance where voice volume stops attenuating (in cm).' },
+  { key: 'voiceChatZeroVolumeDistance', label: 'Voice Volume Min Dist', type: 'number', category: 'Survival', min: 100, max: 50000, step: 100, description: 'Distance where voice volume hits zero (in cm).' },
+  { key: 'allowEnhanceStatHealth', label: 'Allow Health Stat Enhance', type: 'boolean', category: 'Gameplay', description: 'Allows upgrading player health stat point.' },
+  { key: 'allowEnhanceStatAttack', label: 'Allow Attack Stat Enhance', type: 'boolean', category: 'Gameplay', description: 'Allows upgrading player attack stat point.' },
+  { key: 'allowEnhanceStatStamina', label: 'Allow Stamina Stat Enhance', type: 'boolean', category: 'Gameplay', description: 'Allows upgrading player stamina stat point.' },
+  { key: 'allowEnhanceStatWeight', label: 'Allow Weight Stat Enhance', type: 'boolean', category: 'Gameplay', description: 'Allows upgrading player carry weight stat point.' },
+  { key: 'allowEnhanceStatWorkSpeed', label: 'Allow WorkSpeed Stat Enhance', type: 'boolean', category: 'Gameplay', description: 'Allows upgrading player work speed stat point.' },
+  { key: 'enableBuildingPlayerUidDisplay', label: 'Show Creator UID', type: 'boolean', category: 'World & Building', description: 'Shows structures creator player UID.' },
+  { key: 'buildingNameDisplayCacheTtlSeconds', label: 'Creator UID Cache TTL (sec)', type: 'number', category: 'Performance', min: 5, max: 3600, step: 5, description: 'Building creator name display cache time-to-live.' },
 ];
 
 export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
@@ -330,6 +390,11 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
                     <label className="text-xs text-dark-300 font-medium">
                       {field.label}
                     </label>
+                    {field.isImportant && (
+                      <span className="text-[8px] bg-warning-500/10 text-warning-400 border border-warning-500/30 px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">
+                        Important
+                      </span>
+                    )}
                     {searchQuery.trim() !== '' && (
                       <span className="text-[8px] bg-dark-800 text-dark-400 px-1.5 py-0.5 rounded border border-dark-700/50 uppercase tracking-wider font-semibold">
                         {field.category}
@@ -401,14 +466,25 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
                       </button>
                     )}
                     {field.type === 'string' && (
-                      <input
-                        type="text"
-                        value={config[field.key] ?? ''}
-                        onChange={(e) =>
-                          handleFieldChange(field.key, e.target.value)
-                        }
-                        className="input-field text-xs w-full"
-                      />
+                      <div className="flex flex-col w-full gap-1">
+                        <input
+                          type="text"
+                          value={config[field.key] ?? ''}
+                          onChange={(e) =>
+                            handleFieldChange(field.key, e.target.value)
+                          }
+                          className={`input-field text-xs w-full ${
+                            field.key === 'adminPassword' && config[field.key] && !/^[\x00-\x7F]*$/.test(config[field.key])
+                              ? 'border-red-500/50 focus:border-red-500/80 focus:ring-1 focus:ring-red-500/30'
+                              : ''
+                          }`}
+                        />
+                        {field.key === 'adminPassword' && config[field.key] && !/^[\x00-\x7F]*$/.test(config[field.key]) && (
+                          <span className="text-[10px] text-red-400 font-medium leading-tight mt-0.5">
+                            Warning: Admin password must contain ASCII characters only.
+                          </span>
+                        )}
+                      </div>
                     )}
                     {field.type === 'select' && (
                       <CustomSelect

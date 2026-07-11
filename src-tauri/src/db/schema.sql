@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS servers (
     created_at TEXT DEFAULT (datetime('now')),
     last_started TEXT,
     config_json TEXT DEFAULT '{}',
-    branch TEXT DEFAULT 'public'
+    branch TEXT DEFAULT 'public',
+    host TEXT DEFAULT '127.0.0.1',
+    is_remote INTEGER DEFAULT 0
 );
 
 -- ─── Backups ────────────────────────────────────────────────────────────────

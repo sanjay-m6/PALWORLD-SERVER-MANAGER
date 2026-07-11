@@ -23,17 +23,29 @@ async fn ensure_connected(
         return Ok(());
     }
 
-    let (rcon_port, admin_password) = {
+    let (host, rcon_port, admin_password) = {
         let db = app_state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
         conn.query_row(
-            "SELECT rcon_port, admin_password FROM servers WHERE id = ?1",
+            "SELECT host, rcon_port, admin_password FROM servers WHERE id = ?1",
             [server_id],
-            |row| Ok((row.get::<_, u16>(0).unwrap_or(25575), row.get::<_, String>(1).unwrap_or_default())),
+            |row| Ok((
+                row.get::<_, String>(0).unwrap_or_else(|_| "127.0.0.1".to_string()),
+                row.get::<_, u16>(1).unwrap_or(25575),
+                row.get::<_, String>(2).unwrap_or_default()
+            )),
         ).map_err(|e| format!("Server not found: {}", e))?
     };
 
-    match state.connect(server_id, "127.0.0.1", rcon_port, &admin_password).await {
+    // Check if the admin password was changed while the server is running
+    if let Some(launched_password) = app_state.process_manager.get_launched_admin_password(server_id) {
+        if launched_password != admin_password {
+            let _ = app_handle.emit("rcon-status", RconStatusEvent { server_id, connected: false });
+            return Err("A server restart is required to apply the new admin password. Please restart the server.".to_string());
+        }
+    }
+
+    match state.connect(server_id, &host, rcon_port, &admin_password).await {
         Ok(_) => {
             let _ = app_handle.emit("rcon-status", RconStatusEvent { server_id, connected: true });
             Ok(())
@@ -52,17 +64,33 @@ pub async fn rcon_connect(
     app_handle: tauri::AppHandle,
     server_id: i64,
 ) -> Result<RconResponse, String> {
-    let (rcon_port, admin_password) = {
+    let (host, rcon_port, admin_password) = {
         let db = app_state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
         conn.query_row(
-            "SELECT rcon_port, admin_password FROM servers WHERE id = ?1",
+            "SELECT host, rcon_port, admin_password FROM servers WHERE id = ?1",
             [server_id],
-            |row| Ok((row.get::<_, u16>(0).unwrap_or(25575), row.get::<_, String>(1).unwrap_or_default())),
+            |row| Ok((
+                row.get::<_, String>(0).unwrap_or_else(|_| "127.0.0.1".to_string()),
+                row.get::<_, u16>(1).unwrap_or(25575),
+                row.get::<_, String>(2).unwrap_or_default()
+            )),
         ).map_err(|e| format!("Server not found: {}", e))?
     };
 
-    match state.0.connect(server_id, "127.0.0.1", rcon_port, &admin_password).await {
+    // Check if the admin password was changed while the server is running
+    if let Some(launched_password) = app_state.process_manager.get_launched_admin_password(server_id) {
+        if launched_password != admin_password {
+            let _ = app_handle.emit("rcon-status", RconStatusEvent { server_id, connected: false });
+            return Ok(RconResponse {
+                success: false,
+                message: "A server restart is required to apply the new admin password. Please restart the server.".to_string(),
+                data: None,
+            });
+        }
+    }
+
+    match state.0.connect(server_id, &host, rcon_port, &admin_password).await {
         Ok(msg) => {
             let _ = app_handle.emit("rcon-status", RconStatusEvent { server_id, connected: true });
             Ok(RconResponse { success: true, message: msg, data: None })

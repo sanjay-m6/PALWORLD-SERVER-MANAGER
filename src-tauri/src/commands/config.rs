@@ -90,6 +90,18 @@ pub async fn save_server_config(
 
     ConfigGenerator::write_config(&install_path, &config)?;
 
+    #[cfg(debug_assertions)]
+    {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        config.admin_password.hash(&mut hasher);
+        log::debug!(
+            "[DEBUG] Write-time admin password length: {}, hash: {:x}",
+            config.admin_password.len(),
+            hasher.finish()
+        );
+    }
+
     Ok(())
 }
 

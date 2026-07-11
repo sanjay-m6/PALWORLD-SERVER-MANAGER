@@ -194,6 +194,9 @@ pub struct ModItem {
     pub is_logic_mod: bool,
     pub enabled: bool,
     pub size_bytes: u64,
+    pub is_workshop_mod: Option<bool>,
+    pub author: Option<String>,
+    pub version: Option<String>,
 }
 
 #[tauri::command]
@@ -225,6 +228,9 @@ pub async fn list_installed_mods(state: State<'_, AppState>, server_id: i64) -> 
                                 is_logic_mod: false,
                                 enabled: true,
                                 size_bytes: metadata.len(),
+                                is_workshop_mod: Some(false),
+                                author: None,
+                                version: None,
                             });
                         }
                     } else if file_name.ends_with(".pak.disabled") {
@@ -236,6 +242,9 @@ pub async fn list_installed_mods(state: State<'_, AppState>, server_id: i64) -> 
                                 is_logic_mod: false,
                                 enabled: false,
                                 size_bytes: metadata.len(),
+                                is_workshop_mod: Some(false),
+                                author: None,
+                                version: None,
                             });
                         }
                     }
@@ -259,6 +268,9 @@ pub async fn list_installed_mods(state: State<'_, AppState>, server_id: i64) -> 
                                 is_logic_mod: true,
                                 enabled: true,
                                 size_bytes: metadata.len(),
+                                is_workshop_mod: Some(false),
+                                author: None,
+                                version: None,
                             });
                         }
                     } else if file_name.ends_with(".pak.disabled") {
@@ -270,7 +282,90 @@ pub async fn list_installed_mods(state: State<'_, AppState>, server_id: i64) -> 
                                 is_logic_mod: true,
                                 enabled: false,
                                 size_bytes: metadata.len(),
+                                is_workshop_mod: Some(false),
+                                author: None,
+                                version: None,
                             });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Official Workshop Mods
+    let mods_dir = base_path.join("Mods");
+    let workshop_dir = mods_dir.join("Workshop");
+    let ini_path = mods_dir.join("PalModSettings.ini");
+
+    // Read active mods from PalModSettings.ini
+    let mut active_mods = std::collections::HashSet::new();
+    if ini_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&ini_path) {
+            let mut section_found = false;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed == "[PalModSettings]" {
+                    section_found = true;
+                } else if trimmed.starts_with("[") {
+                    section_found = false;
+                }
+                if section_found && trimmed.starts_with("ActiveModList=") {
+                    if let Some(name) = trimmed.strip_prefix("ActiveModList=") {
+                        active_mods.insert(name.trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if workshop_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&workshop_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let info_json_path = path.join("Info.json");
+                    if info_json_path.exists() {
+                        if let Ok(info_content) = std::fs::read_to_string(&info_json_path) {
+                            if let Ok(info) = serde_json::from_str::<serde_json::Value>(&info_content) {
+                                let package_name = info.get("PackageName")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                
+                                if !package_name.is_empty() {
+                                    let author = info.get("Author")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let version = info.get("Version")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+
+                                    let is_enabled = active_mods.contains(package_name);
+                                    
+                                    // Calculate total size of directory
+                                    let mut size_bytes = 0;
+                                    if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                                        for sub_entry in sub_entries.flatten() {
+                                            if let Ok(metadata) = sub_entry.metadata() {
+                                                if metadata.is_file() {
+                                                    size_bytes += metadata.len();
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    mods.push(ModItem {
+                                        name: package_name.to_string(),
+                                        path: path.to_string_lossy().to_string(),
+                                        is_logic_mod: false,
+                                        enabled: is_enabled,
+                                        size_bytes,
+                                        is_workshop_mod: Some(true),
+                                        author,
+                                        version,
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -344,6 +439,79 @@ pub async fn install_mod(
     Ok(())
 }
 
+fn enable_mod_in_ini(ini_path: &std::path::Path, package_name: &str) -> Result<(), String> {
+    let mut lines = Vec::new();
+    let mut section_found = false;
+    let mut global_enable_found = false;
+    let mut mod_already_active = false;
+
+    if ini_path.exists() {
+        let content = std::fs::read_to_string(ini_path)
+            .map_err(|e| format!("Failed to read PalModSettings.ini: {}", e))?;
+        
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "[PalModSettings]" {
+                section_found = true;
+            } else if trimmed.starts_with("[") {
+                section_found = false;
+            }
+            if section_found && trimmed.starts_with("bGlobalEnableMod") {
+                global_enable_found = true;
+                lines.push("bGlobalEnableMod=true".to_string());
+                continue;
+            }
+            if section_found && trimmed == &format!("ActiveModList={}", package_name) {
+                mod_already_active = true;
+            }
+            lines.push(line.to_string());
+        }
+    }
+
+    if !section_found {
+        lines.push("[PalModSettings]".to_string());
+    }
+    if !global_enable_found {
+        lines.push("bGlobalEnableMod=true".to_string());
+    }
+    if !mod_already_active {
+        lines.push(format!("ActiveModList={}", package_name));
+    }
+
+    if let Some(parent) = ini_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Mods directory: {}", e))?;
+    }
+
+    std::fs::write(ini_path, lines.join("\n") + "\n")
+        .map_err(|e| format!("Failed to write PalModSettings.ini: {}", e))?;
+
+    Ok(())
+}
+
+fn disable_mod_in_ini(ini_path: &std::path::Path, package_name: &str) -> Result<(), String> {
+    if !ini_path.exists() {
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(ini_path)
+        .map_err(|e| format!("Failed to read PalModSettings.ini: {}", e))?;
+    
+    let mut lines = Vec::new();
+    let target = format!("ActiveModList={}", package_name);
+
+    for line in content.lines() {
+        if line.trim() != target {
+            lines.push(line.to_string());
+        }
+    }
+
+    std::fs::write(ini_path, lines.join("\n") + "\n")
+        .map_err(|e| format!("Failed to write PalModSettings.ini: {}", e))?;
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn toggle_mod(
     state: State<'_, AppState>,
@@ -351,11 +519,25 @@ pub async fn toggle_mod(
     mod_name: String,
     is_logic_mod: bool,
     enable: bool,
+    is_workshop_mod: Option<bool>,
 ) -> Result<(), String> {
     let install_path = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.get_server_install_path(server_id)?
     };
+
+    if is_workshop_mod.unwrap_or(false) {
+        let ini_path = std::path::PathBuf::from(&install_path)
+            .join("Mods")
+            .join("PalModSettings.ini");
+        
+        if enable {
+            enable_mod_in_ini(&ini_path, &mod_name)?;
+        } else {
+            disable_mod_in_ini(&ini_path, &mod_name)?;
+        }
+        return Ok(());
+    }
 
     let base_path = std::path::PathBuf::from(&install_path);
     let paks_dir = base_path.join("Pal").join("Content").join("Paks");
@@ -389,11 +571,48 @@ pub async fn delete_mod(
     mod_name: String,
     is_logic_mod: bool,
     enabled: bool,
+    is_workshop_mod: Option<bool>,
 ) -> Result<(), String> {
     let install_path = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.get_server_install_path(server_id)?
     };
+
+    if is_workshop_mod.unwrap_or(false) {
+        let ini_path = std::path::PathBuf::from(&install_path)
+            .join("Mods")
+            .join("PalModSettings.ini");
+        disable_mod_in_ini(&ini_path, &mod_name)?;
+
+        let workshop_dir = std::path::PathBuf::from(&install_path)
+            .join("Mods")
+            .join("Workshop");
+        
+        if workshop_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&workshop_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let info_json = path.join("Info.json");
+                        if info_json.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&info_json) {
+                                if let Ok(info) = serde_json::from_str::<serde_json::Value>(&content) {
+                                    if let Some(package_name) = info.get("PackageName").and_then(|v| v.as_str()) {
+                                        if package_name == mod_name {
+                                            std::fs::remove_dir_all(&path)
+                                                .map_err(|e| format!("Failed to delete mod folder: {}", e))?;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
 
     let base_path = std::path::PathBuf::from(&install_path);
     let paks_dir = base_path.join("Pal").join("Content").join("Paks");
@@ -1125,56 +1344,60 @@ pub async fn get_server_extended_details(
             .ok_or_else(|| "Server not found".to_string())?
     };
 
-    // 2. Check if installed
-    let is_installed = crate::commands::system::check_server_installed(server.install_path.to_string_lossy().to_string()).await.unwrap_or(false);
+    // 2. Get status details conditionally based on whether it is remote or local
+    let (is_installed, build_id, install_size_bytes, save_size_bytes) = if server.is_remote {
+        (true, "remote".to_string(), 0u64, 0u64)
+    } else {
+        // Check if installed
+        let is_installed = crate::commands::system::check_server_installed(server.install_path.to_string_lossy().to_string()).await.unwrap_or(false);
 
-    // 3. Read manifest for buildid
-    let mut build_id = "—".to_string();
-    let manifest_path = server.install_path.join("steamapps").join("appmanifest_2394010.acf");
-    if manifest_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-            let re = regex::Regex::new(r#""buildid"\s+"(\d+)""#).unwrap();
-            if let Some(caps) = re.captures(&content) {
-                if let Some(m) = caps.get(1) {
-                    build_id = m.as_str().to_string();
-                }
-            }
-        }
-    }
-
-    // 4. Calculate directory size of install path and Saved folder
-    let install_path = server.install_path.clone();
-    let saved_path = install_path.join("Pal").join("Saved");
-
-    let (i_size, s_size) = tokio::task::spawn_blocking(move || {
-        let mut i_sz = 0;
-        let mut s_sz = 0;
-
-        if install_path.exists() {
-            for entry in walkdir::WalkDir::new(&install_path).into_iter().filter_map(|e| e.ok()) {
-                if let Ok(meta) = entry.metadata() {
-                    if meta.is_file() {
-                        i_sz += meta.len();
+        // Read manifest for buildid
+        let mut build_id = "—".to_string();
+        let manifest_path = server.install_path.join("steamapps").join("appmanifest_2394010.acf");
+        if manifest_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                let re = regex::Regex::new(r#""buildid"\s+"(\d+)""#).unwrap();
+                if let Some(caps) = re.captures(&content) {
+                    if let Some(m) = caps.get(1) {
+                        build_id = m.as_str().to_string();
                     }
                 }
             }
         }
 
-        if saved_path.exists() {
-            for entry in walkdir::WalkDir::new(&saved_path).into_iter().filter_map(|e| e.ok()) {
-                if let Ok(meta) = entry.metadata() {
-                    if meta.is_file() {
-                        s_sz += meta.len();
+        // Calculate directory size of install path and Saved folder
+        let install_path = server.install_path.clone();
+        let saved_path = install_path.join("Pal").join("Saved");
+
+        let (i_size, s_size) = tokio::task::spawn_blocking(move || {
+            let mut i_sz = 0;
+            let mut s_sz = 0;
+
+            if install_path.exists() {
+                for entry in walkdir::WalkDir::new(&install_path).into_iter().filter_map(|e| e.ok()) {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            i_sz += meta.len();
+                        }
                     }
                 }
             }
-        }
 
-        (i_sz, s_sz)
-    }).await.unwrap_or((0, 0));
+            if saved_path.exists() {
+                for entry in walkdir::WalkDir::new(&saved_path).into_iter().filter_map(|e| e.ok()) {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_file() {
+                            s_sz += meta.len();
+                        }
+                    }
+                }
+            }
 
-    let install_size_bytes = i_size;
-    let save_size_bytes = s_size;
+            (i_sz, s_sz)
+        }).await.unwrap_or((0, 0));
+
+        (is_installed, build_id, i_size, s_size)
+    };
 
     // 5. Query mod count from DB
     let mod_count = {
@@ -1188,18 +1411,45 @@ pub async fn get_server_extended_details(
     };
 
     // 6. Check RCON status and REST API status
-    let is_running = state.process_manager.is_server_running(server_id);
+    let is_running = server.is_remote || state.process_manager.is_server_running(server_id);
+    let host = if server.is_remote { &server.host } else { "127.0.0.1" };
+    let is_rcon_reachable = if is_running {
+        let addr = format!("{}:{}", host, server.ports.rcon_port);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        .map(|res| res.is_ok())
+        .unwrap_or(false)
+    } else {
+        false
+    };
+
     let rcon_status = if !server.rcon_config.enabled {
         "disabled".to_string()
-    } else if is_running {
+    } else if is_rcon_reachable {
         "connected".to_string()
     } else {
         "disconnected".to_string()
     };
 
+    let is_rest_reachable = if server.is_remote {
+        let addr = format!("{}:{}", host, server.rest_api_config.port);
+        tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        .map(|res| res.is_ok())
+        .unwrap_or(false)
+    } else {
+        is_running
+    };
+
     let rest_api_status = if !server.rest_api_config.enabled {
         "disabled".to_string()
-    } else if is_running {
+    } else if is_rest_reachable {
         "active".to_string()
     } else {
         "disabled".to_string()
@@ -1209,19 +1459,21 @@ pub async fn get_server_extended_details(
     let mut disk_free_bytes = 0;
     let mut disk_total_bytes = 0;
 
-    let path_to_check = if server.install_path.exists() {
-        server.install_path.clone()
-    } else {
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("C:\\"))
-    };
+    if !server.is_remote {
+        let path_to_check = if server.install_path.exists() {
+            server.install_path.clone()
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("C:\\"))
+        };
 
-    if let Ok(abs_path) = std::fs::canonicalize(&path_to_check).or_else(|_| Ok::<_, std::io::Error>(path_to_check)) {
-        let disks = sysinfo::Disks::new_with_refreshed_list();
-        for disk in &disks {
-            if abs_path.starts_with(disk.mount_point()) {
-                disk_free_bytes = disk.available_space();
-                disk_total_bytes = disk.total_space();
-                break;
+        if let Ok(abs_path) = std::fs::canonicalize(&path_to_check).or_else(|_| Ok::<_, std::io::Error>(path_to_check)) {
+            let disks = sysinfo::Disks::new_with_refreshed_list();
+            for disk in &disks {
+                if abs_path.starts_with(disk.mount_point()) {
+                    disk_free_bytes = disk.available_space();
+                    disk_total_bytes = disk.total_space();
+                    break;
+                }
             }
         }
     }
@@ -1256,6 +1508,147 @@ pub async fn open_folder(path: String) -> Result<(), String> {
         let _ = path;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportConfigResponse {
+    pub name: String,
+    pub description: String,
+    pub install_path: String,
+    pub game_port: u16,
+    pub rcon_port: u16,
+    pub rest_api_port: u16,
+    pub max_players: u32,
+    pub admin_password: String,
+    pub server_password: Option<String>,
+}
+
+#[tauri::command]
+pub async fn parse_existing_server_config(install_path: String) -> Result<ImportConfigResponse, String> {
+    use crate::services::config_generator::ConfigGenerator;
+    use crate::services::ini_parser;
+    use std::path::PathBuf;
+
+    let base = PathBuf::from(&install_path);
+    let mut detected_path = base.clone();
+    let mut exe_found = false;
+
+    // 1. Check if the directory itself has the exe
+    let shipping_exe = detected_path.join("Pal").join("Binaries").join("Win64").join("PalServer-Win64-Shipping-Cmd.exe");
+    let root_exe = detected_path.join("PalServer.exe");
+    if shipping_exe.exists() || root_exe.exists() {
+        exe_found = true;
+    }
+
+    // 2. If not, scan immediate subdirectories for PalServer.exe (e.g. if pointing to a common folder)
+    if !exe_found {
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let sub_dir = entry.path();
+                        let sub_exe = sub_dir.join("PalServer.exe");
+                        let sub_shipping = sub_dir.join("Pal").join("Binaries").join("Win64").join("PalServer-Win64-Shipping-Cmd.exe");
+                        if sub_exe.exists() || sub_shipping.exists() {
+                            detected_path = sub_dir;
+                            exe_found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. What if they selected a subfolder of the server (like "Pal", "Binaries", etc.)? Traverse upwards.
+    if !exe_found {
+        let mut current = base.clone();
+        for _ in 0..4 {
+            let check_exe = current.join("PalServer.exe");
+            let check_shipping = current.join("Pal").join("Binaries").join("Win64").join("PalServer-Win64-Shipping-Cmd.exe");
+            if check_exe.exists() || check_shipping.exists() {
+                detected_path = current;
+                exe_found = true;
+                break;
+            }
+            if let Some(parent) = current.parent() {
+                current = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+    }
+
+    if !exe_found {
+        return Err("The selected directory does not appear to contain a Palworld server installation (missing PalServer.exe).".to_string());
+    }
+
+    let install_path_str = detected_path.to_string_lossy().to_string();
+    let settings_path = ConfigGenerator::get_settings_path(&install_path_str);
+    let default_settings_path = detected_path.join("DefaultPalWorldSettings.ini");
+
+    let mut import_resp = ImportConfigResponse {
+        name: "Imported Server".to_string(),
+        description: "".to_string(),
+        install_path: install_path_str.clone(),
+        game_port: 8211,
+        rcon_port: 25575,
+        rest_api_port: 8212,
+        max_players: 32,
+        admin_password: "admin".to_string(),
+        server_password: None,
+    };
+
+    let final_settings_path = if settings_path.exists() {
+        Some(settings_path)
+    } else if default_settings_path.exists() {
+        Some(default_settings_path)
+    } else {
+        None
+    };
+
+    if let Some(path) = final_settings_path {
+        if let Ok(settings_map) = ini_parser::read_settings_file(&path) {
+            if let Some(v) = settings_map.get("ServerName") {
+                import_resp.name = v.trim_matches('"').to_string();
+            }
+            if let Some(v) = settings_map.get("ServerDescription") {
+                import_resp.description = v.trim_matches('"').to_string();
+            }
+            if let Some(v) = settings_map.get("PublicPort") {
+                if let Ok(port) = v.parse::<u16>() {
+                    import_resp.game_port = port;
+                }
+            }
+            if let Some(v) = settings_map.get("RCONPort") {
+                if let Ok(port) = v.parse::<u16>() {
+                    import_resp.rcon_port = port;
+                }
+            }
+            if let Some(v) = settings_map.get("RESTAPIPort") {
+                if let Ok(port) = v.parse::<u16>() {
+                    import_resp.rest_api_port = port;
+                }
+            }
+            if let Some(v) = settings_map.get("ServerPlayerMaxNum") {
+                if let Ok(players) = v.parse::<u32>() {
+                    import_resp.max_players = players;
+                }
+            }
+            if let Some(v) = settings_map.get("AdminPassword") {
+                import_resp.admin_password = v.trim_matches('"').to_string();
+            }
+            if let Some(v) = settings_map.get("ServerPassword") {
+                let pass = v.trim_matches('"').to_string();
+                if !pass.is_empty() {
+                    import_resp.server_password = Some(pass);
+                }
+            }
+        }
+    }
+
+    Ok(import_resp)
 }
 
 

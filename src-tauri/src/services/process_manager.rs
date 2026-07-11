@@ -63,6 +63,7 @@ struct TrackedProcess {
     server_id: i64,
     start_time: std::time::Instant,
     stopping: Arc<AtomicBool>,
+    launched_admin_password: String,
 }
 
 pub struct ProcessManager {
@@ -144,6 +145,18 @@ impl ProcessManager {
             args
         );
 
+        #[cfg(debug_assertions)]
+        {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            admin_password.hash(&mut hasher);
+            log::debug!(
+                "[DEBUG] Launch-time admin password length: {}, hash: {:x}",
+                admin_password.len(),
+                hasher.finish()
+            );
+        }
+
         let mut cmd = Command::new(&server_exe);
         cmd.args(&args)
             .current_dir(install_path);
@@ -166,6 +179,7 @@ impl ProcessManager {
                     server_id,
                     start_time: std::time::Instant::now(),
                     stopping: Arc::new(AtomicBool::new(false)),
+                    launched_admin_password: admin_password.to_string(),
                 },
             );
         }
@@ -330,6 +344,12 @@ impl ProcessManager {
     pub fn get_server_pid(&self, server_id: i64) -> Option<u32> {
         let processes = self.processes.lock().unwrap();
         processes.get(&server_id).map(|p| p.pid)
+    }
+
+    /// Get launched admin password for a server
+    pub fn get_launched_admin_password(&self, server_id: i64) -> Option<String> {
+        let processes = self.processes.lock().unwrap();
+        processes.get(&server_id).map(|p| p.launched_admin_password.clone())
     }
 
     /// Get uptime for a server

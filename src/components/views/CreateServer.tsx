@@ -9,6 +9,7 @@ export const CreateServer: React.FC = () => {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPathManuallyEdited, setIsPathManuallyEdited] = useState(false);
+  const [mode, setMode] = useState<'create' | 'import' | 'remote'>('create');
 
   const [form, setForm] = useState({
     name: '',
@@ -23,6 +24,7 @@ export const CreateServer: React.FC = () => {
     serverPassword: '',
     isPublic: false,
     autoStart: false,
+    host: '127.0.0.1',
   });
 
   const handleAutoAllocate = async () => {
@@ -48,13 +50,39 @@ export const CreateServer: React.FC = () => {
       const next = { ...prev, [field]: value };
 
       // Auto-update path if not manually edited and we are editing the server name
-      if (field === 'name' && !isPathManuallyEdited) {
+      if (field === 'name' && !isPathManuallyEdited && mode !== 'remote') {
         const cleanedName = value.replace(/[\\/:*?"<>|]/g, '').trim();
         next.installPath = cleanedName ? `C:\\PalworldServers\\${cleanedName}` : '';
       }
 
       return next;
     });
+  };
+
+  const handleScanFolder = async (path: string) => {
+    if (!path) return;
+    try {
+      const config = await tauriCommands.parseExistingServerConfig(path);
+      setForm((prev) => ({
+        ...prev,
+        name: config.name || prev.name,
+        description: config.description || prev.description,
+        installPath: config.installPath || prev.installPath,
+        gamePort: config.gamePort || prev.gamePort,
+        rconPort: config.rconPort || prev.rconPort,
+        restApiPort: config.restApiPort || prev.restApiPort,
+        maxPlayers: config.maxPlayers || prev.maxPlayers,
+        adminPassword: config.adminPassword || prev.adminPassword,
+        serverPassword: config.serverPassword || prev.serverPassword || '',
+      }));
+      if (config.installPath && config.installPath !== path) {
+        showNotification('info', `Corrected server path to: "${config.installPath}"`);
+      }
+      showNotification('success', `Found existing settings for server "${config.name}"!`);
+    } catch (err: any) {
+      console.warn('Failed to parse settings:', err);
+      showNotification('info', `Folder selected. No existing settings found, using defaults.`);
+    }
   };
 
   const handleBrowse = async () => {
@@ -67,6 +95,9 @@ export const CreateServer: React.FC = () => {
       if (selected && typeof selected === 'string') {
         updateField('installPath', selected);
         setIsPathManuallyEdited(true);
+        if (mode === 'import') {
+          handleScanFolder(selected);
+        }
       }
     } catch (err) {
       console.error('Failed to open directory dialog:', err);
@@ -79,7 +110,7 @@ export const CreateServer: React.FC = () => {
       showNotification('error', 'Server name is required');
       return;
     }
-    if (!form.installPath.trim()) {
+    if (mode !== 'remote' && !form.installPath.trim()) {
       showNotification('error', 'Install path is required');
       return;
     }
@@ -93,8 +124,8 @@ export const CreateServer: React.FC = () => {
       const server = await tauriCommands.createServer({
         name: form.name,
         description: form.description || null,
-        installPath: form.installPath,
-        preset: form.preset,
+        installPath: mode === 'remote' ? 'remote' : form.installPath,
+        preset: mode === 'remote' ? 'Balanced' : form.preset,
         gamePort: form.gamePort,
         rconPort: form.rconPort,
         restApiPort: form.restApiPort,
@@ -102,21 +133,25 @@ export const CreateServer: React.FC = () => {
         adminPassword: form.adminPassword,
         serverPassword: form.serverPassword || null,
         isPublic: form.isPublic,
-        autoStart: form.autoStart,
+        autoStart: mode === 'remote' ? false : form.autoStart,
+        host: mode === 'remote' ? form.host : '127.0.0.1',
+        isRemote: mode === 'remote',
       });
 
       showNotification('success', `Server "${server.name}" created successfully`);
 
       // Auto-configure firewall ports for the new server
-      try {
-        await tauriCommands.openFirewallPorts(
-          server.name,
-          form.gamePort,
-          form.rconPort,
-          form.restApiPort
-        );
-      } catch (fwErr) {
-        console.warn('Failed to auto-configure firewall for new server:', fwErr);
+      if (mode !== 'remote') {
+        try {
+          await tauriCommands.openFirewallPorts(
+            server.name,
+            form.gamePort,
+            form.rconPort,
+            form.restApiPort
+          );
+        } catch (fwErr) {
+          console.warn('Failed to auto-configure firewall for new server:', fwErr);
+        }
       }
 
       // Refresh and navigate
@@ -155,7 +190,7 @@ export const CreateServer: React.FC = () => {
             </svg>
           </button>
           <div>
-            <h1 className="text-xl font-bold text-dark-50">Create New Server</h1>
+            <h1 className="text-xl font-bold text-dark-50">Create / Import Server</h1>
             <p className="text-xs text-dark-400 mt-0.5">Step {step} of 3</p>
           </div>
         </div>
@@ -188,8 +223,50 @@ export const CreateServer: React.FC = () => {
         {step === 1 && (
           <div className="glass-card p-6 space-y-5">
             <h2 className="text-sm font-semibold text-dark-200 uppercase tracking-wider">
-              Server Identity
+              Server Identity & Mode
             </h2>
+
+            {/* Mode Selector */}
+            <div>
+              <label className="block text-xs font-medium text-dark-400 mb-2">
+                Deployment Mode
+              </label>
+              <div className="grid grid-cols-3 gap-2 bg-dark-900/40 p-1 rounded-lg border border-dark-800/50">
+                <button
+                  type="button"
+                  onClick={() => { setMode('create'); updateField('installPath', form.name ? `C:\\PalworldServers\\${form.name.replace(/[\\/:*?"<>|]/g, '').trim()}` : ''); }}
+                  className={`py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                    mode === 'create'
+                      ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
+                      : 'text-dark-400 hover:text-dark-200 hover:bg-dark-800/30'
+                  }`}
+                >
+                  Create New Server
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('import'); updateField('installPath', ''); }}
+                  className={`py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                    mode === 'import'
+                      ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
+                      : 'text-dark-400 hover:text-dark-200 hover:bg-dark-800/30'
+                  }`}
+                >
+                  Import Local Server
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('remote'); updateField('installPath', 'remote'); }}
+                  className={`py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                    mode === 'remote'
+                      ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
+                      : 'text-dark-400 hover:text-dark-200 hover:bg-dark-800/30'
+                  }`}
+                >
+                  Connect to Remote
+                </button>
+              </div>
+            </div>
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
@@ -201,7 +278,7 @@ export const CreateServer: React.FC = () => {
                 value={form.name}
                 onChange={(e) => updateField('name', e.target.value)}
                 className="input-field"
-                placeholder="My Palworld Server"
+                placeholder={mode === 'remote' ? "Remote Server Name" : "My Palworld Server"}
                 autoFocus
               />
             </div>
@@ -219,58 +296,83 @@ export const CreateServer: React.FC = () => {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                Install Path *
-              </label>
-              <div className="flex gap-2">
+            {mode === 'remote' ? (
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1.5">
+                  Remote Host IP / Hostname *
+                </label>
                 <input
-                  id="create-server-path"
+                  id="create-server-host"
                   type="text"
-                  value={form.installPath}
-                  onChange={(e) => {
-                    updateField('installPath', e.target.value);
-                    setIsPathManuallyEdited(true);
-                  }}
-                  className="input-field font-mono text-xs flex-1"
-                  placeholder="C:\PalworldServers\Server01"
+                  value={form.host}
+                  onChange={(e) => updateField('host', e.target.value)}
+                  className="input-field font-mono text-xs"
+                  placeholder="e.g. 12.34.56.78 or mydomain.com"
                 />
-                <button
-                  type="button"
-                  onClick={handleBrowse}
-                  className="px-3.5 py-2 bg-dark-800 hover:bg-dark-700 active:bg-dark-600 text-dark-200 hover:text-white rounded-lg border border-dark-700/50 text-xs font-medium transition-all duration-200"
-                >
-                  Browse
-                </button>
               </div>
-              <p className="text-[10px] text-dark-500 mt-1">
-                Directory where PalServer.exe is or will be installed
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-dark-400 mb-3">
-                Server Preset
-              </label>
-              <div className="grid grid-cols-1 gap-2">
-                {presets.map((p) => (
+            ) : (
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1.5">
+                  Install Path *
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="create-server-path"
+                    type="text"
+                    value={form.installPath}
+                    onChange={(e) => {
+                      updateField('installPath', e.target.value);
+                      setIsPathManuallyEdited(true);
+                    }}
+                    onBlur={() => {
+                      if (mode === 'import') {
+                        handleScanFolder(form.installPath);
+                      }
+                    }}
+                    className="input-field font-mono text-xs flex-1"
+                    placeholder="C:\PalworldServers\Server01"
+                  />
                   <button
-                    key={p.id}
-                    onClick={() => updateField('preset', p.id)}
-                    className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${form.preset === p.id
-                        ? 'border-primary-500/40 bg-primary-500/10 text-primary-400'
-                        : 'border-dark-700/30 bg-dark-800/30 text-dark-300 hover:border-dark-600/50'
-                      }`}
+                    type="button"
+                    onClick={handleBrowse}
+                    className="px-3.5 py-2 bg-dark-800 hover:bg-dark-700 active:bg-dark-600 text-dark-200 hover:text-white rounded-lg border border-dark-700/50 text-xs font-medium transition-all duration-200"
                   >
-                    <span className="text-lg">{p.icon}</span>
-                    <div>
-                      <div className="text-sm font-medium">{p.label}</div>
-                      <div className="text-[10px] text-dark-500">{p.desc}</div>
-                    </div>
+                    Browse
                   </button>
-                ))}
+                </div>
+                <p className="text-[10px] text-dark-500 mt-1">
+                  {mode === 'import'
+                    ? 'Select the folder containing your existing PalServer.exe'
+                    : 'Directory where PalServer.exe will be installed'}
+                </p>
               </div>
-            </div>
+            )}
+
+            {mode === 'create' && (
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-3">
+                  Server Preset
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {presets.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => updateField('preset', p.id)}
+                      className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${form.preset === p.id
+                          ? 'border-primary-500/40 bg-primary-500/10 text-primary-400'
+                          : 'border-dark-700/30 bg-dark-800/30 text-dark-300 hover:border-dark-600/50'
+                        }`}
+                    >
+                      <span className="text-lg">{p.icon}</span>
+                      <div>
+                        <div className="text-sm font-medium">{p.label}</div>
+                        <div className="text-[10px] text-dark-500">{p.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-end pt-2">
               <button onClick={() => setStep(2)} className="btn-primary">
@@ -287,12 +389,14 @@ export const CreateServer: React.FC = () => {
               <h2 className="text-sm font-semibold text-dark-200 uppercase tracking-wider">
                 Network & Security
               </h2>
-              <button
-                onClick={handleAutoAllocate}
-                className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
-              >
-                Auto-Allocate Ports
-              </button>
+              {mode !== 'remote' && (
+                <button
+                  onClick={handleAutoAllocate}
+                  className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                >
+                  Auto-Allocate Ports
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -308,15 +412,17 @@ export const CreateServer: React.FC = () => {
                     onChange={(e) => updateField('gamePort', parseInt(e.target.value))}
                     className="input-field font-mono flex-1 min-w-0"
                   />
-                  <button
-                    onClick={async () => {
-                      const ports = await tauriCommands.allocatePorts(0);
-                      updateField('gamePort', ports.gamePort);
-                    }}
-                    className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
-                  >
-                    Assign
-                  </button>
+                  {mode !== 'remote' && (
+                    <button
+                      onClick={async () => {
+                        const ports = await tauriCommands.allocatePorts(0);
+                        updateField('gamePort', ports.gamePort);
+                      }}
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                    >
+                      Assign
+                    </button>
+                  )}
                 </div>
               </div>
               <div>
@@ -331,15 +437,17 @@ export const CreateServer: React.FC = () => {
                     onChange={(e) => updateField('rconPort', parseInt(e.target.value))}
                     className="input-field font-mono flex-1 min-w-0"
                   />
-                  <button
-                    onClick={async () => {
-                      const ports = await tauriCommands.allocatePorts(0);
-                      updateField('rconPort', ports.rconPort);
-                    }}
-                    className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
-                  >
-                    Assign
-                  </button>
+                  {mode !== 'remote' && (
+                    <button
+                      onClick={async () => {
+                        const ports = await tauriCommands.allocatePorts(0);
+                        updateField('rconPort', ports.rconPort);
+                      }}
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                    >
+                      Assign
+                    </button>
+                  )}
                 </div>
               </div>
               <div>
@@ -354,15 +462,17 @@ export const CreateServer: React.FC = () => {
                     onChange={(e) => updateField('restApiPort', parseInt(e.target.value))}
                     className="input-field font-mono flex-1 min-w-0"
                   />
-                  <button
-                    onClick={async () => {
-                      const ports = await tauriCommands.allocatePorts(0);
-                      updateField('restApiPort', ports.restApiPort);
-                    }}
-                    className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
-                  >
-                    Assign
-                  </button>
+                  {mode !== 'remote' && (
+                    <button
+                      onClick={async () => {
+                        const ports = await tauriCommands.allocatePorts(0);
+                        updateField('restApiPort', ports.restApiPort);
+                      }}
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                    >
+                      Assign
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -443,14 +553,15 @@ export const CreateServer: React.FC = () => {
             <div className="space-y-3">
               {[
                 ['Server Name', form.name || '—'],
-                ['Preset', form.preset],
-                ['Install Path', form.installPath || '—'],
+                ['Deployment Mode', mode === 'create' ? 'Create New' : mode === 'import' ? 'Import Local' : 'Remote Connection'],
+                mode === 'remote' ? ['Remote Host', form.host] : ['Install Path', form.installPath || '—'],
+                mode === 'create' ? ['Preset', form.preset] : null,
                 ['Game Port', form.gamePort.toString()],
                 ['RCON Port', form.rconPort.toString()],
                 ['REST API Port', form.restApiPort.toString()],
                 ['Max Players', form.maxPlayers.toString()],
                 ['Public', form.isPublic ? 'Yes' : 'No'],
-              ].map(([label, value]) => (
+              ].filter(Boolean).map(([label, value]: any) => (
                 <div key={label} className="flex items-center justify-between py-2 border-b border-dark-700/20">
                   <span className="text-xs text-dark-500">{label}</span>
                   <span className="text-sm text-dark-200 font-mono">{value}</span>
@@ -458,17 +569,19 @@ export const CreateServer: React.FC = () => {
               ))}
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.autoStart}
-                onChange={(e) => updateField('autoStart', e.target.checked)}
-                className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/20"
-              />
-              <span className="text-sm text-dark-300">
-                Auto-start server when PSM launches
-              </span>
-            </label>
+            {mode !== 'remote' && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.autoStart}
+                  onChange={(e) => updateField('autoStart', e.target.checked)}
+                  className="w-4 h-4 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/20"
+                />
+                <span className="text-sm text-dark-300">
+                  Auto-start server when PSM launches
+                </span>
+              </label>
+            )}
 
             <div className="flex justify-between pt-2">
               <button onClick={() => setStep(2)} className="btn-ghost">
@@ -484,10 +597,10 @@ export const CreateServer: React.FC = () => {
                     <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
                       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="31.4 31.4" />
                     </svg>
-                    Creating...
+                    Saving...
                   </>
                 ) : (
-                  'Create Server'
+                  mode === 'remote' ? 'Save Connection' : mode === 'import' ? 'Import Server' : 'Create Server'
                 )}
               </button>
             </div>
