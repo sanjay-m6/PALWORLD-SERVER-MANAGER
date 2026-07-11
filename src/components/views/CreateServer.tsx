@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
+import { useI18nStore } from '../../lib/i18n';
 
 export const CreateServer: React.FC = () => {
   const { setCurrentView, setServers, showNotification, setSelectedServerId, setActiveServerTab } = useAppStore();
+  const { t } = useI18nStore();
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -192,7 +194,7 @@ export const CreateServer: React.FC = () => {
             </svg>
           </button>
           <div>
-            <h1 className="text-xl font-bold text-dark-50">Create / Import Server</h1>
+            <h1 className="text-xl font-bold text-dark-50">{t('createServer.title')}</h1>
             <p className="text-xs text-dark-400 mt-0.5">Step {step} of 3</p>
           </div>
         </div>
@@ -272,7 +274,7 @@ export const CreateServer: React.FC = () => {
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                Server Name *
+                {t('createServer.name')} *
               </label>
               <input
                 id="create-server-name"
@@ -287,7 +289,7 @@ export const CreateServer: React.FC = () => {
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                Description
+                {t('createServer.desc')}
               </label>
               <textarea
                 id="create-server-description"
@@ -404,7 +406,7 @@ export const CreateServer: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                  Game Port
+                  {t('createServer.port')}
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -481,7 +483,7 @@ export const CreateServer: React.FC = () => {
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                Max Players (1-32)
+                {t('createServer.maxPlayers')}
               </label>
               <input
                 id="create-max-players"
@@ -496,7 +498,7 @@ export const CreateServer: React.FC = () => {
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                Admin Password *
+                {t('createServer.adminPassword')} *
               </label>
               <input
                 id="create-admin-password"
@@ -510,7 +512,7 @@ export const CreateServer: React.FC = () => {
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                Server Password (optional)
+                {t('createServer.serverPassword')}
               </label>
               <input
                 id="create-server-password"
@@ -602,7 +604,7 @@ export const CreateServer: React.FC = () => {
                     Saving...
                   </>
                 ) : (
-                  mode === 'remote' ? 'Save Connection' : mode === 'import' ? 'Import Server' : 'Create Server'
+                  mode === 'remote' ? 'Save Connection' : mode === 'import' ? 'Import Server' : t('createServer.button')
                 )}
               </button>
             </div>

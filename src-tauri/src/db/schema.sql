@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS servers (
     config_json TEXT DEFAULT '{}',
     branch TEXT DEFAULT 'public',
     host TEXT DEFAULT '127.0.0.1',
-    is_remote INTEGER DEFAULT 0
+    is_remote INTEGER DEFAULT 0,
+    auto_restart INTEGER DEFAULT 1,
+    run_as_admin INTEGER DEFAULT 0
 );
 
 -- ─── Backups ────────────────────────────────────────────────────────────────

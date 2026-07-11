@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
 import { SponsorBanner } from '../ui/SponsorBanner';
+import { useI18nStore } from '../../lib/i18n';
 
 // Custom SVGs for stats & actions
 const ServerStackIcon = () => (
@@ -55,6 +56,7 @@ const ShieldIcon = () => (
 );
 
 export const Dashboard: React.FC = () => {
+  const { t } = useI18nStore();
   const {
     servers,
     setServers,
@@ -432,7 +434,7 @@ export const Dashboard: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <h1 className="text-2xl font-bold">{t('nav.dashboard')}</h1>
           <p className="text-xs text-dark-400 mt-1">
             Global control center for dedicated Palworld servers.
           </p>
@@ -442,7 +444,7 @@ export const Dashboard: React.FC = () => {
             onClick={() => setCurrentView('create-server')}
             className="btn-primary flex items-center gap-1.5 px-4 py-2 text-xs font-semibold"
           >
-            <span>+ New Server</span>
+            <span>+ {t('nav.createServer')}</span>
           </button>
         </div>
       </div>
@@ -486,7 +488,7 @@ export const Dashboard: React.FC = () => {
         <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '100ms' }}>
           <div>
             <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-              Total Servers
+              {t('dashboard.totalServers')}
             </div>
             <div className="mt-1 text-2xl font-black bg-gradient-to-r from-cyan-200 to-cyan-400 bg-clip-text text-transparent">
               {servers.length}
@@ -501,7 +503,7 @@ export const Dashboard: React.FC = () => {
         <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '175ms' }}>
           <div>
             <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-              Active Servers
+              {t('dashboard.activeServers')}
             </div>
             <div className="mt-1 text-2xl font-black bg-gradient-to-r from-emerald-200 to-emerald-400 bg-clip-text text-transparent">
               {runningCount}
@@ -516,7 +518,7 @@ export const Dashboard: React.FC = () => {
         <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '250ms' }}>
           <div>
             <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-              Global CPU Usage
+              {t('dashboard.cpuUsage')}
             </div>
             <div className="mt-1 text-2xl font-black bg-gradient-to-r from-primary-200 to-primary-400 bg-clip-text text-transparent">
               {systemInfo ? `${systemInfo.cpuUsage.toFixed(0)}%` : '—'}
@@ -531,7 +533,7 @@ export const Dashboard: React.FC = () => {
         <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '325ms' }}>
           <div>
             <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-              System RAM Load
+              {t('dashboard.ramUsage')}
             </div>
             <div className="mt-1 text-2xl font-black bg-gradient-to-r from-warning-200 to-warning-400 bg-clip-text text-transparent">
               {systemInfo
@@ -783,7 +785,7 @@ export const Dashboard: React.FC = () => {
                               }}
                               className="btn-danger flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider hover:shadow-error-500/10"
                             >
-                              Stop
+                              {t('dashboard.stop')}
                             </button>
                             <button
                               onClick={(e) => {
@@ -792,7 +794,7 @@ export const Dashboard: React.FC = () => {
                               }}
                               className="btn-ghost flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider border border-dark-700/50 hover:bg-dark-800"
                             >
-                              Restart
+                              {t('dashboard.restart')}
                             </button>
                           </>
                         ) : (
@@ -804,7 +806,7 @@ export const Dashboard: React.FC = () => {
                             className="btn-success w-full py-1.5 text-[10px] font-bold uppercase tracking-wider hover:shadow-success-500/10"
                             disabled={server.status === 'starting'}
                           >
-                            {server.status === 'starting' ? 'Starting...' : 'Start Server'}
+                            {server.status === 'starting' ? 'Starting...' : t('dashboard.start')}
                           </button>
                         )}
                       </div>
@@ -820,7 +822,7 @@ export const Dashboard: React.FC = () => {
                             className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
                             title="Broadcast & RCON commands"
                           >
-                            Console
+                            {t('dashboard.console')}
                           </button>
                           <button
                             onClick={(e) => {
@@ -830,7 +832,7 @@ export const Dashboard: React.FC = () => {
                             className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
                             title="View online player inventory"
                           >
-                            Players
+                            {t('nav.players')}
                           </button>
                           <button
                             onClick={(e) => {
@@ -840,7 +842,7 @@ export const Dashboard: React.FC = () => {
                             className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 hover:bg-dark-850"
                             title="Take manual backup snapshot"
                           >
-                            Backup
+                            {t('nav.backups')}
                           </button>
                         </div>
                       )}
@@ -855,7 +857,7 @@ export const Dashboard: React.FC = () => {
                             }}
                             className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 text-center block"
                           >
-                            Open Details
+                            {t('dashboard.manage')}
                           </button>
                           <button
                             onClick={(e) => {
@@ -864,7 +866,7 @@ export const Dashboard: React.FC = () => {
                             }}
                             className="btn-ghost py-1 text-[9px] font-semibold border border-dark-800 text-center block"
                           >
-                            Firewall Port
+                            {t('nav.firewall')}
                           </button>
                         </div>
                       )}

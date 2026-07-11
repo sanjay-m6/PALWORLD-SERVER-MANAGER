@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppStore, type ServerTab } from '../../stores/useAppStore';
 import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
+import { useI18nStore } from '../../lib/i18n';
 import { RconConsole } from '../tabs/RconConsole';
 import { ConfigEditor } from '../tabs/ConfigEditor';
 import { BackupsTab } from '../tabs/BackupsTab';
@@ -83,16 +84,16 @@ const tabIcons: Record<ServerTab, React.ComponentType> = {
   firewall: FirewallIcon,
 };
 
-const tabs: { id: ServerTab; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'config', label: 'Config' },
-  { id: 'rcon', label: 'RCON' },
-  { id: 'players', label: 'Players' },
-  { id: 'backups', label: 'Backups' },
-  { id: 'mods', label: 'Mod Manager' },
-  { id: 'logs', label: 'Logs' },
-  { id: 'scheduler', label: 'Scheduler' },
-  { id: 'firewall', label: 'Firewall' },
+const tabs: { id: ServerTab; labelKey: string; defaultLabel: string }[] = [
+  { id: 'overview', labelKey: 'nav.overview', defaultLabel: 'Overview' },
+  { id: 'config', labelKey: 'nav.config', defaultLabel: 'Config' },
+  { id: 'rcon', labelKey: 'nav.rcon', defaultLabel: 'RCON' },
+  { id: 'players', labelKey: 'nav.players', defaultLabel: 'Players' },
+  { id: 'backups', labelKey: 'nav.backups', defaultLabel: 'Backups' },
+  { id: 'mods', labelKey: 'nav.mods', defaultLabel: 'Mod Manager' },
+  { id: 'logs', labelKey: 'nav.logs', defaultLabel: 'Logs' },
+  { id: 'scheduler', labelKey: 'nav.scheduler', defaultLabel: 'Scheduler' },
+  { id: 'firewall', labelKey: 'nav.firewall', defaultLabel: 'Firewall' },
 ];
 
 const formatStageName = (stage?: string) => {
@@ -102,6 +103,7 @@ const formatStageName = (stage?: string) => {
 };
 
 export const ServerDetail: React.FC = () => {
+  const { t } = useI18nStore();
   const {
     servers,
     selectedServerId,
@@ -337,7 +339,7 @@ export const ServerDetail: React.FC = () => {
               }`}
             >
               {Icon && <Icon />}
-              <span>{tab.label}</span>
+              <span>{t(tab.labelKey)}</span>
             </button>
           );
         })}
@@ -516,6 +518,14 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   const [selectedBranch, setSelectedBranch] = useState(server.branch || 'public');
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
   const [autoStartEnabled, setAutoStartEnabled] = useState(server.autoStart ?? false);
+  const [autoRestartEnabled, setAutoRestartEnabled] = useState(server.autoRestart ?? true);
+  const [runAsAdminEnabled, setRunAsAdminEnabled] = useState(server.runAsAdmin ?? false);
+
+  useEffect(() => {
+    setAutoStartEnabled(server.autoStart ?? false);
+    setAutoRestartEnabled(server.autoRestart ?? true);
+    setRunAsAdminEnabled(server.runAsAdmin ?? false);
+  }, [server.autoStart, server.autoRestart, server.runAsAdmin]);
 
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [isRunningDiag, setIsRunningDiag] = useState(false);
@@ -1097,6 +1107,50 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
                       />
                       <label htmlFor={`auto-start-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
                         Auto-Start Server
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
+                      <input
+                        type="checkbox"
+                        id={`auto-restart-toggle-${server.id}`}
+                        checked={autoRestartEnabled}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setAutoRestartEnabled(checked);
+                          try {
+                            await tauriCommands.updateServerAutoRestart(server.id, checked);
+                            showNotification('success', checked ? 'Auto-Restart on Crash enabled' : 'Auto-Restart on Crash disabled');
+                          } catch (err: any) {
+                            showNotification('error', `Failed to update auto-restart setting: ${err}`);
+                          }
+                        }}
+                        className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                      />
+                      <label htmlFor={`auto-restart-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                        Auto-Restart on Crash
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60" title="Run the server executable elevated with administrator privileges (triggers UAC check)">
+                      <input
+                        type="checkbox"
+                        id={`run-as-admin-toggle-${server.id}`}
+                        checked={runAsAdminEnabled}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setRunAsAdminEnabled(checked);
+                          try {
+                            await tauriCommands.updateServerRunAsAdmin(server.id, checked);
+                            showNotification('success', checked ? 'Run as Admin enabled' : 'Run as Admin disabled');
+                          } catch (err: any) {
+                            showNotification('error', `Failed to update run as admin setting: ${err}`);
+                          }
+                        }}
+                        className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                      />
+                      <label htmlFor={`run-as-admin-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                        Run Server as Admin
                       </label>
                     </div>
                   </div>

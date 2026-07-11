@@ -3,6 +3,7 @@ import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { RunningPal } from '../ui/RunningPal';
+import { useI18nStore } from '../../lib/i18n';
 
 interface ModItem {
   name: string;
@@ -13,28 +14,11 @@ interface ModItem {
   is_workshop_mod?: boolean;
   author?: string;
   version?: string;
+  workshop_id?: string;
+  display_name?: string;
 }
 
-interface ModPerformanceReport {
-  name: string;
-  ram_usage_mb: number;
-  tick_overhead_ms: number;
-  load_time_ms: number;
-}
 
-interface ModConflict {
-  file1: string;
-  file2: string;
-  conflict_type: string;
-  description: string;
-}
-
-interface ModSnapshot {
-  id: string;
-  created_at: string;
-  description: string;
-  mod_count: number;
-}
 
 interface SearchResult {
   name: string;
@@ -50,6 +34,7 @@ interface SearchResult {
   url: string;
   download_url: string | null;
   picture_url: string | null;
+  workshop_id?: string | null;
 }
 
 const formatNumber = (numStr: string) => {
@@ -424,8 +409,14 @@ const ModDetailsModal: React.FC<ModDetailsModalProps> = ({
 
 export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const { showNotification } = useAppStore();
+  const { t } = useI18nStore();
   const [mods, setMods] = useState<ModItem[]>([]);
-  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'discover' | 'conflicts' | 'profiler' | 'snapshots'>('installed');
+  const [activeSubTab, setActiveSubTab] = useState<'installed' | 'discover' | 'browser' | 'config'>('installed');
+  
+  // Ini Config Editor States
+  const [iniContent, setIniContent] = useState('');
+  const [loadingIni, setLoadingIni] = useState(false);
+  const [savingIni, setSavingIni] = useState(false);
   
   // Loading & Action States
   const [loading, setLoading] = useState(true);
@@ -442,12 +433,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [workshopId, setWorkshopId] = useState('');
   const [downloadingWorkshop, setDownloadingWorkshop] = useState(false);
   
-  // Dynamic backend stats
-  const [performanceReports, setPerformanceReports] = useState<ModPerformanceReport[]>([]);
-  const [conflicts, setConflicts] = useState<ModConflict[]>([]);
-  const [snapshots, setSnapshots] = useState<ModSnapshot[]>([]);
-  const [snapshotDescription, setSnapshotDescription] = useState('');
-  const [creatingSnapshot, setCreatingSnapshot] = useState(false);
+
   
   // Search & API Keys
   const [searchQuery, setSearchQuery] = useState('');
@@ -455,8 +441,20 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [apiKey, setApiKey] = useState('');
   const [savingApiKey, setSavingApiKey] = useState(false);
+  const [steamApiKey, setSteamApiKey] = useState('');
+  const [savingSteamApiKey, setSavingSteamApiKey] = useState(false);
+  const [curseForgeApiKey, setCurseForgeApiKey] = useState('');
+  const [savingCurseForgeApiKey, setSavingCurseForgeApiKey] = useState(false);
   const [selectedModForDetails, setSelectedModForDetails] = useState<SearchResult | null>(null);
   const [showPremiumWarning, setShowPremiumWarning] = useState<SearchResult | null>(null);
+  const [showSteamWorkshopWarning, setShowSteamWorkshopWarning] = useState<SearchResult | null>(null);
+  const [showSuccessModal, setShowSuccessModal] = useState<SearchResult | null>(null);
+  const [installingModUrl, setInstallingModUrl] = useState<string | null>(null);
+
+  // File Browser States
+  const [selectedBrowserMod, setSelectedBrowserMod] = useState<ModItem | null>(null);
+  const [browserModFiles, setBrowserModFiles] = useState<string[]>([]);
+  const [loadingBrowserFiles, setLoadingBrowserFiles] = useState(false);
 
   const checkUe4ss = async () => {
     try {
@@ -472,22 +470,28 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   useEffect(() => {
     fetchMods();
     checkUe4ss();
-    fetchSecondaryData();
     if (activeSubTab === 'discover' && searchResults.length === 0 && !searching) {
       loadDefaultMods();
+    }
+    if (activeSubTab === 'config') {
+      loadIniContent();
     }
   }, [serverId, activeSubTab]);
 
   useEffect(() => {
-    const loadApiKey = async () => {
+    const loadApiKeys = async () => {
       try {
-        const val = await tauriCommands.getSetting('nexus_api_key');
-        setApiKey(val || '');
+        const nexusVal = await tauriCommands.getSetting('nexus_api_key');
+        setApiKey(nexusVal || '');
+        const steamVal = await tauriCommands.getSetting('steam_api_key');
+        setSteamApiKey(steamVal || '');
+        const cfVal = await tauriCommands.getSetting('curseforge_api_key');
+        setCurseForgeApiKey(cfVal || '');
       } catch (e) {
-        console.error('Failed to load Nexus API key:', e);
+        console.error('Failed to load API keys:', e);
       }
     };
-    loadApiKey();
+    loadApiKeys();
   }, []);
 
   const loadDefaultMods = async () => {
@@ -514,22 +518,34 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
-  const fetchSecondaryData = async () => {
+  const loadIniContent = async () => {
+    setLoadingIni(true);
     try {
-      if (activeSubTab === 'profiler') {
-        const perf = await tauriCommands.getModPerformanceReport(serverId);
-        setPerformanceReports(perf);
-      } else if (activeSubTab === 'conflicts') {
-        const conf = await tauriCommands.checkModConflicts(serverId);
-        setConflicts(conf);
-      } else if (activeSubTab === 'snapshots') {
-        const snaps = await tauriCommands.listModSnapshots(serverId);
-        setSnapshots(snaps);
-      }
-    } catch (err) {
-      console.error('Failed fetching mod manager sub data:', err);
+      // @ts-ignore
+      const content = await tauriCommands.readPalModSettings(serverId);
+      setIniContent(content);
+    } catch (e) {
+      console.error('Failed to load PalModSettings.ini:', e);
+      showNotification('error', 'Failed to load PalModSettings.ini');
+    } finally {
+      setLoadingIni(false);
     }
   };
+
+  const handleSaveIni = async () => {
+    setSavingIni(true);
+    try {
+      // @ts-ignore
+      await tauriCommands.savePalModSettings(serverId, iniContent);
+      showNotification('success', 'PalModSettings.ini saved successfully!');
+    } catch (e) {
+      showNotification('error', `Failed to save PalModSettings.ini: ${e}`);
+    } finally {
+      setSavingIni(false);
+    }
+  };
+
+
 
   const handleInstallLocal = async (isLogicOverride?: boolean) => {
     try {
@@ -570,7 +586,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     if (!workshopId.trim()) return;
     setDownloadingWorkshop(true);
     try {
-      const res = await tauriCommands.downloadWorkshopMod(serverId, workshopId.trim());
+      const res = await tauriCommands.downloadWorkshopMod(serverId, workshopId.trim(), undefined, isLogicMod);
       if (res.success) {
         showNotification('success', res.message);
         setWorkshopId('');
@@ -630,21 +646,72 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
+  const handleSaveSteamApiKey = async () => {
+    setSavingSteamApiKey(true);
+    try {
+      await tauriCommands.setSetting('steam_api_key', steamApiKey);
+      showNotification('success', 'Steam Web API Key saved successfully.');
+      loadDefaultMods();
+    } catch (e: any) {
+      showNotification('error', `Failed to save Steam API Key: ${e}`);
+    } finally {
+      setSavingSteamApiKey(false);
+    }
+  };
+
+  const handleSaveCurseForgeApiKey = async () => {
+    setSavingCurseForgeApiKey(true);
+    try {
+      await tauriCommands.setSetting('curseforge_api_key', curseForgeApiKey);
+      showNotification('success', 'CurseForge API Key saved successfully.');
+      loadDefaultMods();
+    } catch (e: any) {
+      showNotification('error', `Failed to save CurseForge API Key: ${e}`);
+    } finally {
+      setSavingCurseForgeApiKey(false);
+    }
+  };
+
   const handleInstallDiscoverMod = async (mod: SearchResult) => {
+    setInstallingModUrl(mod.url);
     setInstalling(true);
     try {
       if (mod.source === 'modrinth' && mod.download_url) {
         await tauriCommands.downloadAndInstallModViaUrl(serverId, mod.download_url, isLogicMod);
-        showNotification('success', `Installed "${mod.title}" from Modrinth!`);
+        setShowSuccessModal(mod);
       } else if (mod.source === 'nexus') {
         if (!apiKey.trim()) {
           showNotification('error', 'Nexus Mods requires an API key. Please configure your key in the settings panel above.');
           setInstalling(false);
+          setInstallingModUrl(null);
           return;
         }
         const modId = parseInt(mod.name.replace('nexus_', '').replace('.pak', ''));
         await tauriCommands.downloadNexusModViaApi(serverId, modId, apiKey, isLogicMod);
-        showNotification('success', `Downloaded and installed "${mod.title}" from Nexus Mods!`);
+        setShowSuccessModal(mod);
+      } else if (mod.source === 'steam' && mod.workshop_id) {
+        const res = await tauriCommands.downloadWorkshopMod(serverId, mod.workshop_id, mod.title, isLogicMod);
+        if (res.success) {
+          setShowSuccessModal(mod);
+        } else {
+          setShowSteamWorkshopWarning(mod);
+        }
+      } else if (mod.source === 'curseforge') {
+        if (!curseForgeApiKey.trim()) {
+          showNotification('error', 'CurseForge requires an API key. Please configure your key in the settings panel above.');
+          setInstalling(false);
+          setInstallingModUrl(null);
+          return;
+        }
+        const modId = parseInt(mod.download_url || '0');
+        if (modId === 0) {
+          showNotification('error', 'Invalid CurseForge Mod ID.');
+          setInstalling(false);
+          setInstallingModUrl(null);
+          return;
+        }
+        await tauriCommands.downloadCurseForgeModViaApi(serverId, modId, curseForgeApiKey, isLogicMod);
+        setShowSuccessModal(mod);
       } else {
         showNotification('error', 'Direct installation not supported for this mod.');
       }
@@ -653,11 +720,28 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       const errorMsg = e?.toString() || '';
       if (errorMsg.toLowerCase().includes('premium') || errorMsg.toLowerCase().includes('permission')) {
         setShowPremiumWarning(mod);
+      } else if (mod.source === 'steam') {
+        setShowSteamWorkshopWarning(mod);
       } else {
         showNotification('error', `Mod installation failed: ${e}`);
       }
     } finally {
       setInstalling(false);
+      setInstallingModUrl(null);
+    }
+  };
+
+  const handleSelectBrowserMod = async (mod: ModItem) => {
+    setSelectedBrowserMod(mod);
+    setLoadingBrowserFiles(true);
+    try {
+      const files = await tauriCommands.getModFiles(mod.path);
+      setBrowserModFiles(files);
+    } catch (e: any) {
+      showNotification('error', `Failed to read mod files: ${e}`);
+      setBrowserModFiles([]);
+    } finally {
+      setLoadingBrowserFiles(false);
     }
   };
 
@@ -682,35 +766,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
-  const handleCreateSnapshot = async () => {
-    if (!snapshotDescription) return;
-    setCreatingSnapshot(true);
-    try {
-      await tauriCommands.createModSnapshot(serverId, snapshotDescription);
-      showNotification('success', 'Mod snapshot created successfully.');
-      setSnapshotDescription('');
-      const snaps = await tauriCommands.listModSnapshots(serverId);
-      setSnapshots(snaps);
-    } catch (err: any) {
-      showNotification('error', `Snapshot failed: ${err}`);
-    } finally {
-      setCreatingSnapshot(false);
-    }
-  };
 
-  const handleRestoreSnapshot = async (snapshotId: string) => {
-    if (!confirm('Revert to this snapshot? Current mod directories will be completely overwritten.')) return;
-    setLoading(true);
-    try {
-      await tauriCommands.restoreModSnapshot(serverId, snapshotId);
-      showNotification('success', 'Mod state reverted successfully.');
-      fetchMods();
-    } catch (err: any) {
-      showNotification('error', `Snapshot restore failed: ${err}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
@@ -719,6 +775,10 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
+
+  const matchingMod = workshopId.trim()
+    ? mods.find(m => (m.workshop_id && m.workshop_id === workshopId.trim()) || m.name.includes(workshopId.trim()))
+    : null;
 
   return (
     <div className="flex flex-col h-full bg-dark-950/20 text-dark-50">
@@ -733,7 +793,17 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 : 'text-dark-400 hover:text-dark-200 hover:bg-dark-900/30'
             }`}
           >
-            📦 Installed Inventory
+            📦 {t('mods.installedInventory')}
+          </button>
+          <button
+            onClick={() => setActiveSubTab('browser')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+              activeSubTab === 'browser'
+                ? 'bg-primary-500/15 text-primary-400 border border-primary-500/20'
+                : 'text-dark-400 hover:text-dark-200 hover:bg-dark-900/30'
+            }`}
+          >
+            📁 {t('mods.fileBrowser')}
           </button>
           <button
             onClick={() => setActiveSubTab('discover')}
@@ -743,38 +813,19 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 : 'text-dark-400 hover:text-dark-200 hover:bg-dark-900/30'
             }`}
           >
-            🔍 Discover Mods
+            🔍 {t('mods.discoverMods')}
           </button>
           <button
-            onClick={() => setActiveSubTab('conflicts')}
+            onClick={() => setActiveSubTab('config')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              activeSubTab === 'conflicts'
+              activeSubTab === 'config'
                 ? 'bg-primary-500/15 text-primary-400 border border-primary-500/20'
                 : 'text-dark-400 hover:text-dark-200 hover:bg-dark-900/30'
             }`}
           >
-            ⚠️ Conflict Scanner
+            ⚙️ {t('mods.configEditor')}
           </button>
-          <button
-            onClick={() => setActiveSubTab('profiler')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              activeSubTab === 'profiler'
-                ? 'bg-primary-500/15 text-primary-400 border border-primary-500/20'
-                : 'text-dark-400 hover:text-dark-200 hover:bg-dark-900/30'
-            }`}
-          >
-            📊 Performance Profiler
-          </button>
-          <button
-            onClick={() => setActiveSubTab('snapshots')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              activeSubTab === 'snapshots'
-                ? 'bg-primary-500/15 text-primary-400 border border-primary-500/20'
-                : 'text-dark-400 hover:text-dark-200 hover:bg-dark-900/30'
-            }`}
-          >
-            💾 Mod Snapshots
-          </button>
+
         </div>
 
         {/* Global Manual Options */}
@@ -843,7 +894,9 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                   >
                     <div className="flex-1 min-w-0 mr-4">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-dark-100 truncate block max-w-[220px]" title={mod.name}>{mod.name}</span>
+                        <span className="text-xs font-bold text-dark-100 truncate block max-w-[220px]" title={mod.display_name || mod.name}>
+                          {mod.display_name || mod.name}
+                        </span>
                         {mod.is_workshop_mod ? (
                           <span className="text-[8px] font-bold px-1.5 py-0.5 rounded uppercase bg-success-500/10 text-success-400 border border-success-500/20">
                             Workshop Mod
@@ -896,10 +949,209 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
           </div>
         )}
 
+        {/* SUB TAB: MOD FILE BROWSER */}
+        {activeSubTab === 'browser' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-180px)] min-h-[400px]">
+            {/* Left side: list of installed mods */}
+            <div className="lg:col-span-1 glass-card p-4 flex flex-col h-full overflow-hidden">
+              <div className="mb-3">
+                <h3 className="text-xs font-bold text-dark-200 uppercase tracking-wider">Installed Mods</h3>
+                <p className="text-[10px] text-dark-500 mt-0.5">Select a mod to browse its internal files.</p>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                {mods.length === 0 ? (
+                  <div className="text-center py-8 text-dark-500 text-[11px] italic">
+                    No mods installed.
+                  </div>
+                ) : (
+                  mods.map((mod) => {
+                    const isSelected = selectedBrowserMod?.name === mod.name;
+                    return (
+                      <button
+                        key={mod.name}
+                        onClick={() => handleSelectBrowserMod(mod)}
+                        className={`w-full text-left p-3 rounded-lg border transition-all flex flex-col gap-1 focus:outline-none ${
+                          isSelected
+                            ? 'bg-primary-500/15 border-primary-500/50 shadow-md shadow-primary-500/5'
+                            : 'bg-dark-900/40 border-dark-800/40 hover:bg-dark-900/60 hover:border-dark-700/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full gap-2">
+                          <span className={`text-xs font-bold truncate ${isSelected ? 'text-primary-300' : 'text-dark-100'}`}>
+                            {mod.display_name || mod.name}
+                          </span>
+                          <span className={`text-[7px] font-extrabold px-1 py-0.5 rounded tracking-wider uppercase flex-shrink-0 ${
+                            mod.is_workshop_mod
+                              ? 'bg-success-500/10 text-success-400 border border-success-500/20'
+                              : mod.is_logic_mod
+                              ? 'bg-primary-500/10 text-primary-400 border border-primary-500/20'
+                              : 'bg-info-500/10 text-info-400 border border-info-500/20'
+                          }`}>
+                            {mod.is_workshop_mod ? 'Workshop' : mod.is_logic_mod ? 'Logic' : 'Asset'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[9px] text-dark-500">
+                          <span>Size: {formatBytes(mod.size_bytes)}</span>
+                          {mod.version && <span>v{mod.version}</span>}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Right side: file explorer */}
+            <div className="lg:col-span-2 glass-card p-4 flex flex-col h-full overflow-hidden">
+              {selectedBrowserMod ? (
+                <div className="flex flex-col h-full overflow-hidden">
+                  <div className="mb-3 border-b border-dark-800/50 pb-2.5 flex items-center justify-between flex-shrink-0">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-dark-100">{selectedBrowserMod.display_name || selectedBrowserMod.name}</h3>
+                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                          selectedBrowserMod.is_workshop_mod
+                            ? 'bg-success-500/10 text-success-400 border border-success-500/20'
+                            : selectedBrowserMod.is_logic_mod
+                            ? 'bg-primary-500/10 text-primary-400 border border-primary-500/20'
+                            : 'bg-info-500/10 text-info-400 border border-info-500/20'
+                        }`}>
+                          {selectedBrowserMod.is_workshop_mod ? 'Workshop Mod' : selectedBrowserMod.is_logic_mod ? 'Logic Mod' : 'Asset Mod'}
+                        </span>
+                      </div>
+                      <p className="text-[9px] text-dark-500 font-mono mt-1 break-all bg-dark-950/30 p-1 rounded border border-dark-900">
+                        Path: {selectedBrowserMod.path}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    {loadingBrowserFiles ? (
+                      <div className="flex flex-col items-center justify-center py-20 gap-3">
+                        <svg className="animate-spin h-6 w-6 text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span className="text-xs text-dark-400">Scanning directory contents...</span>
+                      </div>
+                    ) : browserModFiles.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-20 text-center">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-8 h-8 text-dark-600 mb-2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.008 1.24l.885 1.77a2.25 2.25 0 002.007 1.24h1.98a2.25 2.25 0 002.007-1.24l.885-1.77a2.25 2.25 0 012.007-1.24h3.86m-18 0h18" />
+                        </svg>
+                        <p className="text-xs font-semibold text-dark-400">Folder is empty</p>
+                        <p className="text-[10px] text-dark-500">No files were found in this mod path.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1 pr-2">
+                        {browserModFiles.map((file, fIdx) => (
+                          <div
+                            key={fIdx}
+                            className="flex items-center justify-between px-3 py-2 text-[10px] hover:bg-dark-900/30 rounded-lg transition-colors border border-transparent hover:border-dark-800/40 text-dark-300"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-dark-500 flex-shrink-0">
+                                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 2h4v2H6V6z" clipRule="evenodd" />
+                              </svg>
+                              <span className="font-mono truncate" title={file}>{file}</span>
+                            </div>
+                            <span className="text-[8px] font-mono text-dark-500 flex-shrink-0 uppercase bg-dark-900 px-1 py-0.5 rounded ml-2">
+                              {file.split('.').pop() || 'file'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-center py-20">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-10 h-10 text-dark-600 mb-3">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
+                  </svg>
+                  <h4 className="text-xs font-bold text-dark-300">No Mod Selected</h4>
+                  <p className="text-[10px] text-dark-500 mt-1 max-w-xs">
+                    Choose any installed mod from the list on the left to scan and view its directory structure.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* SUB TAB: DISCOVER MODS */}
         {activeSubTab === 'discover' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Steam Web API Key */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Steam Web API Key</h4>
+                    <a
+                      href="https://steamcommunity.com/dev/apikey"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] text-primary-400 hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      Get Key ↗
+                    </a>
+                  </div>
+                  <p className="text-[10px] text-dark-500 mt-1">Needed to search and browse Steam Workshop mods.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="password"
+                    value={steamApiKey}
+                    onChange={(e) => setSteamApiKey(e.target.value)}
+                    className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
+                    placeholder="Enter Steam API Key"
+                  />
+                  <button
+                    onClick={handleSaveSteamApiKey}
+                    disabled={savingSteamApiKey}
+                    className="btn-primary text-xs px-4"
+                  >
+                    {savingSteamApiKey ? 'Saving...' : 'Save Key'}
+                  </button>
+                </div>
+              </div>
+
+              {/* CurseForge API Key */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">CurseForge API Key</h4>
+                    <a
+                      href="https://console.curseforge.com/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] text-primary-400 hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      Get Key ↗
+                    </a>
+                  </div>
+                  <p className="text-[10px] text-dark-500 mt-1">Needed to search and install CurseForge mods.</p>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="password"
+                    value={curseForgeApiKey}
+                    onChange={(e) => setCurseForgeApiKey(e.target.value)}
+                    className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
+                    placeholder="Enter CurseForge API Key"
+                  />
+                  <button
+                    onClick={handleSaveCurseForgeApiKey}
+                    disabled={savingCurseForgeApiKey}
+                    className="btn-primary text-xs px-4"
+                  >
+                    {savingCurseForgeApiKey ? 'Saving...' : 'Save Key'}
+                  </button>
+                </div>
+              </div>
+
               {/* Nexus Mods API Key */}
               <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
                 <div>
@@ -911,10 +1163,10 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                       rel="noreferrer"
                       className="text-[10px] text-primary-400 hover:underline flex items-center gap-1 font-semibold"
                     >
-                      Get API Key ↗
+                      Get Key ↗
                     </a>
                   </div>
-                  <p className="text-[10px] text-dark-500 mt-1">Needed to download files directly from Nexus Mods.</p>
+                  <p className="text-[10px] text-dark-500 mt-1">Needed to search and install Nexus Mods.</p>
                 </div>
                 <div className="flex gap-2 pt-1">
                   <input
@@ -922,7 +1174,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
-                    placeholder="Enter Nexus Mods API Key"
+                    placeholder="Enter Nexus API Key"
                   />
                   <button
                     onClick={handleSaveApiKey}
@@ -938,16 +1190,16 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
               <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">UE4SS Modding Framework</h4>
+                    <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">UE4SS Framework</h4>
                     {checkingUe4ss ? (
                       <span className="text-[9px] text-dark-400">Checking...</span>
                     ) : ue4ssInstalled ? (
-                      <span className="text-[9px] text-success-400 font-black bg-success-500/10 px-2 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">🟢 Active / Installed</span>
+                      <span className="text-[9px] text-success-400 font-black bg-success-500/10 px-2 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">🟢 Active</span>
                     ) : (
                       <span className="text-[9px] text-warning-400 font-black bg-warning-500/10 px-2 py-0.5 rounded border border-warning-500/20 uppercase tracking-wider">⚠️ Missing</span>
                     )}
                   </div>
-                  <p className="text-[10px] text-dark-500 mt-1">Required by script/logic mods and LUA overlays. Essential for advanced modding.</p>
+                  <p className="text-[10px] text-dark-500 mt-1">Required by logic/script mods and LUA overlays.</p>
                 </div>
                 <div className="pt-1">
                   <button
@@ -959,13 +1211,13 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                         : 'bg-primary-600/10 border border-primary-500/20 hover:bg-primary-600/20 text-primary-400'
                     }`}
                   >
-                    {installingUe4ss ? 'Installing UE4SS Framework...' : ue4ssInstalled ? 'UE4SS is Ready' : 'Install UE4SS Framework'}
+                    {installingUe4ss ? 'Installing UE4SS...' : ue4ssInstalled ? 'UE4SS is Ready' : 'Install UE4SS Framework'}
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Custom URL Downloader */}
               <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
                 <div>
@@ -996,20 +1248,45 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                   <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Install Steam Workshop Mod</h4>
                   <p className="text-[10px] text-dark-500 mt-1">Input the Steam Workshop Mod ID to download and auto-extract it.</p>
                 </div>
-                <div className="flex gap-2 pt-1">
-                  <input
-                    type="text"
-                    value={workshopId}
-                    onChange={(e) => setWorkshopId(e.target.value)}
-                    className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
-                    placeholder="Steam Workshop ID (e.g. 3158021234)"
-                  />
+                <div className="space-y-2 pt-1">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={workshopId}
+                      onChange={(e) => setWorkshopId(e.target.value)}
+                      className="input-field text-xs flex-1 bg-dark-900/60 border-dark-700/50"
+                      placeholder="Steam Workshop ID (e.g. 3158021234)"
+                    />
+                    <button
+                      onClick={handleDownloadWorkshop}
+                      disabled={downloadingWorkshop || !workshopId.trim()}
+                      className="btn-primary text-xs px-4"
+                    >
+                      {downloadingWorkshop ? 'Installing...' : 'Install Mod'}
+                    </button>
+                  </div>
+                  {matchingMod && (
+                    <div className="text-[10px] text-success-400 font-bold flex items-center gap-1.5 bg-success-500/5 border border-success-500/10 px-2 py-1 rounded">
+                      <span>✓ Already Installed:</span>
+                      <span className="truncate max-w-[140px] font-mono">{matchingMod.display_name || matchingMod.name}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Import Local Mod File */}
+              <div className="glass-card p-4 space-y-3 flex flex-col justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Import Local Mod File</h4>
+                  <p className="text-[10px] text-dark-500 mt-1">Select and install a manually downloaded mod from your computer.</p>
+                </div>
+                <div className="pt-1">
                   <button
-                    onClick={handleDownloadWorkshop}
-                    disabled={downloadingWorkshop || !workshopId.trim()}
-                    className="btn-primary text-xs px-4"
+                    onClick={() => handleInstallLocal(isLogicMod)}
+                    disabled={installing}
+                    className="w-full btn-primary text-xs py-2 px-4 rounded-lg font-semibold"
                   >
-                    {downloadingWorkshop ? 'Installing...' : 'Install Mod'}
+                    {installing ? 'Importing...' : 'Import Downloaded File (.zip / .pak)'}
                   </button>
                 </div>
               </div>
@@ -1051,7 +1328,12 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {searchResults.map((dmod) => {
-                  const alreadyInstalled = mods.some(m => m.name === dmod.name);
+                  const alreadyInstalled = mods.some(m => {
+                    if (dmod.source === 'steam' && dmod.workshop_id) {
+                      return (m.is_workshop_mod && m.workshop_id === dmod.workshop_id) || m.name.includes(dmod.workshop_id);
+                    }
+                    return m.name === dmod.name;
+                  });
                   return (
                     <div key={dmod.url} className="glass-card p-4 flex gap-4 items-start justify-between hover:bg-dark-900/40 hover:border-dark-600/50 hover:shadow-lg hover:shadow-primary-500/5 hover:-translate-y-0.5 transition-all duration-300 group">
                       {dmod.picture_url && (
@@ -1076,9 +1358,13 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                             <span className={`text-[7px] font-extrabold px-1.5 py-0.5 rounded tracking-wider uppercase flex-shrink-0 ${
                               dmod.source === 'modrinth' 
                                 ? 'bg-success-500/10 text-success-400 border border-success-500/20' 
-                                : 'bg-info-500/10 text-info-400 border border-info-500/20'
+                                : dmod.source === 'nexus'
+                                ? 'bg-info-500/10 text-info-400 border border-info-500/20'
+                                : dmod.source === 'steam'
+                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                : 'bg-warning-500/10 text-warning-400 border border-warning-500/20'
                             }`}>
-                              {dmod.source}
+                              {dmod.source === 'steam' ? 'Steam' : dmod.source === 'curseforge' ? 'CurseForge' : dmod.source === 'nexus' ? 'Nexus' : dmod.source}
                             </span>
                           </div>
                           <p 
@@ -1130,14 +1416,28 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                           </div>
                           <button
                             onClick={() => handleInstallDiscoverMod(dmod)}
-                            disabled={installing || alreadyInstalled}
+                            disabled={alreadyInstalled || (installing && installingModUrl !== dmod.url)}
                             className={`text-[10px] py-1.5 px-4 rounded-lg font-bold transition-all duration-300 ${
                               alreadyInstalled
                                 ? 'bg-success-600/10 text-success-400 border border-success-500/20 cursor-default'
+                                : (installing && installingModUrl !== dmod.url)
+                                ? 'bg-primary-600/50 text-white/50 cursor-not-allowed'
                                 : 'bg-primary-600 hover:bg-primary-500 text-white shadow-md shadow-primary-600/10 hover:shadow-primary-500/20 hover:scale-[1.02] active:scale-[0.98]'
                             }`}
                           >
-                            {alreadyInstalled ? '✓ Installed' : installing ? 'Installing...' : 'One-Click Install'}
+                            {alreadyInstalled ? (
+                              t('mods.installed')
+                            ) : installingModUrl === dmod.url ? (
+                              <div className="flex items-center gap-1.5">
+                                <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span>{t('mods.installing')}</span>
+                              </div>
+                            ) : (
+                              t('mods.oneClickInstall')
+                            )}
                           </button>
                         </div>
                       </div>
@@ -1149,159 +1449,55 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
           </div>
         )}
 
-        {/* SUB TAB: CONFLICTS */}
-        {activeSubTab === 'conflicts' && (
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-dark-200">Asset Conflict Scan</h3>
-              <p className="text-[10px] text-dark-500 mt-0.5">Scans active .pak structures to locate overlapping resource paths or overriding blueprints.</p>
-            </div>
-
-            {conflicts.length === 0 ? (
-              <div className="glass-card p-8 text-center flex flex-col items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-8 h-8 text-success-500 mb-2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-xs font-semibold text-dark-200">Zero Conflicts Detected</p>
-                <p className="text-[10px] text-dark-500 mt-0.5">All currently enabled script files map to unique subsystems.</p>
+        {/* SUB TAB: PALMODSETTINGS.INI CONFIG EDITOR */}
+        {activeSubTab === 'config' && (
+          <div className="space-y-4 flex flex-col h-[calc(100vh-180px)] min-h-[400px]">
+            <div className="flex items-center justify-between flex-shrink-0">
+              <div>
+                <h3 className="text-sm font-semibold text-dark-200">PalModSettings.ini Config Editor</h3>
+                <p className="text-[10px] text-dark-500 mt-0.5">Edit active mod listings, global loading states, and custom workshop parameters.</p>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {conflicts.map((conf, idx) => (
-                  <div key={idx} className="glass-card p-4 border-l-4 border-l-error-500 bg-error-500/5 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-error-400">{conf.conflict_type}</span>
-                      <span className="text-[9px] text-dark-500">Scan ID: #CONF-{idx}</span>
-                    </div>
-                    <p className="text-[10px] text-dark-300">{conf.description}</p>
-                    <div className="flex items-center gap-2 mt-1 text-[10px] font-mono bg-dark-950/40 p-2 rounded border border-dark-700/10">
-                      <span className="text-dark-200">{conf.file1}</span>
-                      <span className="text-dark-500">🔀</span>
-                      <span className="text-dark-200">{conf.file2}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SUB TAB: PROFILER */}
-        {activeSubTab === 'profiler' && (
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-dark-200">Mod Impact Analysis</h3>
-              <p className="text-[10px] text-dark-500 mt-0.5">Simulated real-time analysis of loaded mod overhead on the dedicated server instance.</p>
-            </div>
-
-            {performanceReports.length === 0 ? (
-              <div className="text-center py-12 text-dark-500 text-xs">No active mods loaded to profile.</div>
-            ) : (
-              <div className="space-y-3">
-                {performanceReports.map((rep) => (
-                  <div key={rep.name} className="glass-card p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-dark-100">{rep.name}</span>
-                      <span className="text-[10px] text-dark-500 font-mono">Status: Active</span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-                      {/* RAM usage */}
-                      <div className="space-y-1 bg-dark-900/40 p-2.5 rounded border border-dark-700/30">
-                        <div className="flex justify-between text-[9px]">
-                          <span className="text-dark-400 font-semibold">RAM Overhead</span>
-                          <span className="text-dark-200 font-bold">{rep.ram_usage_mb.toFixed(1)} MB</span>
-                        </div>
-                        <div className="w-full bg-dark-950 h-1.5 rounded-full overflow-hidden">
-                          <div className="bg-primary-500 h-full rounded-full" style={{ width: `${Math.min((rep.ram_usage_mb / 60) * 100, 100)}%` }} />
-                        </div>
-                      </div>
-
-                      {/* Tick impact */}
-                      <div className="space-y-1 bg-dark-900/40 p-2.5 rounded border border-dark-700/30">
-                        <div className="flex justify-between text-[9px]">
-                          <span className="text-dark-400 font-semibold">Server Tick Impact</span>
-                          <span className="text-dark-200 font-bold">+{rep.tick_overhead_ms.toFixed(2)} ms</span>
-                        </div>
-                        <div className="w-full bg-dark-950 h-1.5 rounded-full overflow-hidden">
-                          <div className="bg-info-500 h-full rounded-full" style={{ width: `${Math.min((rep.tick_overhead_ms / 1.5) * 100, 100)}%` }} />
-                        </div>
-                      </div>
-
-                      {/* Load time */}
-                      <div className="space-y-1 bg-dark-900/40 p-2.5 rounded border border-dark-700/30">
-                        <div className="flex justify-between text-[9px]">
-                          <span className="text-dark-400 font-semibold">Initialization Delay</span>
-                          <span className="text-dark-200 font-bold">{rep.load_time_ms} ms</span>
-                        </div>
-                        <div className="w-full bg-dark-950 h-1.5 rounded-full overflow-hidden">
-                          <div className="bg-warning-500 h-full rounded-full" style={{ width: `${Math.min((rep.load_time_ms / 400) * 100, 100)}%` }} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SUB TAB: SNAPSHOTS */}
-        {activeSubTab === 'snapshots' && (
-          <div className="space-y-4">
-            <div className="glass-card p-4 space-y-3">
-              <h4 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">Take Complete Mod Snapshot</h4>
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={snapshotDescription}
-                  onChange={(e) => setSnapshotDescription(e.target.value)}
-                  className="input-field text-xs flex-1"
-                  placeholder="Enter snapshot description (e.g., Before updating QoL mods)"
-                />
                 <button
-                  onClick={handleCreateSnapshot}
-                  disabled={creatingSnapshot || !snapshotDescription}
-                  className="btn-primary text-xs px-4"
+                  onClick={loadIniContent}
+                  disabled={loadingIni || savingIni}
+                  className="px-3.5 py-1.5 border border-dark-700/50 text-dark-300 hover:text-dark-100 hover:bg-dark-800 rounded-lg text-xs font-semibold transition-all"
                 >
-                  {creatingSnapshot ? 'Saving...' : 'Take Snapshot'}
+                  {loadingIni ? 'Refreshing...' : '🔄 Reload File'}
+                </button>
+                <button
+                  onClick={handleSaveIni}
+                  disabled={loadingIni || savingIni}
+                  className="btn-primary flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold"
+                >
+                  {savingIni ? 'Saving...' : '💾 Save Changes'}
                 </button>
               </div>
             </div>
 
-            {/* List Snapshots */}
-            <div className="space-y-2">
-              <h4 className="text-xs font-bold text-dark-200">Historical Snapshots</h4>
-              {snapshots.length === 0 ? (
-                <div className="text-center py-8 text-dark-500 text-xs">No snapshots taken yet.</div>
-              ) : (
-                <div className="space-y-2">
-                  {snapshots.map((snap) => (
-                    <div key={snap.id} className="glass-card p-4 flex items-center justify-between">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-dark-100">{snap.description}</span>
-                          <span className="text-[8px] bg-dark-750 px-1.5 py-0.5 rounded text-dark-400 font-mono">{snap.id.slice(0, 8)}</span>
-                        </div>
-                        <div className="flex gap-4 text-[9px] text-dark-500">
-                          <span>Captured: {snap.created_at}</span>
-                          <span>Mods: {snap.mod_count}</span>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => handleRestoreSnapshot(snap.id)}
-                        className="btn-primary text-xs py-1 px-3"
-                      >
-                        Revert State
-                      </button>
-                    </div>
-                  ))}
+            <div className="flex-1 min-h-0 bg-dark-900/40 border border-dark-800/60 rounded-2xl p-4 flex flex-col overflow-hidden relative group">
+              {loadingIni ? (
+                <div className="flex flex-col items-center justify-center h-full gap-3">
+                  <svg className="animate-spin h-6 w-6 text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-xs text-dark-400">Loading PalModSettings.ini...</span>
                 </div>
+              ) : (
+                <textarea
+                  value={iniContent}
+                  onChange={(e) => setIniContent(e.target.value)}
+                  className="w-full h-full bg-transparent text-dark-100 font-mono text-[11px] leading-relaxed resize-none border-none outline-none focus:ring-0 focus:outline-none custom-scrollbar p-2"
+                  placeholder={`[PalModSettings]\nbGlobalEnableMod=true\n# Add ActiveModList entries here`}
+                  spellCheck={false}
+                />
               )}
             </div>
           </div>
         )}
+
+
 
       </div>
 
@@ -1380,6 +1576,216 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                   </svg>
                 </a>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Steam Workshop Warning Modal */}
+      {showSteamWorkshopWarning && (
+        <div className="fixed inset-0 bg-dark-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-900 border border-dark-800 rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-warning-400">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-6 h-6 flex-shrink-0 text-warning-500">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <h3 className="text-sm font-bold text-dark-100">Steam Workshop Authentication Required</h3>
+            </div>
+            
+            <p className="text-[11px] text-dark-300 leading-relaxed">
+              Paid games like <strong>Palworld</strong> do not permit anonymous downloads of workshop items. To download and install this mod, follow these steps:
+            </p>
+
+            <div className="space-y-3">
+              <div className="bg-dark-950/50 border border-dark-850 p-4 rounded-xl space-y-2">
+                <span className="text-[10px] font-bold text-primary-400 uppercase tracking-wider block">
+                  Subscribe on Steam Client (Free & Automatic)
+                </span>
+                <ol className="list-decimal pl-4 text-[10px] text-dark-300 space-y-1.5">
+                  <li>Click <strong>Open in Steam</strong> or <strong>Open Browser</strong> below and click <strong>Subscribe</strong>.</li>
+                  <li>Let your local Steam client download the mod.</li>
+                  <li>Click <strong>One-Click Install</strong> again. The manager will automatically detect and import the mod from your local Steam folder!</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 gap-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowSteamWorkshopWarning(null)}
+                  className="px-3 py-1.5 border border-dark-700/50 text-dark-300 hover:text-dark-100 hover:bg-dark-800 rounded-lg text-xs font-semibold transition-all"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={async () => {
+                    await handleInstallLocal(isLogicMod);
+                    setShowSteamWorkshopWarning(null);
+                  }}
+                  className="px-3 py-1.5 bg-dark-800 hover:bg-dark-750 text-dark-200 hover:text-dark-100 rounded-lg text-xs font-semibold border border-dark-700 transition-all"
+                >
+                  Import Downloaded File
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <a
+                  href={`steam://url/CommunityFilePage/${showSteamWorkshopWarning.workshop_id}`}
+                  onClick={() => setShowSteamWorkshopWarning(null)}
+                  className="px-3 py-1.5 bg-dark-800 hover:bg-dark-750 text-dark-200 hover:text-dark-100 border border-dark-700 rounded-lg text-xs font-semibold transition-all flex items-center gap-1"
+                >
+                  <span>Open in Steam</span>
+                </a>
+                <a
+                  href={showSteamWorkshopWarning.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setShowSteamWorkshopWarning(null)}
+                  className="px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-primary-600/10 hover:shadow-primary-500/20 transition-all flex items-center gap-1"
+                >
+                  <span>Open Browser</span>
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
+                    <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                    <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Install Success Guidance Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-dark-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-dark-900 border border-dark-800 rounded-2xl w-full max-w-xl p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-dark-800/60 pb-3">
+              <div className="flex items-center gap-3 text-success-400">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-6 h-6 flex-shrink-0 text-success-500">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <h3 className="text-sm font-bold text-dark-100">Mod Installed Successfully!</h3>
+                  <p className="text-[10px] text-dark-500 mt-0.5">Guide version 1.0.0 — Dedicated Server Modding Flow</p>
+                </div>
+              </div>
+              <a
+                href="https://docs.palworldgame.com/settings-and-operation/mod"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[9px] font-bold text-primary-400 hover:text-primary-300 flex items-center gap-0.5 uppercase tracking-wider bg-primary-500/10 px-2.5 py-1 rounded-lg border border-primary-500/20"
+              >
+                <span>Official Docs</span>
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
+                  <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                </svg>
+              </a>
+            </div>
+            
+            <p className="text-[11px] text-dark-300 leading-relaxed">
+              <strong>{showSuccessModal.title}</strong> has been successfully placed in the server directory. Please review the complete official modding instructions below:
+            </p>
+
+            <div className="max-h-[380px] overflow-y-auto pr-2 space-y-4 custom-scrollbar text-[10.5px] text-dark-300 leading-relaxed">
+              
+              {/* Important Warnings */}
+              <div className="bg-warning-500/10 border border-warning-500/20 text-warning-400/90 p-3 rounded-xl space-y-1">
+                <span className="font-bold text-[10px] uppercase tracking-wider block">Important Notes</span>
+                <ul className="list-disc pl-4 space-y-1 text-[9.5px]">
+                  <li>At this time, server-side mods work only on the dedicated server with <strong>Windows edition</strong>.</li>
+                  <li>Only mods that are specifically built to run on servers will function.</li>
+                  <li>Use mods at your own risk. They may cause save-data corruption or crashes.</li>
+                </ul>
+              </div>
+
+              {/* Placing Workshop Mods */}
+              <div className="space-y-1.5 bg-dark-950/40 p-3 rounded-xl border border-dark-800/40">
+                <span className="font-bold text-dark-200 block text-[10.5px]">Placing Workshop Mods</span>
+                <p>
+                  Unlike the game client, the dedicated server must be made aware of Workshop items. The manager has placed this mod using the <strong>Default Directory</strong> method:
+                </p>
+                <div className="bg-dark-950 p-2.5 rounded-lg border border-dark-900 font-mono text-[9px] text-dark-400 space-y-0.5 mt-1">
+                  <div>.\PalServer.exe</div>
+                  <div>.\Mods\PalModSettings.ini</div>
+                  <div className="text-success-400">.\Mods\Workshop\{showSuccessModal.workshop_id || 'folder_name'}\Info.json</div>
+                </div>
+              </div>
+
+              {/* Enabling Mods */}
+              <div className="space-y-1.5 bg-dark-950/40 p-3 rounded-xl border border-dark-800/40">
+                <span className="font-bold text-dark-200 block text-[10.5px]">Enabling Mods via PalModSettings.ini</span>
+                <p>
+                  To load mods, the manager has updated your server's <code className="bg-dark-900 px-1 py-0.5 rounded text-dark-200 font-mono text-[9.5px]">Mods/PalModSettings.ini</code>:
+                </p>
+                <div className="bg-dark-950 p-2.5 rounded-lg border border-dark-900 font-mono text-[9px] text-dark-400 space-y-1">
+                  <div>[PalModSettings]</div>
+                  <div className="text-success-400">bGlobalEnableMod=true</div>
+                  <div className="text-success-400">ActiveModList={showSuccessModal.workshop_id ? `Workshop_${showSuccessModal.workshop_id}` : showSuccessModal.name}</div>
+                </div>
+                <p className="text-[9.5px] text-dark-500 italic mt-1">
+                  Note: ActiveModList requires the PackageName found inside Info.json, not the directory folder name. The manager registers this automatically.
+                </p>
+              </div>
+
+              {/* Deployment on Restart */}
+              <div className="space-y-1.5 bg-dark-950/40 p-3 rounded-xl border border-dark-800/40">
+                <span className="font-bold text-dark-200 block text-[10.5px]">Deploy Mods by Restarting the Server</span>
+                <p>
+                  To apply the mods, <strong>you must restart the dedicated server</strong>. Upon restart, the game automatically parses the mod's configuration and deploys files to the correct target paths:
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-[9px] bg-dark-950 p-2.5 rounded-lg border border-dark-900 font-mono text-dark-400">
+                  <div className="border-r border-dark-850 pr-2">
+                    <span className="text-primary-400 block font-bold mb-1">Source Rule</span>
+                    <div>UE4SS</div>
+                    <div>UE4SS Lua</div>
+                    <div>PalSchema</div>
+                    <div>LogicMods</div>
+                    <div>Paks</div>
+                  </div>
+                  <div>
+                    <span className="text-primary-400 block font-bold mb-1">Deployed Destination Path</span>
+                    <div>Mods\NativeMods\UE4SS</div>
+                    <div>Mods\NativeMods\UE4SS\Mods\{"{PackageName}"}</div>
+                    <div>Mods\NativeMods\UE4SS\Mods\PalSchema\mods\{"{PackageName}"}</div>
+                    <div className="text-success-400">Pal\Content\Paks\LogicMods</div>
+                    <div className="text-success-400">Pal\Content\Paks\~WorkshopMods\{"{PackageName}"}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Updating & Removing */}
+              <div className="space-y-1.5 bg-dark-950/40 p-3 rounded-xl border border-dark-800/40">
+                <span className="font-bold text-dark-200 block text-[10.5px]">Updating & Removing Mods</span>
+                <ul className="list-disc pl-4 space-y-1 text-[10px]">
+                  <li><strong>Updating</strong>: If the Version in Info.json changes, restarting the server automatically uninstalls the old files and deploys the new ones.</li>
+                  <li><strong>Disabling</strong>: Toggle the mod active/inactive state in the Inventory tab to remove its PackageName from the ActiveModList.</li>
+                  <li><strong>Forced Deactivation</strong>: Adding the <code className="bg-dark-900 px-1 py-0.5 rounded font-mono text-[9px] text-warning-400">-NoMods</code> launch argument forcibly disables all mod loading at startup.</li>
+                </ul>
+              </div>
+
+              {/* Troubleshooting */}
+              <div className="space-y-1.5 bg-dark-950/40 p-3 rounded-xl border border-dark-800/40 text-dark-400">
+                <span className="font-bold text-dark-200 block text-[10.5px]">Troubleshooting Guidelines</span>
+                <div className="space-y-2 text-[10px]">
+                  <div>
+                    <span className="font-bold text-dark-300 block">Is the mod compatible with dedicated servers?</span>
+                    Verify if the InstallRule section in the mod's Info.json includes <code className="bg-dark-900 px-1 py-0.5 rounded font-mono">"IsServer": true</code>. If missing, the mod won't load on dedicated servers.
+                  </div>
+                  <div>
+                    <span className="font-bold text-dark-300 block">Are prerequisite mods installed?</span>
+                    Some mods require additional framework mods or settings to function properly.
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <div className="flex items-center justify-end pt-2 border-t border-dark-800/60">
+              <button
+                onClick={() => setShowSuccessModal(null)}
+                className="px-5 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-primary-600/10 hover:shadow-primary-500/20 transition-all"
+              >
+                Got it, Thanks!
+              </button>
             </div>
           </div>
         </div>

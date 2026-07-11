@@ -154,15 +154,70 @@ impl ProcessManager {
             );
         }
 
-        let mut cmd = Command::new(&server_exe);
-        cmd.args(&args)
-            .current_dir(install_path);
+        let run_as_admin = {
+            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
+                if let Ok(db) = state.db.lock() {
+                    if let Ok(conn) = db.get_connection() {
+                        conn.query_row(
+                            "SELECT run_as_admin FROM servers WHERE id = ?1",
+                            [server_id],
+                            |row| row.get::<_, i32>(0),
+                        ).map(|v| v != 0).unwrap_or(false)
+                    } else { false }
+                } else { false }
+            } else { false }
+        };
 
         #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP);
+        let pid = if run_as_admin {
+            let escaped_exe = server_exe.to_string_lossy().replace('\"', "\\\"");
+            let escaped_args = args.iter()
+                .map(|a| format!("'{}'", a.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
 
-        let child = cmd.spawn().context("Failed to spawn PalServer executable")?;
-        let pid = child.id();
+            let ps_cmd = format!(
+                "Start-Process -FilePath \"{}\" -ArgumentList @({}) -WorkingDirectory \"{}\" -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
+                escaped_exe,
+                escaped_args,
+                install_path.replace('\"', "\\\"")
+            );
+
+            log::info!("[PROCESS] Spawning elevated PalServer on Windows via: {}", ps_cmd);
+
+            let mut cmd = Command::new("powershell");
+            cmd.args(["-NoProfile", "-Command", &ps_cmd]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+
+            let output = cmd.output().context("Failed to spawn elevated PalServer via PowerShell")?;
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if let Ok(p) = stdout.parse::<u32>() {
+                    p
+                } else {
+                    anyhow::bail!("Failed to parse PID from PowerShell output: '{}'", stdout);
+                }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("PowerShell failed to spawn elevated process: {}", stderr);
+            }
+        } else {
+            let mut cmd = Command::new(&server_exe);
+            cmd.args(&args)
+                .current_dir(install_path);
+            cmd.creation_flags(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP);
+            let child = cmd.spawn().context("Failed to spawn PalServer executable")?;
+            child.id()
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let pid = {
+            let mut cmd = Command::new(&server_exe);
+            cmd.args(&args)
+                .current_dir(install_path);
+            let child = cmd.spawn().context("Failed to spawn PalServer executable")?;
+            child.id()
+        };
 
         log::info!("[PROCESS] PalServer started with PID {} for server {}", pid, server_id);
 
@@ -323,7 +378,7 @@ impl ProcessManager {
     /// Check if a specific PID is still alive
     pub fn is_process_alive(&self, pid: u32) -> bool {
         let mut sys = sysinfo::System::new();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
         sys.process(sysinfo::Pid::from_u32(pid)).is_some()
     }
 
@@ -376,9 +431,9 @@ impl ProcessManager {
                     return;
                 }
 
-                // Check if process is still alive
+                // Check if process is still alive (querying only our specific PID)
                 let mut sys = sysinfo::System::new();
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
 
                 if sys.process(sysinfo::Pid::from_u32(pid)).is_none() {
                     log::error!("[PROCESS] Server {} (PID {}) has crashed!", server_id, pid);
@@ -401,7 +456,7 @@ impl ProcessManager {
                         timestamp: chrono::Utc::now().to_rfc3339(),
                     });
 
-                    // Update DB status and Send Discord Alert
+                    // Update DB status, send Discord alert, and handle Auto-Restart
                     let app_handle_clone = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
                         if let Some(state) = app_handle_clone.try_state::<crate::AppState>() {
@@ -419,11 +474,78 @@ impl ProcessManager {
                                 }
                             };
                             let _ = crate::commands::discord::send_discord_notification(
-                                state,
+                                state.clone(),
                                 "crash".to_string(),
-                                server_name,
+                                server_name.clone(),
                                 "Palworld server process exited unexpectedly! Server crashed.".to_string(),
                             ).await;
+
+                            // Read auto_restart option
+                            let auto_restart = {
+                                if let Ok(db) = state.db.lock() {
+                                    if let Ok(conn) = db.get_connection() {
+                                        conn.query_row(
+                                            "SELECT auto_restart FROM servers WHERE id = ?1",
+                                            [server_id],
+                                            |row| row.get::<_, i32>(0),
+                                        ).map(|v| v != 0).unwrap_or(true)
+                                    } else { true }
+                                } else { true }
+                            };
+
+                            if auto_restart {
+                                log::info!("[PROCESS] Auto-restart active. Initializing recovery for server {} ({}) in 5 seconds...", server_id, server_name);
+                                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                                // Fetch settings to restart
+                                let server_info = {
+                                    if let Ok(db) = state.db.lock() {
+                                        if let Ok(conn) = db.get_connection() {
+                                            conn.query_row(
+                                                "SELECT install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE id = ?1",
+                                                [server_id],
+                                                |row| Ok((
+                                                    row.get::<_, String>(0)?,
+                                                    row.get::<_, String>(1).unwrap_or_default(),
+                                                    row.get::<_, u16>(2).unwrap_or(8211),
+                                                    row.get::<_, u16>(3).unwrap_or(25575),
+                                                    row.get::<_, String>(4).unwrap_or_default(),
+                                                ))
+                                            ).ok()
+                                        } else { None }
+                                    } else { None }
+                                };
+
+                                if let Some((install_path, startup_args, game_port, rcon_port, admin_password)) = server_info {
+                                    log::info!("[PROCESS] Triggering auto-restart spawn for server {}...", server_id);
+                                    if let Ok(db) = state.db.lock() {
+                                        let _ = db.update_server_status(server_id, "starting");
+                                        let _ = db.update_server_last_started(server_id);
+                                    }
+
+                                    match state.process_manager.start_server(
+                                        server_id,
+                                        &install_path,
+                                        &startup_args,
+                                        game_port,
+                                        rcon_port,
+                                        &admin_password,
+                                    ) {
+                                        Ok(_) => {
+                                            log::info!("[PROCESS] Auto-restart successful for server {}", server_id);
+                                            if let Ok(db) = state.db.lock() {
+                                                let _ = db.update_server_status(server_id, "running");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("[PROCESS] Auto-restart failed to spawn for server {}: {}", server_id, e);
+                                            if let Ok(db) = state.db.lock() {
+                                                let _ = db.update_server_status(server_id, "crashed");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     });
 

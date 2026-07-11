@@ -3,9 +3,11 @@ import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { check } from '@tauri-apps/plugin-updater';
 import { RunningPal } from '../ui/RunningPal';
+import { useI18nStore, LANGUAGES } from '../../lib/i18n';
 
 export const SettingsView: React.FC = () => {
   const { showNotification, appVersion } = useAppStore();
+  const { language, setLanguage, t } = useI18nStore();
   const [minimizedToTray, setMinimizedToTray] = useState(false);
   const [steamcmdPath, setSteamcmdPath] = useState('');
   const [defaultPort, setDefaultPort] = useState(8211);
@@ -156,7 +158,7 @@ export const SettingsView: React.FC = () => {
     <div className="flex-1 overflow-y-auto bg-transparent p-6 space-y-6 animate-fade-in">
       <div className="flex items-center justify-between pb-4 border-b border-dark-700/30">
         <div>
-          <h1 className="text-xl font-bold text-dark-50">Application Settings</h1>
+          <h1 className="text-xl font-bold text-dark-55">{t('settings.title')}</h1>
           <p className="text-xs text-dark-400 mt-1">Configure global application behaviors and system features.</p>
         </div>
         <button
@@ -164,7 +166,7 @@ export const SettingsView: React.FC = () => {
           disabled={saving}
           className="btn-primary px-5 py-2 text-xs font-semibold"
         >
-          {saving ? 'Saving...' : 'Save Settings'}
+          {saving ? 'Saving...' : t('settings.save')}
         </button>
       </div>
 
@@ -182,7 +184,7 @@ export const SettingsView: React.FC = () => {
             {/* Start Minimized to Tray */}
             <div className="flex items-center justify-between py-2 border-b border-dark-800/40">
               <div>
-                <label className="text-xs text-dark-200 font-semibold block">Minimize to Tray</label>
+                <label className="text-xs text-dark-200 font-semibold block">{t('settings.minimizeToTray')}</label>
                 <span className="text-[10px] text-dark-400">Hide application to system tray on window close.</span>
               </div>
               <button
@@ -202,7 +204,7 @@ export const SettingsView: React.FC = () => {
             {/* Launch on Windows Startup */}
             <div className="flex items-center justify-between py-2 border-b border-dark-800/40">
               <div>
-                <label className="text-xs text-dark-200 font-semibold block">Run on PC Startup</label>
+                <label className="text-xs text-dark-200 font-semibold block">{t('settings.runOnStartup')}</label>
                 <span className="text-[10px] text-dark-400">Launch Palworld Server Manager automatically when Windows starts.</span>
               </div>
               <button
@@ -221,7 +223,7 @@ export const SettingsView: React.FC = () => {
 
             {/* Default Server Port */}
             <div className="space-y-1.5">
-              <label className="text-xs text-dark-200 font-semibold block">Default Server Port</label>
+              <label className="text-xs text-dark-200 font-semibold block">{t('settings.defaultPort')}</label>
               <input
                 type="number"
                 value={defaultPort}
@@ -234,7 +236,7 @@ export const SettingsView: React.FC = () => {
 
             {/* Custom SteamCMD path */}
             <div className="space-y-1.5">
-              <label className="text-xs text-dark-200 font-semibold block">Custom SteamCMD Path (Optional)</label>
+              <label className="text-xs text-dark-200 font-semibold block">{t('settings.customSteamcmd')}</label>
               <input
                 type="text"
                 value={steamcmdPath}
@@ -243,6 +245,23 @@ export const SettingsView: React.FC = () => {
                 placeholder="Leave blank to use default location"
               />
               <span className="text-[10px] text-dark-500 block">Override default steamcmd path if installed elsewhere.</span>
+            </div>
+
+            {/* Language Selection */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-dark-200 font-semibold block">{t('settings.language')}</label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as any)}
+                className="input-field text-xs w-full bg-dark-900/60 border border-dark-700/50 cursor-pointer"
+              >
+                {Object.entries(LANGUAGES).map(([code, name]) => (
+                  <option key={code} value={code} className="bg-dark-950 text-dark-100">
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-dark-500 block">Switch the application language.</span>
             </div>
           </div>
         </div>

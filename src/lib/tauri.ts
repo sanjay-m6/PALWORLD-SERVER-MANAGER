@@ -21,6 +21,10 @@ export const tauriCommands = {
     invoke<void>('update_server_branch', { serverId, branch }),
   updateServerAutoStart: (serverId: number, autoStart: boolean) =>
     invoke<void>('update_server_auto_start', { serverId, autoStart }),
+  updateServerAutoRestart: (serverId: number, autoRestart: boolean) =>
+    invoke<void>('update_server_auto_restart', { serverId, autoRestart }),
+  updateServerRunAsAdmin: (serverId: number, runAsAdmin: boolean) =>
+    invoke<void>('update_server_run_as_admin', { serverId, runAsAdmin }),
   wipeServer: (serverId: number, wipeSaves: boolean, wipeConfigs: boolean) =>
     invoke<void>('wipe_server', { serverId, wipeSaves, wipeConfigs }),
 
@@ -111,6 +115,12 @@ export const tauriCommands = {
     invoke<void>('setup_firewall_rules', { serverId }),
   listInstalledMods: (serverId: number) =>
     invoke<any[]>('list_installed_mods', { serverId }),
+  readPalModSettings: (serverId: number) =>
+    invoke<string>('read_pal_mod_settings', { serverId }),
+  savePalModSettings: (serverId: number, content: string) =>
+    invoke<void>('save_pal_mod_settings', { serverId, content }),
+  getModFiles: (modPath: string) =>
+    invoke<string[]>('get_mod_files', { modPath }),
   installMod: (serverId: number, sourceFilePath: string, isLogicMod: boolean) =>
     invoke<void>('install_mod', { serverId, sourceFilePath, isLogicMod }),
   toggleMod: (serverId: number, modName: string, isLogicMod: boolean, enable: boolean, isWorkshopMod?: boolean) =>
@@ -133,6 +143,8 @@ export const tauriCommands = {
     invoke<any[]>('search_mods_online', { query }),
   downloadNexusModViaApi: (serverId: number, modId: number, apiKey: string, isLogicMod: boolean) =>
     invoke<void>('download_nexus_mod_via_api', { serverId, modId, apiKey, isLogicMod }),
+  downloadCurseForgeModViaApi: (serverId: number, modId: number, apiKey: string, isLogicMod: boolean) =>
+    invoke<void>('download_curseforge_mod_via_api', { serverId, modId, apiKey, isLogicMod }),
 
   // Scheduler commands
   getTasks: (serverId: number) => invoke<any[]>('get_tasks', { serverId }),
@@ -162,8 +174,8 @@ export const tauriCommands = {
   autoStartServers: () => invoke<number>('auto_start_servers'),
 
   // Workshop commands
-  downloadWorkshopMod: (serverId: number, workshopId: string) =>
-    invoke<{ success: boolean; message: string; modName: string | null }>('download_workshop_mod', { serverId, workshopId }),
+  downloadWorkshopMod: (serverId: number, workshopId: string, modTitle?: string, isLogicMod?: boolean) =>
+    invoke<{ success: boolean; message: string; modName: string | null }>('download_workshop_mod', { serverId, workshopId, modTitle, isLogicMod }),
   checkUe4ssInstalled: (serverId: number) => invoke<boolean>('check_ue4ss_installed', { serverId }),
   installUe4ss: (serverId: number) => invoke<string>('install_ue4ss', { serverId }),
 };

@@ -60,6 +60,8 @@ pub struct Server {
     pub branch: String,
     pub host: String,
     pub is_remote: bool,
+    pub auto_restart: bool,
+    pub run_as_admin: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -718,6 +720,8 @@ pub struct CreateServerRequest {
     pub host: Option<String>,
     pub is_remote: Option<bool>,
     pub is_import: Option<bool>,
+    pub auto_restart: Option<bool>,
+    pub run_as_admin: Option<bool>,
 }
 
 // ─── Extended Server Details ───────────────────────────────────────────────

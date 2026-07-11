@@ -544,3 +544,35 @@ pub async fn wipe_server(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn update_server_auto_restart(
+    state: State<'_, AppState>,
+    server_id: i64,
+    auto_restart: bool,
+) -> Result<(), String> {
+    use rusqlite::params;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection()?;
+    conn.execute(
+        "UPDATE servers SET auto_restart = ?1 WHERE id = ?2",
+        params![if auto_restart { 1 } else { 0 }, server_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_server_run_as_admin(
+    state: State<'_, AppState>,
+    server_id: i64,
+    run_as_admin: bool,
+) -> Result<(), String> {
+    use rusqlite::params;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection()?;
+    conn.execute(
+        "UPDATE servers SET run_as_admin = ?1 WHERE id = ?2",
+        params![if run_as_admin { 1 } else { 0 }, server_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+

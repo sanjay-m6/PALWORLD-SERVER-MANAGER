@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { getStatusColor } from '../../lib/tauri';
+import { useI18nStore } from '../../lib/i18n';
 
 // SVG Icons
 const DashboardIcon = () => (
@@ -67,6 +68,7 @@ const LamballLogo: React.FC<{ collapsed: boolean }> = ({ collapsed }) => (
 );
 
 export const Sidebar: React.FC = () => {
+  const { t } = useI18nStore();
   const {
     currentView,
     setCurrentView,
@@ -128,8 +130,8 @@ export const Sidebar: React.FC = () => {
           <div className="transition-transform duration-200 group-hover:scale-110 group-active:scale-95">
             <DashboardIcon />
           </div>
-          {!sidebarCollapsed && <span>Dashboard</span>}
-          {sidebarCollapsed && <span className="sidebar-tooltip">Dashboard</span>}
+          {!sidebarCollapsed && <span>{t('nav.dashboard')}</span>}
+          {sidebarCollapsed && <span className="sidebar-tooltip">{t('nav.dashboard')}</span>}
         </button>
 
         {/* Create Server */}
@@ -148,8 +150,8 @@ export const Sidebar: React.FC = () => {
           <div className="transition-transform duration-200 group-hover:scale-110 group-active:scale-95">
             <AddIcon />
           </div>
-          {!sidebarCollapsed && <span>New Server</span>}
-          {sidebarCollapsed && <span className="sidebar-tooltip">New Server</span>}
+          {!sidebarCollapsed && <span>{t('nav.createServer')}</span>}
+          {sidebarCollapsed && <span className="sidebar-tooltip">{t('nav.createServer')}</span>}
         </button>
 
         {/* Settings */}
@@ -171,8 +173,8 @@ export const Sidebar: React.FC = () => {
           <div className="transition-transform duration-200 group-hover:scale-110 group-active:scale-95">
             <SettingsIcon />
           </div>
-          {!sidebarCollapsed && <span>Settings</span>}
-          {sidebarCollapsed && <span className="sidebar-tooltip">Settings</span>}
+          {!sidebarCollapsed && <span>{t('nav.settings')}</span>}
+          {sidebarCollapsed && <span className="sidebar-tooltip">{t('nav.settings')}</span>}
         </button>
 
         {/* Server List */}

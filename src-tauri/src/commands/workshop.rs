@@ -18,6 +18,8 @@ pub async fn download_workshop_mod(
     state: State<'_, AppState>,
     server_id: i64,
     workshop_id: String,
+    mod_title: Option<String>,
+    is_logic_mod: Option<bool>,
 ) -> Result<WorkshopDownloadResult, String> {
     let install_path = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -74,9 +76,37 @@ pub async fn download_workshop_mod(
         .join(app_id)
         .join(&workshop_id);
 
+    let mut resolved_content_dir = None;
+    let mut is_local_client_fallback = false;
+
     if workshop_content_dir.exists() {
+        resolved_content_dir = Some(workshop_content_dir);
+    } else {
+        // Fallback: Check all local Steam client library directories
+        let mut paths_to_check = Vec::new();
+        for lib_dir in get_all_steam_library_workshop_dirs() {
+            paths_to_check.push(lib_dir.join(&workshop_id));
+        }
+
+        // Also add common fallback paths as a last resort
+        paths_to_check.push(std::path::PathBuf::from("C:\\Program Files (x86)\\Steam\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from("C:\\Program Files\\Steam\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from("D:\\SteamLibrary\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from("E:\\SteamLibrary\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
+
+        for path in paths_to_check {
+            if path.exists() {
+                log::info!("[WORKSHOP] Found workshop item {} in local Steam client path: {:?}", workshop_id, path);
+                resolved_content_dir = Some(path);
+                is_local_client_fallback = true;
+                break;
+            }
+        }
+    }
+
+    if let Some(content_dir) = resolved_content_dir {
         // Look for Info.json (official mod loader structure)
-        if let Some(info_json_path) = find_info_json(&workshop_content_dir) {
+        if let Some(info_json_path) = find_info_json(&content_dir) {
             let mod_src_dir = info_json_path.parent().unwrap();
             
             // Dest is Mods/Workshop/<workshop_id>
@@ -92,13 +122,66 @@ pub async fn download_workshop_mod(
             copy_dir_contents(mod_src_dir, &dest_dir, &mut copied_files)
                 .map_err(|e| format!("Failed to copy mod files to workshop directory: {}", e))?;
 
-            // Read Info.json to get PackageName
+            // Read Info.json to get PackageName and inject DisplayName if provided
             let mut package_name = format!("Workshop_{}", workshop_id);
+            let mut info_val = None;
             if let Ok(info_content) = std::fs::read_to_string(dest_dir.join("Info.json")) {
-                if let Ok(info) = serde_json::from_str::<serde_json::Value>(&info_content) {
+                if let Ok(mut info) = serde_json::from_str::<serde_json::Value>(&info_content) {
                     if let Some(name) = info.get("PackageName").and_then(|v| v.as_str()) {
                         package_name = name.to_string();
                     }
+                    if let Some(title) = &mod_title {
+                        info["DisplayName"] = serde_json::json!(title);
+                    }
+                    
+                    let is_logic = is_logic_mod.unwrap_or(false);
+                    let mut paks = Vec::new();
+                    if let Some(arr) = info.get("InstallRule").and_then(|r| r.get("Paks")).and_then(|a| a.as_array()) {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                paks.push(s.to_string());
+                            }
+                        }
+                    }
+                    if let Some(arr) = info.get("InstallRule").and_then(|r| r.get("LogicMods")).and_then(|a| a.as_array()) {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                if !paks.contains(&s.to_string()) {
+                                    paks.push(s.to_string());
+                                }
+                            }
+                        }
+                    }
+                    
+                    if is_logic {
+                        if let Some(rule) = info.get_mut("InstallRule") {
+                            rule["Paks"] = serde_json::json!(Vec::<String>::new());
+                            rule["LogicMods"] = serde_json::json!(paks);
+                        } else {
+                            info["InstallRule"] = serde_json::json!({
+                                "Paks": Vec::<String>::new(),
+                                "LogicMods": paks
+                            });
+                        }
+                    } else {
+                        if let Some(rule) = info.get_mut("InstallRule") {
+                            rule["Paks"] = serde_json::json!(paks);
+                            rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                        } else {
+                            info["InstallRule"] = serde_json::json!({
+                                "Paks": paks,
+                                "LogicMods": Vec::<String>::new()
+                            });
+                        }
+                    }
+                    
+                    info_val = Some(info);
+                }
+            }
+
+            if let Some(info) = info_val {
+                if let Ok(updated_info_str) = serde_json::to_string_pretty(&info) {
+                    let _ = std::fs::write(dest_dir.join("Info.json"), updated_info_str);
                 }
             }
 
@@ -111,44 +194,100 @@ pub async fn download_workshop_mod(
 
             log::info!("[WORKSHOP] Successfully installed official mod {} as {}", workshop_id, package_name);
 
+            let msg = if is_local_client_fallback {
+                format!("Successfully installed official Workshop Mod \"{}\" from local Steam library.", package_name)
+            } else {
+                format!("Successfully downloaded and installed official Workshop Mod \"{}\".", package_name)
+            };
+
             Ok(WorkshopDownloadResult {
                 success: true,
-                message: format!("Successfully downloaded and installed official Workshop Mod \"{}\".", package_name),
+                message: msg,
                 mod_name: Some(package_name),
             })
         } else {
-            // Fallback: Copy mod files to the server's Paks directory (legacy)
-            let paks_dir = std::path::Path::new(&install_path)
-                .join("Pal")
-                .join("Content")
-                .join("Paks");
-            
-            std::fs::create_dir_all(&paks_dir)
-                .map_err(|e| format!("Failed to create Paks directory: {}", e))?;
+            // Fallback: Copy mod files to the server's Workshop directory and generate a default Info.json
+            let dest_dir = std::path::Path::new(&install_path)
+                .join("Mods")
+                .join("Workshop")
+                .join(&workshop_id);
+
+            std::fs::create_dir_all(&dest_dir)
+                .map_err(|e| format!("Failed to create Mods/Workshop directory: {}", e))?;
 
             let mut copied_files = Vec::new();
-            copy_dir_contents(&workshop_content_dir, &paks_dir, &mut copied_files)
-                .map_err(|e| format!("Failed to copy mod files: {}", e))?;
+            copy_dir_contents(&content_dir, &dest_dir, &mut copied_files)
+                .map_err(|e| format!("Failed to copy mod files to workshop directory: {}", e))?;
 
-            let mod_name = if copied_files.is_empty() {
-                format!("Workshop_{}", workshop_id)
+            // Generate default Info.json
+            let package_name = format!("Workshop_{}", workshop_id);
+            
+            // Scan dest_dir for any .pak files recursively and get relative paths
+            let mut paks = Vec::new();
+            fn collect_paks_relative(root: &std::path::Path, current: &std::path::Path, paks: &mut Vec<String>) {
+                if current.is_dir() {
+                    if let Ok(entries) = std::fs::read_dir(current) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                collect_paks_relative(root, &path, paks);
+                            } else if path.is_file() {
+                                if let Some(ext) = path.extension() {
+                                    if ext == "pak" {
+                                        if let Ok(rel) = path.strip_prefix(root) {
+                                            paks.push(rel.to_string_lossy().replace("\\", "/"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            collect_paks_relative(&dest_dir, &dest_dir, &mut paks);
+
+            let is_logic = is_logic_mod.unwrap_or(false);
+            let info_content = serde_json::json!({
+                "PackageName": package_name,
+                "Version": "1.0.0",
+                "IsServer": true,
+                "DisplayName": mod_title.clone().unwrap_or_else(|| package_name.clone()),
+                "InstallRule": {
+                    "Paks": if is_logic { vec![] } else { paks.clone() },
+                    "LogicMods": if is_logic { paks.clone() } else { vec![] }
+                }
+            });
+
+            if let Ok(info_str) = serde_json::to_string_pretty(&info_content) {
+                let _ = std::fs::write(dest_dir.join("Info.json"), info_str);
+            }
+
+            // Enable mod in PalModSettings.ini
+            let ini_path = std::path::Path::new(&install_path)
+                .join("Mods")
+                .join("PalModSettings.ini");
+            
+            enable_mod_in_ini(&ini_path, &package_name)?;
+
+            log::info!("[WORKSHOP] Successfully installed legacy workshop item {} as official mod {}", workshop_id, package_name);
+
+            let msg = if is_local_client_fallback {
+                format!("Successfully installed Workshop Mod \"{}\" from local Steam library.", package_name)
             } else {
-                copied_files[0].clone()
+                format!("Successfully downloaded and installed Workshop Mod \"{}\".", package_name)
             };
-
-            log::info!("[WORKSHOP] Successfully installed legacy workshop item {} ({} files)", workshop_id, copied_files.len());
 
             Ok(WorkshopDownloadResult {
                 success: true,
-                message: format!("Successfully downloaded and installed legacy workshop item. {} files copied to Paks.", copied_files.len()),
-                mod_name: Some(mod_name),
+                message: msg,
+                mod_name: Some(package_name),
             })
         }
     } else {
         log::error!("[WORKSHOP] Download failed. SteamCMD output: {}", stdout);
         Ok(WorkshopDownloadResult {
             success: false,
-            message: format!("Failed to download workshop item {}. The item may not exist or may require authentication.\n\nSteamCMD output:\n{}", workshop_id, stderr),
+            message: format!("Failed to download workshop item {}. Paid games require owning the game on the account logged into SteamCMD. To download, please subscribe to this mod in your Steam client, then try installing again.\n\nSteamCMD output:\n{}", workshop_id, stderr),
             mod_name: None,
         })
     }
@@ -264,7 +403,7 @@ pub async fn install_ue4ss(
 }
 
 /// Helper: Recursively copy directory contents
-fn copy_dir_contents(
+pub fn copy_dir_contents(
     src: &std::path::Path,
     dst: &std::path::Path,
     copied_files: &mut Vec<String>,
@@ -287,7 +426,7 @@ fn copy_dir_contents(
     Ok(())
 }
 
-fn find_info_json(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+pub fn find_info_json(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -302,6 +441,62 @@ fn find_info_json(dir: &std::path::Path) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+fn get_all_steam_library_workshop_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    
+    // Get primary steam directory from registry
+    let mut primary_steam_dir = None;
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = std::process::Command::new("reg")
+            .args(["query", "HKCU\\Software\\Valve\\Steam", "/v", "SteamPath"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("SteamPath") {
+                    let parts: Vec<&str> = line.split("REG_SZ").collect();
+                    if parts.len() > 1 {
+                        let path_str = parts[1].trim().replace("/", "\\");
+                        let path = std::path::PathBuf::from(path_str);
+                        if path.exists() {
+                            primary_steam_dir = Some(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(steam_dir) = primary_steam_dir {
+        // 1. Add the primary steam workshop folder
+        dirs.push(steam_dir.join("steamapps").join("workshop").join("content").join("1623730"));
+
+        // 2. Read libraryfolders.vdf to find secondary libraries
+        let vdf_path = steam_dir.join("steamapps").join("libraryfolders.vdf");
+        if vdf_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&vdf_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.contains("\"path\"") {
+                        // Extract value between quotes after "path"
+                        let parts: Vec<&str> = trimmed.split('"').collect();
+                        if parts.len() >= 4 {
+                            let path_str = parts[3].replace("\\\\", "\\");
+                            let path = std::path::PathBuf::from(path_str);
+                            if path.exists() {
+                                dirs.push(path.join("steamapps").join("workshop").join("content").join("1623730"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    dirs
 }
 
 fn enable_mod_in_ini(ini_path: &std::path::Path, package_name: &str) -> Result<(), String> {

@@ -163,6 +163,18 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
+  const handleMessagePlayer = async (name: string) => {
+    const msg = prompt(`Enter message / warning to broadcast to ${name}:`);
+    if (!msg || !msg.trim()) return;
+    try {
+      const formatted = `[To ${name}]: ${msg.trim()}`;
+      await tauriCommands.broadcastMessage(serverId, formatted);
+      showNotification('success', `Message broadcasted: "${formatted}"`);
+    } catch (e: any) {
+      showNotification('error', `Failed to broadcast message: ${e}`);
+    }
+  };
+
   const handleAddManualBan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBanId.trim()) return;
@@ -317,6 +329,12 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleMessagePlayer(player.name)}
+                      className="btn-ghost text-[10px] py-1 px-2 text-primary-400 hover:text-primary-300"
+                    >
+                      Message
+                    </button>
                     <button
                       onClick={() => handleKick(player.steamId, player.name)}
                       className="btn-ghost text-[10px] py-1 px-2 text-warning-400 hover:text-warning-300"

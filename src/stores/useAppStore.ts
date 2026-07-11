@@ -39,6 +39,8 @@ export interface Server {
   branch: string;
   host: string;
   isRemote: boolean;
+  autoRestart: boolean;
+  runAsAdmin: boolean;
 }
 
 // Backup model

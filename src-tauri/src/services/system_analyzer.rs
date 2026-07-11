@@ -24,7 +24,7 @@ impl SystemAnalyzer {
 
     pub fn get_process_stats(pid: u32) -> Option<ProcessStats> {
         let mut sys = System::new();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
 
         let process = sys.process(sysinfo::Pid::from_u32(pid))?;
 
