@@ -91,6 +91,7 @@ export const tauriCommands = {
       maxPlayers: number;
       adminPassword: string;
       serverPassword: string | null;
+      publicIp?: string | null;
     }>('parse_existing_server_config', { installPath }),
   // Installation Commands
   startServerInstallation: (serverId: number, branch: string) =>

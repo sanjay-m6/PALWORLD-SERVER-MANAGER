@@ -3,6 +3,57 @@ import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
 import { SponsorBanner } from '../ui/SponsorBanner';
 
+// Custom SVGs for stats & actions
+const ServerStackIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-cyan-400">
+    <rect width="20" height="8" x="2" y="2" rx="2" />
+    <rect width="20" height="8" x="2" y="14" rx="2" />
+    <line x1="6" x2="6.01" y1="6" y2="6" />
+    <line x1="6" x2="6.01" y1="18" y2="18" />
+    <line x1="10" x2="14" y1="6" y2="6" />
+    <line x1="10" x2="14" y1="18" y2="18" />
+  </svg>
+);
+
+const ActivePulseIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-emerald-400">
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+  </svg>
+);
+
+const CpuIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-primary-400">
+    <rect width="16" height="16" x="4" y="4" rx="2" />
+    <rect width="6" height="6" x="9" y="9" rx="1" />
+    <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
+  </svg>
+);
+
+const RamIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-warning-400">
+    <path d="M6 19v2M10 19v2M14 19v2M18 19v2M8 11V9M12 11V9M16 11V9" />
+    <rect x="3" y="3" width="18" height="12" rx="2" />
+  </svg>
+);
+
+const PlayIcon = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5 mr-1.5">
+    <polygon points="5 3 19 12 5 21 5 3" />
+  </svg>
+);
+
+const StopIcon = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5 mr-1.5">
+    <rect x="4" y="4" width="16" height="16" rx="2" />
+  </svg>
+);
+
+const ShieldIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 mr-1.5">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+  </svg>
+);
+
 export const Dashboard: React.FC = () => {
   const {
     servers,
@@ -399,73 +450,103 @@ export const Dashboard: React.FC = () => {
       <SponsorBanner />
 
       {/* Global Toolbar Control Panel */}
-      <div className="glass-card p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-dark-900/25 border-l-4 border-l-primary-500">
+      <div className="glass-card p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-dark-900/25 border-l-4 border-l-primary-500 shadow-md animate-slide-in" style={{ animationDelay: '50ms' }}>
         <div>
-          <h3 className="text-xs font-bold text-dark-200 uppercase tracking-wider">Multi-Server Command Console</h3>
-          <p className="text-[10px] text-dark-500 mt-0.5">Orchestrate configurations and lifecycle states across all configured server nodes.</p>
+          <h3 className="text-xs font-bold text-dark-200 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse" />
+            Multi-Server Command Console
+          </h3>
+          <p className="text-[10px] text-dark-500 mt-0.5 font-medium">Orchestrate configurations and lifecycle states across all configured server nodes.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap text-dark-100">
           <button
             onClick={handleStartAll}
-            className="btn-success text-[10px] px-3.5 py-1.5 font-bold uppercase tracking-wider flex items-center gap-1"
+            className="btn-success text-[10px] px-3.5 py-1.5 font-bold uppercase tracking-wider flex items-center gap-1 hover:shadow-success-500/20"
           >
-            🟢 Start All
+            <PlayIcon /> Start All
           </button>
           <button
             onClick={handleStopAll}
-            className="btn-danger text-[10px] px-3.5 py-1.5 font-bold uppercase tracking-wider flex items-center gap-1"
+            className="btn-danger text-[10px] px-3.5 py-1.5 font-bold uppercase tracking-wider flex items-center gap-1 hover:shadow-error-500/20"
           >
-            🔴 Stop All
+            <StopIcon /> Stop All
           </button>
           <button
             onClick={handleFirewallAll}
-            className="btn-ghost text-[10px] px-3.5 py-1.5 font-bold uppercase tracking-wider flex items-center gap-1 border border-dark-700/50"
+            className="btn-ghost text-[10px] px-3.5 py-1.5 font-bold uppercase tracking-wider flex items-center gap-1 border border-dark-700/50 hover:border-dark-600"
           >
-            🛡️ Configure Firewall
+            <ShieldIcon /> Configure Firewall
           </button>
         </div>
       </div>
 
       {/* Quick Stats Panel */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="glass-card p-4 border border-dark-800 bg-dark-900/10">
-          <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-            Total Servers
-          </div>
-          <div className="mt-1 text-2xl font-black text-dark-100">
-            {servers.length}
-          </div>
-        </div>
-        <div className="glass-card p-4 border border-dark-800 bg-dark-900/10">
-          <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-            Active Servers
-          </div>
-          <div className="mt-1 text-2xl font-black text-success-400">
-            {runningCount}
-          </div>
-        </div>
-        <div className="glass-card p-4 border border-dark-800 bg-dark-900/10">
-          <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-            Global CPU Usage
-          </div>
-          <div className="mt-1 text-2xl font-black text-primary-400">
-            {systemInfo ? `${systemInfo.cpuUsage.toFixed(0)}%` : '—'}
-          </div>
-        </div>
-        <div className="glass-card p-4 border border-dark-800 bg-dark-900/10">
-          <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
-            System RAM Load
-          </div>
-          <div className="mt-1 text-2xl font-black text-warning-400">
-            {systemInfo
-              ? `${(systemInfo.usedMemoryMb / 1024).toFixed(1)} GB`
-              : '—'}
-          </div>
-          {systemInfo && (
-            <div className="mt-0.5 text-[9px] text-dark-500 font-semibold">
-              / {(systemInfo.totalMemoryMb / 1024).toFixed(1)} GB
+        {/* Total Servers */}
+        <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '100ms' }}>
+          <div>
+            <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
+              Total Servers
             </div>
-          )}
+            <div className="mt-1 text-2xl font-black bg-gradient-to-r from-cyan-200 to-cyan-400 bg-clip-text text-transparent">
+              {servers.length}
+            </div>
+          </div>
+          <div className="stats-icon-badge w-9 h-9 rounded-full bg-cyan-500/5 border border-cyan-500/15 flex items-center justify-center transition-all duration-300">
+            <ServerStackIcon />
+          </div>
+        </div>
+
+        {/* Active Servers */}
+        <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '175ms' }}>
+          <div>
+            <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
+              Active Servers
+            </div>
+            <div className="mt-1 text-2xl font-black bg-gradient-to-r from-emerald-200 to-emerald-400 bg-clip-text text-transparent">
+              {runningCount}
+            </div>
+          </div>
+          <div className="stats-icon-badge w-9 h-9 rounded-full bg-emerald-500/5 border border-emerald-500/15 flex items-center justify-center transition-all duration-300">
+            <ActivePulseIcon />
+          </div>
+        </div>
+
+        {/* Global CPU Usage */}
+        <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '250ms' }}>
+          <div>
+            <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
+              Global CPU Usage
+            </div>
+            <div className="mt-1 text-2xl font-black bg-gradient-to-r from-primary-200 to-primary-400 bg-clip-text text-transparent">
+              {systemInfo ? `${systemInfo.cpuUsage.toFixed(0)}%` : '—'}
+            </div>
+          </div>
+          <div className="stats-icon-badge w-9 h-9 rounded-full bg-primary-500/5 border border-primary-500/15 flex items-center justify-center transition-all duration-300">
+            <CpuIcon />
+          </div>
+        </div>
+
+        {/* System RAM Load */}
+        <div className="glass-card stats-card-hover p-4 border border-dark-800 bg-dark-900/10 flex items-center justify-between animate-slide-in" style={{ animationDelay: '325ms' }}>
+          <div>
+            <div className="text-[10px] font-bold text-dark-400 uppercase tracking-wider">
+              System RAM Load
+            </div>
+            <div className="mt-1 text-2xl font-black bg-gradient-to-r from-warning-200 to-warning-400 bg-clip-text text-transparent">
+              {systemInfo
+                ? `${(systemInfo.usedMemoryMb / 1024).toFixed(1)} GB`
+                : '—'}
+            </div>
+            {systemInfo && (
+              <div className="mt-0.5 text-[9px] text-dark-500 font-semibold font-mono">
+                / {(systemInfo.totalMemoryMb / 1024).toFixed(1)} GB
+              </div>
+            )}
+          </div>
+          <div className="stats-icon-badge w-9 h-9 rounded-full bg-warning-500/5 border border-warning-500/15 flex items-center justify-center transition-all duration-300">
+            <RamIcon />
+          </div>
         </div>
       </div>
 
@@ -496,7 +577,7 @@ export const Dashboard: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {servers.map((server) => {
+          {servers.map((server, index) => {
             const stats = serverStats[server.id];
             const isActive =
               server.status === 'running' || server.status === 'online';
@@ -507,10 +588,14 @@ export const Dashboard: React.FC = () => {
               <div
                 key={server.id}
                 onClick={() => openServerDetail(server.id)}
-                className={`glass-card p-5 flex flex-col justify-between border transition-all relative overflow-hidden cursor-pointer hover:scale-[1.01] hover:shadow-lg active:scale-[0.99] ${
-                  isActive ? 'border-primary-500/30 bg-primary-950/5 hover:border-primary-500/60' : 'border-dark-800 bg-dark-900/10 hover:border-dark-700'
+                className={`glass-card server-card-hover p-5 flex flex-col justify-between border relative overflow-hidden cursor-pointer hover:shadow-xl active:scale-[0.99] animate-slide-in ${
+                  isActive ? 'border-primary-500/35 bg-primary-950/5 hover:border-primary-500/60' : 'border-dark-800 bg-dark-900/10 hover:border-dark-700'
                 }`}
+                style={{ animationDelay: `${(index * 75) + 400}ms` }}
               >
+                {/* Active server decorative accent */}
+                {isActive && <div className="active-pulse-glowing-glow" />}
+
                 {/* Mini start/stop overlay */}
                 {(server.status === 'starting' || server.status === 'stopping' || server.status === 'restarting' || server.status === 'updating') && (
                   <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-dark-950/90 backdrop-blur-sm animate-fade-in p-4 text-center select-none">
@@ -532,14 +617,19 @@ export const Dashboard: React.FC = () => {
                     </span>
                   </div>
                 )}
-                <div>
+                <div className="relative z-10">
                   {/* Top line Info */}
                   <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className={`status-dot ${getStatusColor(server.status)}`} />
-                      <span className="text-xs font-bold text-dark-100 hover:text-primary-400 transition-colors cursor-pointer truncate max-w-[150px]">
-                        {server.name}
-                      </span>
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`status-dot ${getStatusColor(server.status)} ${isActive ? 'pulse-status-green' : ''}`} />
+                        <span className="text-xs font-bold text-dark-100 hover:text-primary-400 transition-colors cursor-pointer truncate max-w-[150px]">
+                          {server.name}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-dark-500 mt-1 truncate max-w-[180px] font-medium" title={server.description || undefined}>
+                        {server.description || 'Palworld dedicated server node'}
+                      </p>
                     </div>
 
                     {/* Quick Preset Selector */}
@@ -552,7 +642,7 @@ export const Dashboard: React.FC = () => {
                         value={server.preset}
                         onClick={(e) => e.stopPropagation()}
                         onChange={(e) => handleApplyPreset(server.id, e.target.value)}
-                        className="bg-dark-900/80 border border-dark-700/50 text-[9px] text-dark-300 font-bold px-2 py-0.5 rounded focus:outline-none focus:border-primary-500/50"
+                        className="bg-dark-900/80 border border-dark-700/50 hover:border-dark-600 text-[9px] text-dark-300 font-bold px-2 py-0.5 rounded focus:outline-none focus:border-primary-500/50 cursor-pointer transition-colors"
                       >
                         <option value="Balanced">Balanced</option>
                         <option value="Casual">Casual</option>
@@ -636,7 +726,7 @@ export const Dashboard: React.FC = () => {
                 </div>
 
                 {/* Grid controls */}
-                <div className="space-y-2 pt-2 border-t border-dark-800">
+                <div className="space-y-2 pt-2 border-t border-dark-800 relative z-10">
                   {server.isRemote ? (
                     <button
                       onClick={(e) => {
@@ -691,7 +781,7 @@ export const Dashboard: React.FC = () => {
                                 e.stopPropagation();
                                 handleStopServer(server.id);
                               }}
-                              className="btn-danger flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider"
+                              className="btn-danger flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider hover:shadow-error-500/10"
                             >
                               Stop
                             </button>
@@ -711,7 +801,7 @@ export const Dashboard: React.FC = () => {
                               e.stopPropagation();
                               handleStartServer(server.id);
                             }}
-                            className="btn-success w-full py-1.5 text-[10px] font-bold uppercase tracking-wider"
+                            className="btn-success w-full py-1.5 text-[10px] font-bold uppercase tracking-wider hover:shadow-success-500/10"
                             disabled={server.status === 'starting'}
                           >
                             {server.status === 'starting' ? 'Starting...' : 'Start Server'}
@@ -792,7 +882,7 @@ export const Dashboard: React.FC = () => {
       {/* RCON Console Overlay Modal */}
       {activeConsoleServerId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-card w-full max-w-2xl flex flex-col h-[450px] border border-dark-700 bg-dark-950">
+          <div className="glass-card w-full max-w-2xl flex flex-col h-[450px] border border-dark-700 bg-dark-950 animate-scale-in">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b border-dark-800">
               <div>
@@ -850,7 +940,7 @@ export const Dashboard: React.FC = () => {
       {/* Players List Modal */}
       {activePlayersServerId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="glass-card w-full max-w-lg flex flex-col h-[380px] border border-dark-700 bg-dark-950">
+          <div className="glass-card w-full max-w-lg flex flex-col h-[380px] border border-dark-700 bg-dark-950 animate-scale-in">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-dark-800">
               <div>

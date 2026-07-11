@@ -496,6 +496,7 @@ impl InstallationManager {
         let mut sys = sysinfo::System::new();
         
         let mut last_progress_bytes = 0u64;
+        let mut last_progress_time = Instant::now();
         let mut last_log_time = Instant::now();
         let start_instant = Instant::now();
 
@@ -561,8 +562,24 @@ impl InstallationManager {
                         st.stage = InstallStage::Downloading;
                         st.status = "Downloading dedicated server files...".to_string();
                         st.progress = caps.get(3).unwrap().as_str().parse::<f32>().unwrap_or(0.0);
-                        st.bytes_downloaded = caps.get(4).unwrap().as_str().parse::<u64>().unwrap_or(0);
+                        let bytes_dl = caps.get(4).unwrap().as_str().parse::<u64>().unwrap_or(0);
                         st.bytes_total = caps.get(5).unwrap().as_str().parse::<u64>().unwrap_or(0);
+                        
+                        let now = Instant::now();
+                        let elapsed = now.duration_since(last_progress_time).as_secs_f64();
+                        if elapsed > 0.2 {
+                            let diff = bytes_dl.saturating_sub(last_progress_bytes);
+                            let calculated_speed = diff as f64 / elapsed;
+                            if calculated_speed > 0.0 {
+                                st.speed_bps = calculated_speed;
+                                if st.speed_bps > st.peak_speed_bps {
+                                    st.peak_speed_bps = st.speed_bps;
+                                }
+                            }
+                            last_progress_bytes = bytes_dl;
+                            last_progress_time = now;
+                        }
+                        st.bytes_downloaded = bytes_dl;
                     } else if let Some(caps) = state_re.captures(trimmed) {
                         let op_state = caps.get(2).unwrap().as_str();
                         st.progress = caps.get(3).unwrap().as_str().parse::<f32>().unwrap_or(0.0);
@@ -592,16 +609,13 @@ impl InstallationManager {
                     let mut st = state.lock().unwrap();
                     st.elapsed_seconds = duration_secs;
                     
+                    // Decay speed to 0 if no progress updates received in 5 seconds
+                    if last_progress_time.elapsed().as_secs() > 5 {
+                        st.speed_bps = 0.0;
+                    }
+                    
                     // Calculate download speeds
                     if st.stage == InstallStage::Downloading {
-                        let diff = st.bytes_downloaded.saturating_sub(last_progress_bytes);
-                        st.speed_bps = diff as f64;
-                        last_progress_bytes = st.bytes_downloaded;
-                        
-                        if st.speed_bps > st.peak_speed_bps {
-                            st.peak_speed_bps = st.speed_bps;
-                        }
-                        
                         if duration_secs > 0 {
                             st.avg_speed_bps = st.bytes_downloaded as f64 / duration_secs as f64;
                         }

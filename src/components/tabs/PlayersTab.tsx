@@ -45,7 +45,10 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   useEffect(() => {
     if (isServerRunning && !isConnected && autoConnect && !autoConnectAttempted.current) {
       autoConnectAttempted.current = true;
-      tauriCommands.rconConnect(serverId).catch(() => {});
+      const timer = setTimeout(() => {
+        tauriCommands.rconConnect(serverId).catch(() => {});
+      }, 5000);
+      return () => clearTimeout(timer);
     }
   }, [serverId, isServerRunning, isConnected, autoConnect]);
 

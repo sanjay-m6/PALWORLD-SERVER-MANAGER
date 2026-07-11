@@ -46,7 +46,10 @@ export const RconConsole: React.FC<{ serverId: number }> = ({ serverId }) => {
   useEffect(() => {
     if (isServerRunning && !isConnected && autoConnect && !autoConnectAttempted.current) {
       autoConnectAttempted.current = true;
-      handleConnect();
+      const timer = setTimeout(() => {
+        handleConnect();
+      }, 5000);
+      return () => clearTimeout(timer);
     }
   }, [serverId, isServerRunning, isConnected, autoConnect]);
 

@@ -53,13 +53,54 @@ impl RconService {
         let addr = format!("{}:{}", address, port);
         log::info!("[RCON] Connecting to server {} at {}", server_id, addr);
 
-        let stream = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            TcpStream::connect(&addr),
-        )
-        .await
-        .map_err(|_| format!("Connection timed out to {}", addr))?
-        .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+        let mut attempts = 0;
+        let max_attempts = 5;
+        let mut last_err = None;
+        let mut stream = None;
+
+        while attempts < max_attempts {
+            attempts += 1;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                TcpStream::connect(&addr),
+            )
+            .await
+            {
+                Ok(Ok(s)) => {
+                    stream = Some(s);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    let err_msg = e.to_string();
+                    log::debug!(
+                        "[RCON] Connection attempt {} for server {} refused: {}",
+                        attempts,
+                        server_id,
+                        err_msg
+                    );
+                    last_err = Some(format!("Failed to connect to {}: {}", addr, err_msg));
+                }
+                Err(_) => {
+                    log::debug!(
+                        "[RCON] Connection attempt {} for server {} timed out",
+                        attempts,
+                        server_id
+                    );
+                    last_err = Some(format!("Connection timed out to {}", addr));
+                }
+            }
+            if attempts < max_attempts {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        }
+
+        let stream = match stream {
+            Some(s) => s,
+            None => {
+                let final_err = last_err.unwrap_or_else(|| "Failed to connect".to_string());
+                return Err(final_err);
+            }
+        };
 
         let mut session = RconSession {
             stream,

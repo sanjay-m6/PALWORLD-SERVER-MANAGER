@@ -86,11 +86,14 @@ jobs:
           releaseBody: |
             ## Palworld Server Manager v__VERSION__
 
-            This release introduces server installation stage progress tracking fixes and background task execution window suppression.
+            This release introduces real-time download speed reporting, RCON boot-up connection retries, and compilation fixes.
 
             ### 🚀 New Features & Improvements
-            - **Suppress CLI Window Popups:** Added `CREATE_NO_WINDOW` flags to all Windows command executions (firewall rules, server registry queries, etc.) to run background CLI tasks silently, resolving repeated PowerShell window popups.
-            - **Server Installation Stage Progress:** Mapped pipeline stages to camelCase variants to match backend Rust serialization. Ensured active stage state hydrates correctly for crash recovery, and added `formatStageName` to display user-friendly stage labels (e.g., `Checking Updates`).
+            - **Real-Time Download Speed UI Fix:** Resolved an issue where download speeds during server installation would drop to `0 B/s` due to SteamCMD log buffering. Speed is now calculated dynamically on progress updates, with a 5-second decay interval.
+            - **RCON Boot Race Connection Fix:** Fixed a connection refusal (`os error 10061`) when attempting to auto-connect to RCON while the server is booting. Added a 5-second delay to the initial auto-connect in the frontend, and implemented automatic backend retries (up to 5 attempts, 2-second sleep between attempts) in the RCON service.
+            - **Server Creation Build Fix:** Resolved a TypeScript compilation error (`TS2339`) where the `publicIp` property was missing on the server creation payload.
+            - **Suppress CLI Window Popups:** Added `CREATE_NO_WINDOW` flags to all Windows command executions to run background CLI tasks silently, resolving repeated PowerShell window popups.
+            - **Server Installation Stage Progress:** Mapped pipeline stages to camelCase variants to match backend Rust serialization, ensuring active stage state hydrates correctly.
 
             ---
             _Developed by Sanjay._
