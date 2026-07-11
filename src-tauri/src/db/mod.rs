@@ -447,7 +447,7 @@ impl Database {
                 version,
                 branch,
                 status,
-                downloaded_size,
+                downloaded_size as i64,
                 duration_seconds,
                 average_speed,
                 peak_speed,

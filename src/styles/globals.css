@@ -383,3 +383,145 @@ html, body, #root {
   filter: blur(45px);
 }
 
+/* ─── Palworld Running Pal Animations ────────────────────────────────────── */
+.animate-pal-body {
+  animation: pal-body-bounce 0.35s infinite alternate cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+.animate-pal-shadow {
+  animation: pal-shadow-scale 0.35s infinite alternate cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+.animate-pal-left-foot {
+  animation: pal-foot-left 0.35s infinite linear;
+}
+
+.animate-pal-right-foot {
+  animation: pal-foot-right 0.35s infinite linear;
+}
+
+.animate-pal-left-arm {
+  animation: pal-arm-swing-left 0.35s infinite ease-in-out alternate;
+}
+
+.animate-pal-right-arm {
+  animation: pal-arm-swing-right 0.35s infinite ease-in-out alternate;
+}
+
+@keyframes pal-body-bounce {
+  0% { transform: translateY(0) scaleY(1); }
+  100% { transform: translateY(-6px) scaleY(0.95); }
+}
+
+@keyframes pal-shadow-scale {
+  0% { transform: scale(1) translateY(0); opacity: 0.8; }
+  100% { transform: scale(0.8) translateY(1px); opacity: 0.4; }
+}
+
+@keyframes pal-foot-left {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(-3px, -4px) rotate(15deg); }
+  50% { transform: translate(0, 0) rotate(0deg); }
+  75% { transform: translate(3px, 1px) rotate(-10deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+@keyframes pal-foot-right {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(3px, 1px) rotate(-10deg); }
+  50% { transform: translate(0, 0) rotate(0deg); }
+  75% { transform: translate(-3px, -4px) rotate(15deg); }
+  100% { transform: translate(0, 0) rotate(0deg); }
+}
+
+@keyframes pal-arm-swing-left {
+  0% { transform: rotate(-20deg); }
+  100% { transform: rotate(15deg); }
+}
+
+@keyframes pal-arm-swing-right {
+  0% { transform: rotate(15deg); }
+  100% { transform: rotate(-20deg); }
+}
+
+/* ─── Sidebar Custom Interactive UI ────────────────────────────────────── */
+
+/* Pulsating online status dot */
+.pulse-status-green {
+  animation: status-pulsate 1.8s infinite ease-in-out;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+}
+
+@keyframes status-pulsate {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+/* Hover active navigation indicator */
+.nav-indicator-line {
+  position: absolute;
+  left: 0;
+  top: 15%;
+  height: 70%;
+  width: 3px;
+  background: linear-gradient(to bottom, #3b82f6, #22d3ee);
+  border-radius: 0 4px 4px 0;
+  opacity: 0;
+  transform: scaleY(0.3);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.6);
+}
+
+.nav-item-hover:hover .nav-indicator-line,
+.nav-item-active .nav-indicator-line {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+/* Sidebar collapsed tooltip */
+.sidebar-tooltip {
+  position: absolute;
+  left: 4.5rem;
+  background-color: #0f111a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-10px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-tooltip::before {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: transparent #0f111a transparent transparent;
+}
+
+.has-tooltip:hover .sidebar-tooltip {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+

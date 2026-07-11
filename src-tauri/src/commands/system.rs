@@ -1522,6 +1522,7 @@ pub struct ImportConfigResponse {
     pub max_players: u32,
     pub admin_password: String,
     pub server_password: Option<String>,
+    pub public_ip: Option<String>,
 }
 
 #[tauri::command]
@@ -1598,6 +1599,7 @@ pub async fn parse_existing_server_config(install_path: String) -> Result<Import
         max_players: 32,
         admin_password: "admin".to_string(),
         server_password: None,
+        public_ip: None,
     };
 
     let final_settings_path = if settings_path.exists() {
@@ -1637,7 +1639,10 @@ pub async fn parse_existing_server_config(install_path: String) -> Result<Import
                 }
             }
             if let Some(v) = settings_map.get("AdminPassword") {
-                import_resp.admin_password = v.trim_matches('"').to_string();
+                let pass = v.trim_matches('"').to_string();
+                if !pass.is_empty() {
+                    import_resp.admin_password = pass;
+                }
             }
             if let Some(v) = settings_map.get("ServerPassword") {
                 let pass = v.trim_matches('"').to_string();
@@ -1645,11 +1650,19 @@ pub async fn parse_existing_server_config(install_path: String) -> Result<Import
                     import_resp.server_password = Some(pass);
                 }
             }
+            if let Some(v) = settings_map.get("PublicIP") {
+                let ip = v.trim_matches('"').to_string();
+                if !ip.is_empty() {
+                    import_resp.public_ip = Some(ip);
+                }
+            }
         }
     }
 
     Ok(import_resp)
 }
+
+
 
 
 

@@ -10,6 +10,7 @@ import { SchedulerTab } from '../tabs/SchedulerTab';
 import { ModsTab } from '../tabs/ModsTab';
 import { FirewallTab } from '../tabs/FirewallTab';
 import { CustomSelect } from '../ui/CustomSelect';
+import { RunningPal } from '../ui/RunningPal';
 
 // SVG Icons for Tabs
 const OverviewIcon = () => (
@@ -502,6 +503,8 @@ export const ServerDetail: React.FC = () => {
 const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) => {
   const { showNotification, installStates, setInstallState, setServers } = useAppStore();
   const [steamcmdInstalled, setSteamcmdInstalled] = useState<boolean | null>(null);
+  const [isInstallingSteamcmd, setIsInstallingSteamcmd] = useState(false);
+  const [showSteamcmdModal, setShowSteamcmdModal] = useState(false);
 
   const [publicIp, setPublicIp] = useState('Fetching...');
   const [localIp, setLocalIp] = useState('Fetching...');
@@ -680,18 +683,18 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   }, [installState.elapsedSeconds, installState.isInstalling]);
 
   // Detect when installation finishes to show the modal
-  const lastInstallStatus = useRef(installState.status);
+  const lastInstallStage = useRef(installState.stage);
   useEffect(() => {
-    if (lastInstallStatus.current !== 'finished' && installState.status === 'finished') {
+    if (lastInstallStage.current !== 'completed' && installState.stage === 'completed') {
       setShowCompletionModal(true);
       fetchDetails();
     }
-    lastInstallStatus.current = installState.status;
-  }, [installState.status, fetchDetails]);
+    lastInstallStage.current = installState.stage;
+  }, [installState.stage, fetchDetails]);
 
   const dismissCompletionModal = () => {
     setShowCompletionModal(false);
-    setInstallState(server.id, { status: '' });
+    setInstallState(server.id, { stage: 'Preparing' as any, status: '' });
   };
 
   const handleWipeSaves = async () => {
@@ -729,16 +732,17 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   };
 
   const handleInstallSteamcmd = async () => {
-    setInstallState(server.id, { isInstalling: true });
+    setIsInstallingSteamcmd(true);
     try {
       showNotification('info', 'Installing SteamCMD...');
       await tauriCommands.installSteamcmd();
       showNotification('success', 'SteamCMD installed successfully');
       setSteamcmdInstalled(true);
+      setShowSteamcmdModal(true);
     } catch (e: any) {
       showNotification('error', `Failed to install SteamCMD: ${e}`);
     } finally {
-      setInstallState(server.id, { isInstalling: false });
+      setIsInstallingSteamcmd(false);
     }
   };
 
@@ -942,158 +946,206 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
       {/* SteamCMD Installation Panel */}
       {!isActive && (
         <div className="glass-card p-6 space-y-6 relative z-20 overflow-hidden border border-dark-800/80 bg-dark-900/20">
-          {/* Header row */}
-          <div className="flex items-center justify-between border-b border-dark-800/60 pb-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <h3 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
-                  Server Installation & Updates
-                </h3>
-                {isInstalled === true ? (
-                  <span className="text-[10px] text-success-400 font-extrabold bg-success-500/10 px-2.5 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">
-                    Installed
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-error-400 font-extrabold bg-error-500/10 px-2.5 py-0.5 rounded border border-error-500/20 uppercase tracking-wider animate-pulse">
-                    Not Installed
-                  </span>
-                )}
+          {isInstallingSteamcmd ? (
+            <div className="flex flex-col items-center justify-center py-8 space-y-4">
+              <RunningPal size={88} />
+              <div className="space-y-1.5 text-center">
+                <h4 className="text-xs font-black text-gradient-cyan uppercase tracking-widest animate-pulse">
+                  Installing SteamCMD...
+                </h4>
+                <p className="text-[11px] text-dark-500 max-w-xs leading-relaxed mx-auto">
+                  Downloading official SteamCMD binaries from Valve and setting up local runner environment. Please hold on.
+                </p>
               </div>
-              <p className="text-xs text-dark-500 mt-1">
-                Download, update, and validate server files using high-speed SteamCMD streaming.
-              </p>
             </div>
-            
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-dark-400 font-medium">SteamCMD Status:</span>
-              {steamcmdInstalled === null ? (
-                <span className="text-xs text-dark-500 animate-pulse">Checking...</span>
-              ) : steamcmdInstalled ? (
-                <span className="text-xs text-success-400 font-bold bg-success-500/10 px-3 py-1 rounded-full border border-success-500/20">
-                  Ready
-                </span>
-              ) : (
+          ) : steamcmdInstalled === null ? (
+            <div className="flex flex-col items-center justify-center py-8 space-y-3">
+              <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-[11px] text-dark-500 font-bold uppercase tracking-wider">Checking SteamCMD...</span>
+            </div>
+          ) : !steamcmdInstalled ? (
+            <div className="space-y-6">
+              {/* Header row */}
+              <div className="flex items-center justify-between border-b border-dark-800/60 pb-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="text-xs font-black uppercase text-dark-100 tracking-wider">
+                      Server Installation & Updates
+                    </h3>
+                    <span className="text-[10px] text-error-400 font-extrabold bg-error-500/10 px-2.5 py-0.5 rounded border border-error-500/20 uppercase tracking-wider">
+                      SteamCMD Missing
+                    </span>
+                  </div>
+                  <p className="text-xs text-dark-500 mt-1">
+                    Download, update, and validate server files using high-speed SteamCMD streaming.
+                  </p>
+                </div>
+              </div>
+              
+              {/* Warning Banner */}
+              <div className="bg-error-500/5 border border-error-500/10 rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="space-y-1.5 text-center md:text-left">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-error-400 flex items-center justify-center md:justify-start gap-2">
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 shrink-0">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    SteamCMD Setup Required
+                  </h4>
+                  <p className="text-[11px] text-dark-400 leading-relaxed max-w-xl">
+                    SteamCMD utility is not installed on your system. This utility is required to download, update, and validate your Palworld Dedicated Server files directly from Valve's official repository.
+                  </p>
+                </div>
                 <button
                   onClick={handleInstallSteamcmd}
-                  disabled={installState.isInstalling}
-                  className="btn-primary text-xs py-1.5 px-3 rounded-lg shadow-lg active:scale-95 transition-all"
+                  className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 hover:text-primary-300 border border-primary-500/30 hover:border-primary-500/50 font-black px-5 py-2.5 rounded-xl text-xs uppercase tracking-widest transition-all duration-200 active:scale-95 shrink-0 flex items-center gap-2"
                 >
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
                   Install SteamCMD
                 </button>
-              )}
+              </div>
             </div>
-          </div>
-
-          {/* Config Controls Row (Hidden when installing) */}
-          {!installState.isInstalling && (
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-6">
+          ) : (
+            <div className="space-y-6">
+              {/* Header row */}
+              <div className="flex items-center justify-between border-b border-dark-800/60 pb-4">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="text-xs font-black uppercase text-dark-100 tracking-wider">
+                      Server Installation & Updates
+                    </h3>
+                    {isInstalled === true ? (
+                      <span className="text-[10px] text-success-400 font-extrabold bg-success-500/10 px-2.5 py-0.5 rounded border border-success-500/20 uppercase tracking-wider">
+                        Installed
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-error-400 font-extrabold bg-error-500/10 px-2.5 py-0.5 rounded border border-error-500/20 uppercase tracking-wider animate-pulse">
+                        Not Installed
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-dark-500 mt-1">
+                    Download, update, and validate server files using high-speed SteamCMD streaming.
+                  </p>
+                </div>
+                
                 <div className="flex items-center gap-3">
-                  <label className="text-xs text-dark-400 font-bold uppercase tracking-wider">Beta Branch:</label>
-                  <CustomSelect
-                    options={[
-                      { value: 'public', label: 'Public Release' },
-                      { value: 'experimental', label: 'Experimental Beta' },
-                      { value: 'preview', label: 'Preview Branch' },
-                      { value: 'development', label: 'Developer Beta' },
-                    ]}
-                    value={selectedBranch}
-                    onChange={handleBranchChange}
-                    disabled={installState.isInstalling || steamcmdInstalled === false}
-                    className="w-48"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
-                  <input
-                    type="checkbox"
-                    id={`auto-update-toggle-${server.id}`}
-                    checked={autoUpdateEnabled}
-                    onChange={async (e) => {
-                      const checked = e.target.checked;
-                      setAutoUpdateEnabled(checked);
-                      try {
-                        await tauriCommands.setSetting(`auto_update_enabled_${server.id}`, checked ? 'true' : 'false');
-                        showNotification('success', checked ? 'Auto-Update enabled' : 'Auto-Update disabled');
-                      } catch (err: any) {
-                        showNotification('error', `Failed to save setting: ${err}`);
-                      }
-                    }}
-                    className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
-                  />
-                  <label htmlFor={`auto-update-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
-                    Auto-Update Server
-                  </label>
-                </div>
-
-                <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
-                  <input
-                    type="checkbox"
-                    id={`auto-start-toggle-${server.id}`}
-                    checked={autoStartEnabled}
-                    onChange={async (e) => {
-                      const checked = e.target.checked;
-                      setAutoStartEnabled(checked);
-                      try {
-                        await tauriCommands.updateServerAutoStart(server.id, checked);
-                        showNotification('success', checked ? 'Auto-Start enabled' : 'Auto-Start disabled');
-                      } catch (err: any) {
-                        showNotification('error', `Failed to update auto-start setting: ${err}`);
-                      }
-                    }}
-                    className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
-                  />
-                  <label htmlFor={`auto-start-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
-                    Auto-Start Server
-                  </label>
+                  <span className="text-xs text-dark-400 font-medium">SteamCMD Status:</span>
+                  <span className="text-xs text-success-400 font-bold bg-success-500/10 px-3 py-1 rounded-full border border-success-500/20">
+                    Ready
+                  </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                {isInstalled ? (
-                  <>
+              {/* Config Controls Row (Hidden when installing) */}
+              {!installState.isInstalling && (
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs text-dark-400 font-bold uppercase tracking-wider">Beta Branch:</label>
+                      <CustomSelect
+                        options={[
+                          { value: 'public', label: 'Public Release' },
+                          { value: 'experimental', label: 'Experimental Beta' },
+                          { value: 'preview', label: 'Preview Branch' },
+                          { value: 'development', label: 'Developer Beta' },
+                        ]}
+                        value={selectedBranch}
+                        onChange={handleBranchChange}
+                        disabled={installState.isInstalling}
+                        className="w-48"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
+                      <input
+                        type="checkbox"
+                        id={`auto-update-toggle-${server.id}`}
+                        checked={autoUpdateEnabled}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setAutoUpdateEnabled(checked);
+                          try {
+                            await tauriCommands.setSetting(`auto_update_enabled_${server.id}`, checked ? 'true' : 'false');
+                            showNotification('success', checked ? 'Auto-Update enabled' : 'Auto-Update disabled');
+                          } catch (err: any) {
+                            showNotification('error', `Failed to save setting: ${err}`);
+                          }
+                        }}
+                        className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                      />
+                      <label htmlFor={`auto-update-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                        Auto-Update Server
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
+                      <input
+                        type="checkbox"
+                        id={`auto-start-toggle-${server.id}`}
+                        checked={autoStartEnabled}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setAutoStartEnabled(checked);
+                          try {
+                            await tauriCommands.updateServerAutoStart(server.id, checked);
+                            showNotification('success', checked ? 'Auto-Start enabled' : 'Auto-Start disabled');
+                          } catch (err: any) {
+                            showNotification('error', `Failed to update auto-start setting: ${err}`);
+                          }
+                        }}
+                        className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                      />
+                      <label htmlFor={`auto-start-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                        Auto-Start Server
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {isInstalled ? (
+                      <>
+                        <button
+                          onClick={handleUpdateServer}
+                          disabled={installState.isInstalling}
+                          className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-4 py-2 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
+                        >
+                          Update Server
+                        </button>
+                        <button
+                          onClick={handleValidateFiles}
+                          disabled={installState.isInstalling}
+                          className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-dark-200"
+                          title="Verify files integrity"
+                        >
+                          Validate Files
+                        </button>
+                        <button
+                          onClick={handleInstallServer}
+                          disabled={installState.isInstalling}
+                          className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-error-400 hover:text-error-300"
+                          title="Re-download all server files"
+                        >
+                          Reinstall
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={handleInstallServer}
+                        disabled={installState.isInstalling}
+                        className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-6 py-2.5 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
+                      >
+                        Install Server (SteamCMD)
+                      </button>
+                    )}
                     <button
-                      onClick={handleUpdateServer}
-                      disabled={installState.isInstalling || steamcmdInstalled === false}
-                      className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-4 py-2 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
+                      onClick={handleOpenFolder}
+                      className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-dark-400 hover:text-dark-200"
                     >
-                      Update Server
+                      Open Install Folder
                     </button>
-                    <button
-                      onClick={handleValidateFiles}
-                      disabled={installState.isInstalling || steamcmdInstalled === false}
-                      className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-dark-200"
-                      title="Verify files integrity"
-                    >
-                      Validate Files
-                    </button>
-                    <button
-                      onClick={handleInstallServer}
-                      disabled={installState.isInstalling || steamcmdInstalled === false}
-                      className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-error-400 hover:text-error-300"
-                      title="Re-download all server files"
-                    >
-                      Reinstall
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    onClick={handleInstallServer}
-                    disabled={installState.isInstalling || steamcmdInstalled === false}
-                    className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-6 py-2.5 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
-                  >
-                    Install Server (SteamCMD)
-                  </button>
-                )}
-                <button
-                  onClick={handleOpenFolder}
-                  className="btn-ghost text-xs border border-dark-700/60 hover:border-dark-600 rounded-lg px-4 py-2 text-dark-400 hover:text-dark-200"
-                >
-                  Open Install Folder
-                </button>
-              </div>
-            </div>
-          )}
+                  </div>
+                </div>
+              )}
 
           {/* Active Installation Dashboard */}
           {installState.isInstalling && (
@@ -1400,6 +1452,8 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
 
               </div>
             </div>
+          )}
+          </div>
           )}
         </div>
       )}
@@ -1809,6 +1863,49 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
               className="text-xs text-dark-500 hover:text-dark-300 transition-colors uppercase tracking-wider font-bold"
             >
               Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* SteamCMD Installation Success Modal */}
+      {showSteamcmdModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md" 
+            onClick={() => setShowSteamcmdModal(false)} 
+          />
+          
+          {/* Content Card */}
+          <div className="relative glass-card border border-success-500/30 bg-dark-900/80 p-8 rounded-2xl shadow-2xl max-w-sm w-full space-y-6 text-center animate-scale-in">
+            {/* Checked Icon */}
+            <div className="w-16 h-16 rounded-full bg-success-500/10 border border-success-500/20 text-success-400 mx-auto flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-8 h-8">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            
+            {/* Title */}
+            <div className="space-y-2">
+              <h2 className="text-md font-black uppercase text-gradient-cyan tracking-wider">
+                SteamCMD Installed!
+              </h2>
+              <p className="text-xs text-dark-400 leading-relaxed">
+                SteamCMD has been successfully downloaded, extracted, and integrated into your server manager.
+              </p>
+            </div>
+
+            <p className="text-[11px] text-dark-500 italic bg-dark-950/40 py-2.5 px-4 border border-dark-800 rounded-xl">
+              You are now ready to install and update your Palworld Dedicated Server.
+            </p>
+
+            {/* Action button */}
+            <button
+              onClick={() => setShowSteamcmdModal(false)}
+              className="w-full bg-gradient-to-r from-success-600 to-emerald-500 hover:from-success-500 hover:to-emerald-400 text-white rounded-xl py-3 text-xs font-black uppercase tracking-wider shadow-lg shadow-success-900/20 active:scale-[0.98] transition-all"
+            >
+              Got it
             </button>
           </div>
         </div>

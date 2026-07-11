@@ -74,6 +74,7 @@ export const CreateServer: React.FC = () => {
         maxPlayers: config.maxPlayers || prev.maxPlayers,
         adminPassword: config.adminPassword || prev.adminPassword,
         serverPassword: config.serverPassword || prev.serverPassword || '',
+        host: config.publicIp || '127.0.0.1',
       }));
       if (config.installPath && config.installPath !== path) {
         showNotification('info', `Corrected server path to: "${config.installPath}"`);
@@ -134,8 +135,9 @@ export const CreateServer: React.FC = () => {
         serverPassword: form.serverPassword || null,
         isPublic: form.isPublic,
         autoStart: mode === 'remote' ? false : form.autoStart,
-        host: mode === 'remote' ? form.host : '127.0.0.1',
+        host: form.host,
         isRemote: mode === 'remote',
+        isImport: mode === 'import',
       });
 
       showNotification('success', `Server "${server.name}" created successfully`);

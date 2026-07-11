@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
+import { RunningPal } from '../ui/RunningPal';
 
 interface LibraryCommand {
   name: string;
@@ -435,16 +436,41 @@ export const RconConsole: React.FC<{ serverId: number }> = ({ serverId }) => {
                   {isEnabling ? 'Enabling RCON...' : isServerRunning ? 'Enable RCON & Restart Server' : 'Enable RCON'}
                 </button>
               </div>
+            ) : isConnected ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 space-y-4">
+                <div className="relative flex items-center justify-center w-12 h-12 rounded-full bg-success-500/10 border border-success-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-5 h-5 text-success-400 animate-pulse">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                </div>
+                <div className="space-y-1 max-w-sm">
+                  <p className="text-xs font-black uppercase tracking-wider text-success-400">
+                    Terminal Online
+                  </p>
+                  <p className="text-[11px] text-dark-400 leading-relaxed">
+                    RCON session established. Ready to accept command inputs below or from the sidebar library.
+                  </p>
+                </div>
+              </div>
             ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 space-y-2 text-dark-600">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-10 h-10 text-dark-750">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v.007a.75.75 0 01-.75.75 1.5 1.5 0 110-3 1.5 1.5 0 011.5 1.5v.007zM21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-xs font-semibold uppercase tracking-wider">
-                  {isConnected
-                    ? 'Terminal online. Ready to accept command inputs.'
-                    : 'Establish session connection to pipe RCON console stream.'}
-                </p>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 space-y-5">
+                <RunningPal size={88} />
+                <div className="space-y-1.5 max-w-sm">
+                  <p className="text-xs font-black uppercase tracking-wider text-dark-300">
+                    RCON Stream Offline
+                  </p>
+                  <p className="text-[11px] text-dark-500 leading-relaxed">
+                    Establish an RCON connection to pipe the server's live console stream and run administration commands.
+                  </p>
+                </div>
+                <button
+                  onClick={handleConnect}
+                  disabled={!isServerRunning}
+                  className="bg-primary-500/10 hover:bg-primary-500/20 border border-primary-500/30 hover:border-primary-500/50 text-primary-400 hover:text-primary-300 font-black px-5 py-2.5 rounded-xl text-[10px] uppercase tracking-widest transition-all duration-200 active:scale-95 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
+                  Establish Connection
+                </button>
               </div>
             )
           ) : (

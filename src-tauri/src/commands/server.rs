@@ -53,8 +53,27 @@ pub async fn create_server(
         }
     }
 
-    // Generate config from preset
-    let mut config = ConfigGenerator::from_preset(&request.preset);
+    // Generate config from preset or existing file if import
+    let mut config = if request.is_import.unwrap_or(false) {
+        let settings_path = crate::services::config_generator::ConfigGenerator::get_settings_path(&request.install_path);
+        if settings_path.exists() {
+            crate::services::ini_parser::read_settings_file(&settings_path)
+                .ok()
+                .map(|_| {
+                    // We don't want to parse everything back perfectly here, we just need to preserve it
+                    // Actually, a better approach is to NOT write the config file if it's an import,
+                    // BUT we still need the JSON for the DB. We can generate a dummy JSON or partial from preset.
+                    // Wait, writing config to disk will OVERWRITE it if we call write_config later.
+                    // So let's just use the preset for the DB json, and skip write_config if it's an import!
+                    crate::services::config_generator::ConfigGenerator::from_preset(&request.preset)
+                })
+                .unwrap_or_else(|| crate::services::config_generator::ConfigGenerator::from_preset(&request.preset))
+        } else {
+            crate::services::config_generator::ConfigGenerator::from_preset(&request.preset)
+        }
+    } else {
+        crate::services::config_generator::ConfigGenerator::from_preset(&request.preset)
+    };
 
     // Apply the customized request settings to config
     config.public_port = request.game_port;
@@ -72,10 +91,10 @@ pub async fn create_server(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let id = db.create_server(&request, &config_json)?;
 
-    // Write PalWorldSettings.ini to disk if not remote
+    // Write PalWorldSettings.ini to disk if not remote and not an import
     drop(db); // Release lock before file I/O
-    if !request.is_remote.unwrap_or(false) {
-        ConfigGenerator::write_config(&request.install_path, &config)?;
+    if !request.is_remote.unwrap_or(false) && !request.is_import.unwrap_or(false) {
+        crate::services::config_generator::ConfigGenerator::write_config(&request.install_path, &config)?;
     }
 
     // Fetch the created server

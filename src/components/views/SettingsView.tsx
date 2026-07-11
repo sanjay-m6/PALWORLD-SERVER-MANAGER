@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { check } from '@tauri-apps/plugin-updater';
+import { RunningPal } from '../ui/RunningPal';
 
 export const SettingsView: React.FC = () => {
   const { showNotification, appVersion } = useAppStore();
@@ -146,10 +147,7 @@ export const SettingsView: React.FC = () => {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-transparent">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-xs text-dark-400 font-medium">Loading settings...</span>
-        </div>
+        <RunningPal size={80} label="Loading Settings..." />
       </div>
     );
   }

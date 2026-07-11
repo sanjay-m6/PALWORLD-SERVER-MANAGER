@@ -717,6 +717,7 @@ pub struct CreateServerRequest {
     pub auto_start: bool,
     pub host: Option<String>,
     pub is_remote: Option<bool>,
+    pub is_import: Option<bool>,
 }
 
 // ─── Extended Server Details ───────────────────────────────────────────────

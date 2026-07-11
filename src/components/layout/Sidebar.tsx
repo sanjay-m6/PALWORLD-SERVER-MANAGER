@@ -33,6 +33,39 @@ const DiscordIcon = () => (
   </svg>
 );
 
+const LamballLogo: React.FC<{ collapsed: boolean }> = ({ collapsed }) => (
+  <div className={`relative flex items-center justify-center transition-all duration-300 ${collapsed ? 'w-8 h-8' : 'w-9 h-9'}`}>
+    <div className="relative w-full h-full select-none hover:scale-110 transition-transform duration-300 cursor-pointer">
+      <svg viewBox="0 0 100 100" className="w-full h-full animate-pal-body origin-bottom" xmlns="http://www.w3.org/2000/svg">
+        {/* Ambient Shadow underneath */}
+        <ellipse cx="50" cy="88" rx="20" ry="3.5" fill="rgba(0, 0, 0, 0.25)" />
+        {/* Left Horn */}
+        <path d="M 33 26 C 24 18, 17 28, 25 35 C 28 32, 31 30, 35 29 Z" fill="#ECC94B" stroke="#0f172a" strokeWidth="2.2" strokeLinejoin="round" />
+        {/* Right Horn */}
+        <path d="M 67 26 C 76 18, 83 28, 75 35 C 72 32, 69 30, 65 29 Z" fill="#ECC94B" stroke="#0f172a" strokeWidth="2.2" strokeLinejoin="round" />
+        {/* Left Ear */}
+        <path d="M 26 38 C 17 40, 15 48, 24 47 Z" fill="#475569" stroke="#0f172a" strokeWidth="1.8" strokeLinejoin="round" />
+        {/* Right Ear */}
+        <path d="M 74 38 C 83 40, 85 48, 76 47 Z" fill="#475569" stroke="#0f172a" strokeWidth="1.8" strokeLinejoin="round" />
+        {/* Wool Body */}
+        <path d="M 50 25 A 11 11 0 0 1 65 28 A 11 11 0 0 1 74 38 A 11 11 0 0 1 75 52 A 11 11 0 0 1 65 67 A 11 11 0 0 1 50 70 A 11 11 0 0 1 35 67 A 11 11 0 0 1 25 52 A 11 11 0 0 1 26 38 A 11 11 0 0 1 35 28 Z" fill="#FFFFFF" stroke="#0f172a" strokeWidth="2.5" strokeLinejoin="round" />
+        {/* Dark Face Panel */}
+        <rect x="36" y="38" width="28" height="24" rx="12" fill="#334155" stroke="#0f172a" strokeWidth="2" />
+        {/* Eyes */}
+        <ellipse cx="43" cy="48" rx="2.5" ry="4" fill="#FFFFFF" />
+        <ellipse cx="43.5" cy="48.5" rx="1" ry="1.75" fill="#000000" />
+        <ellipse cx="57" cy="48" rx="2.5" ry="4" fill="#FFFFFF" />
+        <ellipse cx="56.5" cy="48.5" rx="1" ry="1.75" fill="#000000" />
+        {/* Blushing Cheeks */}
+        <ellipse cx="40" cy="54" rx="2.5" ry="1.5" fill="#F43F5E" opacity="0.6" />
+        <ellipse cx="60" cy="54" rx="2.5" ry="1.5" fill="#F43F5E" opacity="0.6" />
+        {/* Mouth */}
+        <path d="M 48 53 Q 50 56 52 53" stroke="#FFFFFF" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+      </svg>
+    </div>
+  </div>
+);
+
 export const Sidebar: React.FC = () => {
   const {
     currentView,
@@ -54,10 +87,26 @@ export const Sidebar: React.FC = () => {
 
   return (
     <aside
-      className={`flex flex-col h-full border-r border-dark-700/30 bg-dark-900/40 transition-all duration-300 ${
+      className={`flex flex-col h-full border-r border-dark-800/80 bg-dark-950/40 backdrop-blur-md transition-all duration-300 ${
         sidebarCollapsed ? 'w-14' : 'w-56'
       }`}
     >
+      {/* Branding Header */}
+      <div className={`flex items-center border-b border-dark-800/40 select-none transition-all duration-300 overflow-hidden ${
+        sidebarCollapsed ? 'justify-center p-3 h-14' : 'px-4 py-3 h-14 gap-3'
+      }`}>
+        <LamballLogo collapsed={sidebarCollapsed} />
+        {!sidebarCollapsed && (
+          <div className="flex flex-col min-w-0">
+            <span className="text-[11px] font-black uppercase tracking-widest bg-gradient-to-r from-cyan-400 to-primary-400 bg-clip-text text-transparent">
+              Palworld
+            </span>
+            <span className="text-[8px] text-dark-500 font-bold uppercase tracking-wider">
+              Server Manager
+            </span>
+          </div>
+        )}
+      </div>
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
         {/* Dashboard */}
@@ -67,28 +116,40 @@ export const Sidebar: React.FC = () => {
             setCurrentView('dashboard');
             setSelectedServerId(null);
           }}
-          className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+          className={`group relative flex items-center w-full rounded-lg text-sm font-semibold transition-all duration-200 overflow-hidden ${
+            sidebarCollapsed ? 'justify-center p-2.5 has-tooltip' : 'px-3.5 py-2.5 gap-3'
+          } ${
             currentView === 'dashboard'
-              ? 'text-primary-400 bg-primary-500/10 border border-primary-500/20'
-              : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700/30'
+              ? 'text-primary-400 bg-primary-500/5 border border-primary-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05),0_0_10px_-2px_rgba(59,130,246,0.15)] nav-item-active'
+              : 'text-dark-400 hover:text-dark-100 hover:bg-dark-800/40 border border-transparent nav-item-hover'
           }`}
         >
-          <DashboardIcon />
+          <span className="nav-indicator-line" />
+          <div className="transition-transform duration-200 group-hover:scale-110 group-active:scale-95">
+            <DashboardIcon />
+          </div>
           {!sidebarCollapsed && <span>Dashboard</span>}
+          {sidebarCollapsed && <span className="sidebar-tooltip">Dashboard</span>}
         </button>
 
         {/* Create Server */}
         <button
           id="nav-create-server"
           onClick={() => setCurrentView('create-server')}
-          className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+          className={`group relative flex items-center w-full rounded-lg text-sm font-semibold transition-all duration-200 overflow-hidden ${
+            sidebarCollapsed ? 'justify-center p-2.5 has-tooltip' : 'px-3.5 py-2.5 gap-3'
+          } ${
             currentView === 'create-server'
-              ? 'text-primary-400 bg-primary-500/10 border border-primary-500/20'
-              : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700/30'
+              ? 'text-primary-400 bg-primary-500/5 border border-primary-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05),0_0_10px_-2px_rgba(59,130,246,0.15)] nav-item-active'
+              : 'text-dark-400 hover:text-dark-100 hover:bg-dark-800/40 border border-transparent nav-item-hover'
           }`}
         >
-          <AddIcon />
+          <span className="nav-indicator-line" />
+          <div className="transition-transform duration-200 group-hover:scale-110 group-active:scale-95">
+            <AddIcon />
+          </div>
           {!sidebarCollapsed && <span>New Server</span>}
+          {sidebarCollapsed && <span className="sidebar-tooltip">New Server</span>}
         </button>
 
         {/* Settings */}
@@ -98,45 +159,59 @@ export const Sidebar: React.FC = () => {
             setCurrentView('settings');
             setSelectedServerId(null);
           }}
-          className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+          className={`group relative flex items-center w-full rounded-lg text-sm font-semibold transition-all duration-200 overflow-hidden ${
+            sidebarCollapsed ? 'justify-center p-2.5 has-tooltip' : 'px-3.5 py-2.5 gap-3'
+          } ${
             currentView === 'settings'
-              ? 'text-primary-400 bg-primary-500/10 border border-primary-500/20'
-              : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700/30'
+              ? 'text-primary-400 bg-primary-500/5 border border-primary-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05),0_0_10px_-2px_rgba(59,130,246,0.15)] nav-item-active'
+              : 'text-dark-400 hover:text-dark-100 hover:bg-dark-800/40 border border-transparent nav-item-hover'
           }`}
         >
-          <SettingsIcon />
+          <span className="nav-indicator-line" />
+          <div className="transition-transform duration-200 group-hover:scale-110 group-active:scale-95">
+            <SettingsIcon />
+          </div>
           {!sidebarCollapsed && <span>Settings</span>}
+          {sidebarCollapsed && <span className="sidebar-tooltip">Settings</span>}
         </button>
 
         {/* Server List */}
         {servers.length > 0 && (
-          <div className="pt-3 mt-3 border-t border-dark-700/30">
-            {!sidebarCollapsed && (
-              <span className="px-3 text-[10px] font-semibold text-dark-500 uppercase tracking-widest">
+          <div className="pt-3 mt-3 border-t border-dark-800/40">
+            {!sidebarCollapsed ? (
+              <span className="px-3.5 text-[9px] font-bold text-dark-500 uppercase tracking-widest block mb-2">
                 Servers
               </span>
+            ) : (
+              <div className="border-b border-dark-800/40 mb-2 pb-2" />
             )}
-            <div className="mt-2 space-y-0.5">
+            <div className="space-y-1">
               {servers.map((server) => (
                 <button
                   key={server.id}
                   id={`nav-server-${server.id}`}
                   onClick={() => handleServerClick(server.id)}
-                  className={`flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
+                  className={`group relative flex items-center w-full rounded-lg text-sm transition-all duration-200 overflow-hidden ${
+                    sidebarCollapsed ? 'justify-center p-2.5 has-tooltip' : 'px-3.5 py-2.5 gap-3'
+                  } ${
                     selectedServerId === server.id
-                      ? 'text-primary-400 bg-primary-500/10 border border-primary-500/20'
-                      : 'text-dark-300 hover:text-dark-100 hover:bg-dark-700/30'
+                      ? 'text-primary-400 bg-primary-500/5 border border-primary-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05),0_0_10px_-2px_rgba(59,130,246,0.15)] nav-item-active'
+                      : 'text-dark-400 hover:text-dark-100 hover:bg-dark-800/40 border border-transparent nav-item-hover'
                   }`}
                 >
-                  <div className="relative">
+                  <span className="nav-indicator-line" />
+                  <div className="relative transition-transform duration-200 group-hover:scale-110 group-active:scale-95 shrink-0">
                     <ServerIcon />
                     <span
-                      className={`absolute -top-0.5 -right-0.5 status-dot w-1.5 h-1.5 ${getStatusColor(server.status)}`}
+                      className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full border border-dark-950 ${getStatusColor(server.status)} ${
+                        server.status === 'running' || server.status === 'online' ? 'pulse-status-green' : ''
+                      }`}
                     />
                   </div>
                   {!sidebarCollapsed && (
-                    <span className="truncate">{server.name}</span>
+                    <span className="truncate font-semibold">{server.name}</span>
                   )}
+                  {sidebarCollapsed && <span className="sidebar-tooltip">{server.name}</span>}
                 </button>
               ))}
             </div>
@@ -145,19 +220,19 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       {/* Footer Info */}
-      <div className="border-t border-dark-700/30 flex flex-col">
+      <div className="border-t border-dark-800/40 flex flex-col bg-dark-950/20">
         {!sidebarCollapsed ? (
-          <div className="px-4 py-2.5 text-[10px] text-dark-500 select-none">
-            <div className="font-semibold text-dark-400">Palworld Server Manager</div>
-            <div className="flex items-center justify-between gap-1.5 mt-1">
-              <div className="flex items-center gap-1">
+          <div className="px-4 py-3.5 text-[10px] text-dark-500 select-none">
+            <div className="font-bold text-dark-400 tracking-wide">Palworld Server Manager</div>
+            <div className="flex items-center justify-between gap-1.5 mt-2">
+              <div className="flex items-center gap-1 font-mono">
                 <span>v{appVersion || '...'}</span>
-                <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
-                <span className="text-[9px] text-dark-600">Production</span>
+                <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[8px] text-dark-600 font-bold uppercase tracking-wider">Prod</span>
               </div>
               <button
                 onClick={() => window.open('https://discord.gg/gSNpPXhecV', '_blank')}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#5865F2]/10 hover:bg-[#5865F2]/20 border border-[#5865F2]/20 text-[#5865F2] hover:text-[#7289da] text-[9px] font-bold uppercase transition-all duration-200"
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#5865F2]/10 hover:bg-[#5865F2]/20 border border-[#5865F2]/20 text-[#5865F2] hover:text-[#7289da] text-[8px] font-black uppercase tracking-wider transition-all duration-200 shadow-md shadow-[#5865F2]/5 hover:scale-[1.03] active:scale-95"
                 title="Join our Discord"
               >
                 <DiscordIcon />
@@ -166,15 +241,16 @@ export const Sidebar: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center py-2 gap-1.5">
+          <div className="flex flex-col items-center py-3 gap-2">
             <button
               onClick={() => window.open('https://discord.gg/gSNpPXhecV', '_blank')}
-              className="flex items-center justify-center p-1 rounded-md text-[#5865F2] hover:bg-[#5865F2]/10 transition-colors"
+              className="flex items-center justify-center p-1.5 rounded-lg text-[#5865F2] hover:bg-[#5865F2]/10 transition-all hover:scale-110 active:scale-95 has-tooltip relative"
               title="Join our Discord"
             >
               <DiscordIcon />
+              <span className="sidebar-tooltip">Join Discord</span>
             </button>
-            <div className="text-[9px] text-dark-500 font-medium select-none" title={`v${appVersion || '...'}`}>
+            <div className="text-[9px] text-dark-600 font-bold font-mono select-none" title={`v${appVersion || '...'}`}>
               v{appVersion || '...'}
             </div>
           </div>
@@ -182,17 +258,17 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Collapse Toggle */}
-      <div className="p-2 border-t border-dark-700/30">
+      <div className="p-2 border-t border-dark-800/40 bg-dark-950/30">
         <button
           id="sidebar-toggle"
           onClick={toggleSidebar}
-          className="flex items-center justify-center w-full py-1.5 rounded-lg text-dark-500 hover:text-dark-300 hover:bg-dark-700/30 transition-colors"
+          className="flex items-center justify-center w-full py-2 rounded-lg text-dark-500 hover:text-dark-300 hover:bg-dark-800/40 transition-all hover:scale-105 active:scale-95"
           aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           <svg
             viewBox="0 0 20 20"
             fill="currentColor"
-            className={`w-4 h-4 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`}
+            className={`w-4 h-4 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''}`}
           >
             <path
               fillRule="evenodd"

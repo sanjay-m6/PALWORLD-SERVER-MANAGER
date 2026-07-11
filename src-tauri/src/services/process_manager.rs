@@ -86,7 +86,7 @@ impl ProcessManager {
         install_path: &str,
         startup_args: &str,
         game_port: u16,
-        rcon_port: u16,
+        _rcon_port: u16,
         admin_password: &str,
     ) -> Result<u32> {
         // Check for existing process
@@ -125,11 +125,8 @@ impl ProcessManager {
             "-publiclobby".to_string(),
         ];
 
-        // Add RCON args
-        if !admin_password.is_empty() {
-            args.push(format!("-rconport={}", rcon_port));
-            args.push(format!("-AdminPassword={}", admin_password));
-        }
+        // RCON is configured via PalWorldSettings.ini (RCONEnabled, RCONPort, AdminPassword).
+        // No command-line RCON arguments are needed for Palworld.
 
         // Parse and add custom startup args
         if !startup_args.is_empty() {

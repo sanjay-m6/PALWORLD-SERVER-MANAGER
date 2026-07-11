@@ -10,6 +10,7 @@ import { ServerDetail } from './components/views/ServerDetail';
 import { SettingsView } from './components/views/SettingsView';
 import { useAppStore } from './stores/useAppStore';
 import { setupEventListeners, tauriCommands, fetchAppVersion } from './lib/tauri';
+import { RunningPal } from './components/ui/RunningPal';
 
 const App: React.FC = () => {
   const { currentView, setServers, setAppVersion } = useAppStore();
@@ -58,7 +59,32 @@ const App: React.FC = () => {
         }, 2000);
       });
 
-    return () => clearInterval(progressInterval);
+    // Block browser right-click context menu
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    
+    // Block standard browser shortcut controls (refresh, print, save)
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F5' || (e.ctrlKey && (e.key === 'r' || e.key === 'R'))) {
+        e.preventDefault();
+      }
+      if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+      }
+      if (e.ctrlKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      clearInterval(progressInterval);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const renderView = () => {
@@ -111,6 +137,9 @@ const App: React.FC = () => {
             <p className="text-xs uppercase tracking-[0.3em] text-dark-400 font-semibold mb-8">
               Server Console Manager
             </p>
+
+            {/* Running Pal Animation */}
+            <RunningPal size={72} className="mb-6" />
 
             {/* Loading Indicator */}
             <div className="w-64 space-y-2">

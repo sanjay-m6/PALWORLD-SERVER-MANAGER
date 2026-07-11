@@ -89,4 +89,5 @@ To run and develop the project on your local machine:
 ## 📝 License & Credits
 
 * **Developer**: Sanjay
+* **License**: Licensed under the [Apache License 2.0](LICENSE).
 * **Copyright**: Copyright © 2026 Sanjay. All rights reserved.

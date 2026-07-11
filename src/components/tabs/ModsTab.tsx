@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
+import { RunningPal } from '../ui/RunningPal';
 
 interface ModItem {
   name: string;
@@ -818,9 +819,8 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
             </div>
 
             {loading ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-xs text-dark-400">Scanning server mod folders...</span>
+              <div className="flex flex-col items-center justify-center py-12">
+                <RunningPal size={72} label="Scanning server mod folders..." />
               </div>
             ) : mods.length === 0 ? (
               <div className="glass-card p-10 text-center flex flex-col items-center justify-center">
@@ -1041,9 +1041,8 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
 
             {/* Discover Grid */}
             {searching ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-2 text-dark-400 text-xs">
-                <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
-                <span>Searching repositories in real-time...</span>
+              <div className="flex flex-col items-center justify-center py-10">
+                <RunningPal size={64} label="Searching repositories..." />
               </div>
             ) : searchResults.length === 0 ? (
               <div className="text-center py-12 text-dark-500 text-xs">

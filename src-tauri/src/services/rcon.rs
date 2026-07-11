@@ -1,7 +1,9 @@
 /// RCON Client for Palworld Dedicated Servers
 ///
 /// Implements the Source RCON protocol for communicating with Palworld servers.
-/// Palworld uses standard RCON without ARK's quirks, making this implementation cleaner.
+/// Per the Source RCON spec, authentication requires handling TWO response packets:
+///   1. An empty SERVERDATA_RESPONSE_VALUE packet
+///   2. A SERVERDATA_AUTH_RESPONSE packet (ID == -1 means auth failed)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +15,12 @@ const SERVERDATA_AUTH: i32 = 3;
 const SERVERDATA_AUTH_RESPONSE: i32 = 2;
 const SERVERDATA_EXECCOMMAND: i32 = 2;
 const SERVERDATA_RESPONSE_VALUE: i32 = 0;
+
+struct RconPacket {
+    id: i32,
+    packet_type: i32,
+    body: String,
+}
 
 struct RconSession {
     stream: TcpStream,
@@ -61,11 +69,41 @@ impl RconService {
             password: password.to_string(),
         };
 
-        // Authenticate
-        let auth_response = Self::send_packet(&mut session, SERVERDATA_AUTH, password).await?;
+        // Authenticate using Source RCON protocol
+        session.request_id += 1;
+        let auth_request_id = session.request_id;
 
-        if auth_response.is_empty() || auth_response.contains("Authentication failed") {
-            return Err("RCON authentication failed. Check your admin password.".to_string());
+        // Send AUTH packet
+        Self::write_packet(&mut session.stream, auth_request_id, SERVERDATA_AUTH, password).await?;
+
+        // Per the Source RCON protocol specification, the server responds to
+        // SERVERDATA_AUTH with TWO packets:
+        //   1. An empty SERVERDATA_RESPONSE_VALUE packet (can be ignored)
+        //   2. A SERVERDATA_AUTH_RESPONSE packet where:
+        //      - ID == request_id means success
+        //      - ID == -1 means authentication failed
+        //
+        // Some server implementations (including Palworld) may not always send
+        // the first empty packet, so we read packets in a loop until we get
+        // the AUTH_RESPONSE or hit a timeout.
+
+        let auth_result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            Self::read_auth_response(&mut session.stream, auth_request_id),
+        )
+        .await
+        .map_err(|_| "RCON authentication timed out".to_string())?;
+
+        match auth_result {
+            Ok(true) => {
+                log::info!("[RCON] Authentication successful for server {}", server_id);
+            }
+            Ok(false) => {
+                return Err("RCON authentication failed. Check your admin password.".to_string());
+            }
+            Err(e) => {
+                return Err(format!("RCON authentication error: {}", e));
+            }
         }
 
         let session = Arc::new(Mutex::new(session));
@@ -97,11 +135,24 @@ impl RconService {
         let mut session = session.lock().await;
         log::info!("[RCON] Server {} executing: {}", server_id, command);
 
-        match Self::send_packet(&mut session, SERVERDATA_EXECCOMMAND, command).await {
-            Ok(response) => Ok(response),
+        session.request_id += 1;
+        let request_id = session.request_id;
+
+        match Self::write_packet(&mut session.stream, request_id, SERVERDATA_EXECCOMMAND, command).await {
+            Ok(_) => {}
             Err(e) => {
-                log::error!("[RCON] Command failed for server {}: {}", server_id, e);
-                // Try to reconnect
+                log::error!("[RCON] Failed to send command for server {}: {}", server_id, e);
+                drop(session);
+                let mut sessions = self.sessions.lock().await;
+                sessions.remove(&server_id);
+                return Err(format!("RCON command failed: {}. Connection lost, please reconnect.", e));
+            }
+        }
+
+        match Self::read_packet(&mut session.stream).await {
+            Ok(packet) => Ok(packet.body),
+            Err(e) => {
+                log::error!("[RCON] Command read failed for server {}: {}", server_id, e);
                 drop(session);
                 let mut sessions = self.sessions.lock().await;
                 sessions.remove(&server_id);
@@ -144,14 +195,55 @@ impl RconService {
 
     // ─── Internal RCON Protocol ─────────────────────────────────────────────
 
-    async fn send_packet(
-        session: &mut RconSession,
+    /// Read the authentication response, handling the two-packet flow.
+    /// Returns Ok(true) on success, Ok(false) on auth failure.
+    async fn read_auth_response(
+        stream: &mut TcpStream,
+        _auth_request_id: i32,
+    ) -> Result<bool, String> {
+        // Read up to 2 packets. The server may send:
+        //   1. An empty SERVERDATA_RESPONSE_VALUE (id matches or is -1)
+        //   2. The SERVERDATA_AUTH_RESPONSE (type 2)
+        // Some implementations only send one packet.
+        for _ in 0..2 {
+            let packet = Self::read_packet(stream).await?;
+
+            log::debug!(
+                "[RCON] Auth response packet: id={}, type={}, body_len={}",
+                packet.id,
+                packet.packet_type,
+                packet.body.len()
+            );
+
+            // If this is the AUTH_RESPONSE packet (type 2), check the ID
+            if packet.packet_type == SERVERDATA_AUTH_RESPONSE {
+                if packet.id == -1 {
+                    return Ok(false); // Auth failed
+                }
+                return Ok(true); // Auth succeeded
+            }
+
+            // If we got a RESPONSE_VALUE with id == -1, auth failed
+            if packet.id == -1 {
+                return Ok(false);
+            }
+
+            // Otherwise it's the empty RESPONSE_VALUE packet, continue to read
+            // the actual AUTH_RESPONSE
+        }
+
+        // If we got here without an AUTH_RESPONSE, assume success
+        // (some quirky implementations)
+        Ok(true)
+    }
+
+    /// Write a single RCON packet to the stream
+    async fn write_packet(
+        stream: &mut TcpStream,
+        request_id: i32,
         packet_type: i32,
         body: &str,
-    ) -> Result<String, String> {
-        session.request_id += 1;
-        let request_id = session.request_id;
-
+    ) -> Result<(), String> {
         // Build packet: Size(4) + ID(4) + Type(4) + Body(null) + Padding(null)
         let body_bytes = body.as_bytes();
         let size = 4 + 4 + body_bytes.len() as i32 + 2; // ID + Type + Body + 2 null terminators
@@ -164,16 +256,19 @@ impl RconService {
         packet.push(0); // Body null terminator
         packet.push(0); // Packet null terminator
 
-        session
-            .stream
+        stream
             .write_all(&packet)
             .await
             .map_err(|e| format!("Failed to send RCON packet: {}", e))?;
 
-        // Read response
+        Ok(())
+    }
+
+    /// Read a single RCON packet from the stream
+    async fn read_packet(stream: &mut TcpStream) -> Result<RconPacket, String> {
+        // Read size (4 bytes)
         let mut size_buf = [0u8; 4];
-        session
-            .stream
+        stream
             .read_exact(&mut size_buf)
             .await
             .map_err(|e| format!("Failed to read RCON response size: {}", e))?;
@@ -182,27 +277,27 @@ impl RconService {
         if response_size > 65536 {
             return Err("RCON response too large".to_string());
         }
+        if response_size < 10 {
+            // Minimum: ID(4) + Type(4) + empty body null(1) + padding null(1) = 10
+            return Err(format!("RCON response too short: {} bytes", response_size));
+        }
 
+        // Read the rest of the packet
         let mut response_buf = vec![0u8; response_size];
-        session
-            .stream
+        stream
             .read_exact(&mut response_buf)
             .await
             .map_err(|e| format!("Failed to read RCON response: {}", e))?;
 
-        // Parse response: ID(4) + Type(4) + Body + null + null
-        if response_buf.len() < 10 {
-            return Err("RCON response too short".to_string());
-        }
-
-        let _response_id = i32::from_le_bytes([
+        // Parse: ID(4) + Type(4) + Body + null + null
+        let response_id = i32::from_le_bytes([
             response_buf[0],
             response_buf[1],
             response_buf[2],
             response_buf[3],
         ]);
 
-        let _response_type = i32::from_le_bytes([
+        let response_type = i32::from_le_bytes([
             response_buf[4],
             response_buf[5],
             response_buf[6],
@@ -210,8 +305,16 @@ impl RconService {
         ]);
 
         let body_end = response_buf.len().saturating_sub(2);
-        let body = String::from_utf8_lossy(&response_buf[8..body_end]).to_string();
+        let body = if body_end > 8 {
+            String::from_utf8_lossy(&response_buf[8..body_end]).to_string()
+        } else {
+            String::new()
+        };
 
-        Ok(body)
+        Ok(RconPacket {
+            id: response_id,
+            packet_type: response_type,
+            body,
+        })
     }
 }

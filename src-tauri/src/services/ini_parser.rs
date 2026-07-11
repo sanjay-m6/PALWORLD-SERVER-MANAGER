@@ -165,7 +165,7 @@ pub fn config_to_map(config: &crate::models::PalworldConfig) -> HashMap<String, 
     map.insert("ServerPlayerMaxNum".to_string(), config.server_player_max_num.to_string());
     map.insert("ServerName".to_string(), format!("\"{}\"", config.server_name));
     map.insert("ServerDescription".to_string(), format!("\"{}\"", config.server_description));
-    map.insert("AdminPassword".to_string(), config.admin_password.trim().to_string());
+    map.insert("AdminPassword".to_string(), format!("\"{}\"", config.admin_password.trim()));
     map.insert("ServerPassword".to_string(), format!("\"{}\"", config.server_password));
     map.insert("PublicPort".to_string(), config.public_port.to_string());
     map.insert("PublicIP".to_string(), format!("\"{}\"", config.public_ip));

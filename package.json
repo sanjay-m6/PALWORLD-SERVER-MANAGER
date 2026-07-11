@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.2.0",
   "author": "Sanjay",
+  "license": "Apache-2.0",
   "description": "Palworld Server Manager - Professional Dedicated Server Management",
   "type": "module",
   "scripts": {
