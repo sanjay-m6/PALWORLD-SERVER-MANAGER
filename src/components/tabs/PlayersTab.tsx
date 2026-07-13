@@ -5,7 +5,7 @@ import { useAppStore, type Player } from '../../stores/useAppStore';
 type PlayersSubTab = 'online' | 'banlist' | 'whitelist';
 
 export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
-  const { showNotification, rconConnected } = useAppStore();
+  const { showNotification, rconConnected, activeServerTab } = useAppStore();
   const [activeSubTab, setActiveSubTab] = useState<PlayersSubTab>('online');
 
   // Online Players State
@@ -21,6 +21,15 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [whitelistIds, setWhitelistIds] = useState<string[]>([]);
   const [isLoadingWhitelist, setIsLoadingWhitelist] = useState(false);
   const [newWhitelistId, setNewWhitelistId] = useState('');
+
+  // Message / Warning Modal State
+  const [isMsgModalOpen, setIsMsgModalOpen] = useState(false);
+  const [msgTargetPlayerName, setMsgTargetPlayerName] = useState('');
+  const [msgContent, setMsgContent] = useState('');
+
+  // Auto-Refresh State
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [refreshInterval, setRefreshInterval] = useState(10); // default 10 seconds
 
   const server = useAppStore((state) => state.servers.find((s) => s.id === serverId));
   const isServerRunning = server?.status === 'running';
@@ -121,37 +130,53 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   // Effects
   useEffect(() => {
     if (activeSubTab === 'online') {
-      loadPlayers();
-      if (isServerRunning) {
-        const interval = setInterval(loadPlayers, 15000);
-        return () => clearInterval(interval);
+      if (activeServerTab === 'players') {
+        loadPlayers();
+        if (isServerRunning && autoRefresh) {
+          const interval = setInterval(loadPlayers, refreshInterval * 1000);
+          return () => clearInterval(interval);
+        }
       }
     } else if (activeSubTab === 'banlist') {
       loadBanList();
     } else if (activeSubTab === 'whitelist') {
       loadWhitelist();
     }
-  }, [serverId, activeSubTab, isServerRunning, loadPlayers, loadBanList, loadWhitelist]);
+  }, [serverId, isServerRunning, activeSubTab, autoRefresh, refreshInterval, loadPlayers, loadBanList, loadWhitelist, activeServerTab]);
 
-  const handleKick = async (steamId: string, name: string) => {
-    if (!confirm(`Kick player "${name}"?`)) return;
+  const handleKick = async (player: Player) => {
+    const identifier = player.steamId && player.steamId.trim() && player.steamId.trim() !== '0'
+      ? player.steamId.trim()
+      : player.playerUid.trim();
+    if (!confirm(`Kick player "${player.name}"?`)) return;
     try {
-      await tauriCommands.kickPlayer(serverId, steamId);
-      showNotification('success', `Kicked ${name}`);
+      const res = await tauriCommands.kickPlayer(serverId, identifier);
+      if (res && res.success === false) {
+        showNotification('error', `Kick failed: ${res.message}`);
+      } else {
+        showNotification('success', `Kicked ${player.name}`);
+      }
       await loadPlayers();
     } catch (e: any) {
       showNotification('error', `Kick failed: ${e}`);
     }
   };
 
-  const handleBan = async (steamId: string, name: string) => {
-    if (!confirm(`Ban player "${name}"? They will not be able to rejoin.`)) return;
+  const handleBan = async (player: Player) => {
+    const identifier = player.steamId && player.steamId.trim() && player.steamId.trim() !== '0'
+      ? player.steamId.trim()
+      : player.playerUid.trim();
+    if (!confirm(`Ban player "${player.name}"? They will not be able to rejoin.`)) return;
     try {
       if (isServerRunning) {
-        await tauriCommands.banPlayer(serverId, steamId);
+        const res = await tauriCommands.banPlayer(serverId, identifier);
+        if (res && res.success === false) {
+          showNotification('error', `Ban failed: ${res.message}`);
+          return;
+        }
       }
-      await tauriCommands.addToBanList(serverId, steamId);
-      showNotification('success', `Banned ${name || steamId}`);
+      await tauriCommands.addToBanList(serverId, identifier);
+      showNotification('success', `Banned ${player.name || identifier}`);
       
       if (activeSubTab === 'online') {
         await loadPlayers();
@@ -163,11 +188,17 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
-  const handleMessagePlayer = async (name: string) => {
-    const msg = prompt(`Enter message / warning to broadcast to ${name}:`);
-    if (!msg || !msg.trim()) return;
+  const handleMessagePlayer = (name: string) => {
+    setMsgTargetPlayerName(name);
+    setMsgContent('');
+    setIsMsgModalOpen(true);
+  };
+
+  const handleSendBroadcast = async () => {
+    if (!msgContent.trim()) return;
+    setIsMsgModalOpen(false);
     try {
-      const formatted = `[To ${name}]: ${msg.trim()}`;
+      const formatted = `[To ${msgTargetPlayerName}]: ${msgContent.trim()}`;
       await tauriCommands.broadcastMessage(serverId, formatted);
       showNotification('success', `Message broadcasted: "${formatted}"`);
     } catch (e: any) {
@@ -264,9 +295,41 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
               </span>
             </div>
             {isServerRunning && (
-              <button onClick={loadPlayers} className="btn-ghost text-xs py-1.5 px-3">
-                {isLoadingPlayers ? 'Refreshing...' : 'Refresh'}
-              </button>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60">
+                  <input
+                    type="checkbox"
+                    id="auto-refresh-players"
+                    checked={autoRefresh}
+                    onChange={(e) => setAutoRefresh(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                  />
+                  <label htmlFor="auto-refresh-players" className="text-[10px] font-black text-dark-350 cursor-pointer select-none uppercase tracking-wider">
+                    Auto-Refresh
+                  </label>
+                  {autoRefresh && (
+                    <select
+                      value={refreshInterval}
+                      onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                      className="bg-transparent border-0 text-[10px] font-black text-primary-400 focus:outline-none cursor-pointer pl-1.5 uppercase"
+                    >
+                      <option value={5} className="bg-dark-900">5s</option>
+                      <option value={10} className="bg-dark-900">10s</option>
+                      <option value={15} className="bg-dark-900">15s</option>
+                      <option value={30} className="bg-dark-900">30s</option>
+                      <option value={60} className="bg-dark-900">60s</option>
+                    </select>
+                  )}
+                </div>
+
+                <button
+                  onClick={loadPlayers}
+                  disabled={isLoadingPlayers}
+                  className="btn-ghost text-xs py-1.5 px-3 border border-dark-700/50 hover:border-dark-600 rounded-lg text-dark-200"
+                >
+                  {isLoadingPlayers ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </div>
             )}
           </div>
 
@@ -324,26 +387,26 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                         {player.name}
                       </div>
                       <div className="text-[10px] text-dark-500 font-mono">
-                        Steam: {player.steamId} | UID: {player.playerUid}
+                        {player.steamId && player.steamId.trim() ? `Steam: ${player.steamId} | ` : ''}UID: {player.playerUid}
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleMessagePlayer(player.name)}
-                      className="btn-ghost text-[10px] py-1 px-2 text-primary-400 hover:text-primary-300"
+                      className="bg-primary-500/10 border border-primary-500/20 hover:bg-primary-500/20 text-primary-400 text-[10px] px-2.5 py-1 rounded transition-all font-bold uppercase tracking-wider active:scale-95"
                     >
                       Message
                     </button>
                     <button
-                      onClick={() => handleKick(player.steamId, player.name)}
-                      className="btn-ghost text-[10px] py-1 px-2 text-warning-400 hover:text-warning-300"
+                      onClick={() => handleKick(player)}
+                      className="bg-warning-500/10 border border-warning-500/20 hover:bg-warning-500/20 text-warning-400 text-[10px] px-2.5 py-1 rounded transition-all font-bold uppercase tracking-wider active:scale-95"
                     >
                       Kick
                     </button>
                     <button
-                      onClick={() => handleBan(player.steamId, player.name)}
-                      className="btn-ghost text-[10px] py-1 px-2 text-error-400 hover:text-error-300"
+                      onClick={() => handleBan(player)}
+                      className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:bg-error-500/20 text-[10px] px-2.5 py-1 rounded transition-all font-bold uppercase tracking-wider active:scale-95"
                     >
                       Ban
                     </button>
@@ -394,7 +457,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                     <span className="text-xs font-mono text-dark-200">{steamId}</span>
                     <button
                       onClick={() => handleUnban(steamId)}
-                      className="btn-ghost text-[10px] py-1 px-2 text-success-400 hover:text-success-300"
+                      className="bg-success-500/10 border border-success-500/20 hover:bg-success-500/20 text-success-400 text-[10px] px-2.5 py-1 rounded transition-all font-bold uppercase tracking-wider active:scale-95"
                     >
                       Unban
                     </button>
@@ -445,7 +508,7 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                     <span className="text-xs font-mono text-dark-200">{steamId}</span>
                     <button
                       onClick={() => handleRemoveWhitelist(steamId)}
-                      className="btn-ghost text-[10px] py-1 px-2 text-error-400 hover:text-error-300"
+                      className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:bg-error-500/20 text-[10px] px-2.5 py-1 rounded transition-all font-bold uppercase tracking-wider active:scale-95"
                     >
                       Remove
                     </button>
@@ -453,6 +516,73 @@ export const PlayersTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Custom Styled Message Modal */}
+      {isMsgModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-950/80 backdrop-blur-md animate-fade-in p-4">
+          <div className="w-full max-w-md bg-dark-900 border border-dark-700/60 rounded-2xl shadow-2xl overflow-hidden transform scale-100 transition-all duration-300">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-800 bg-dark-950/40">
+              <h3 className="text-xs font-black uppercase text-dark-100 tracking-wider">
+                Broadcast Warning to {msgTargetPlayerName}
+              </h3>
+              <button
+                onClick={() => setIsMsgModalOpen(false)}
+                className="text-dark-500 hover:text-dark-300 transition-colors text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-dark-400 uppercase tracking-wider">
+                  Warning Message
+                </label>
+                <textarea
+                  value={msgContent}
+                  onChange={(e) => setMsgContent(e.target.value)}
+                  className="w-full h-24 bg-dark-950 border border-dark-800 rounded-lg p-3 text-xs font-medium text-dark-100 placeholder-dark-600 focus:outline-none focus:border-primary-500/50 resize-none transition-all"
+                  placeholder="Enter message or warning..."
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendBroadcast();
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="bg-primary-500/5 border border-primary-500/10 rounded-lg p-3">
+                <p className="text-[10px] text-dark-400 leading-relaxed">
+                  Note: The warning will appear as <strong className="text-primary-400 font-mono">[SYSTEM]:[To {msgTargetPlayerName}]: &lt;Message&gt;</strong> on the server in-game chat.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex gap-3 px-5 py-4 border-t border-dark-800/60 bg-dark-950/20">
+              <button
+                type="button"
+                onClick={() => setIsMsgModalOpen(false)}
+                className="w-1/2 bg-dark-800 hover:bg-dark-750 text-dark-300 border border-dark-700/60 rounded-lg py-2 text-xs font-bold transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSendBroadcast}
+                disabled={!msgContent.trim()}
+                className="w-1/2 bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg py-2 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
+              >
+                Send Warning
+              </button>
+            </div>
           </div>
         </div>
       )}

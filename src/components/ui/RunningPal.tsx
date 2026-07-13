@@ -4,13 +4,45 @@ interface RunningPalProps {
   size?: number;
   className?: string;
   label?: string;
+  variant?: 'running' | 'sleeping' | 'stopping' | 'restarting';
 }
 
 export const RunningPal: React.FC<RunningPalProps> = ({ 
   size = 72, 
   className = '', 
-  label 
+  label,
+  variant = 'running'
 }) => {
+  const isSleeping = variant === 'sleeping';
+  const isStopping = variant === 'stopping';
+  const isRestarting = variant === 'restarting';
+  
+  // Body animation class
+  const bodyAnimClass = isSleeping 
+    ? 'animate-pal-body-sleep' 
+    : isStopping 
+      ? 'animate-pal-body-stopping' 
+      : isRestarting 
+        ? 'animate-pal-body-restarting' 
+        : 'animate-pal-body';
+
+  // Feet animation classes
+  const leftFootClass = isSleeping 
+    ? 'origin-center' 
+    : isStopping 
+      ? 'animate-pal-left-foot-slow origin-center' 
+      : isRestarting 
+        ? 'animate-pal-left-foot-fast origin-center' 
+        : 'animate-pal-left-foot origin-center';
+
+  const rightFootClass = isSleeping 
+    ? 'origin-center' 
+    : isStopping 
+      ? 'animate-pal-right-foot-slow origin-center' 
+      : isRestarting 
+        ? 'animate-pal-right-foot-fast origin-center' 
+        : 'animate-pal-right-foot origin-center';
+  
   return (
     <div className={`flex flex-col items-center justify-center select-none ${className}`}>
       <div 
@@ -29,11 +61,20 @@ export const RunningPal: React.FC<RunningPalProps> = ({
             rx="24" 
             ry="4.5" 
             fill="rgba(0, 0, 0, 0.25)" 
-            className="animate-pal-shadow origin-center" 
+            className={`${isSleeping ? 'animate-pal-shadow-sleep' : 'animate-pal-shadow'} origin-center`}
           />
           
+          {/* Floating Zzz for sleeping variant */}
+          {isSleeping && (
+            <g className="fill-cyan-400 font-bold select-none font-sans">
+              <text x="65" y="30" className="animate-pal-zzz-1 text-[10px]">Z</text>
+              <text x="70" y="24" className="animate-pal-zzz-2 text-[14px]">z</text>
+              <text x="75" y="16" className="animate-pal-zzz-3 text-[18px]">z</text>
+            </g>
+          )}
+
           {/* Main Body + Features Group (Bounces while running) */}
-          <g className="animate-pal-body origin-bottom">
+          <g className={`${bodyAnimClass} origin-bottom`}>
             {/* Left Horn */}
             <path 
               d="M 33 26 C 24 18, 17 28, 25 35 C 28 32, 31 30, 35 29 Z" 
@@ -98,25 +139,82 @@ export const RunningPal: React.FC<RunningPalProps> = ({
               strokeWidth="2" 
             />
             
-            {/* Cute Oval Eyes */}
-            <ellipse cx="43" cy="48" rx="2.5" ry="4" fill="#FFFFFF" />
-            <ellipse cx="43.5" cy="48.5" rx="1" ry="1.75" fill="#000000" />
-            
-            <ellipse cx="57" cy="48" rx="2.5" ry="4" fill="#FFFFFF" />
-            <ellipse cx="56.5" cy="48.5" rx="1" ry="1.75" fill="#000000" />
+            {/* Eyes */}
+            {isSleeping ? (
+              <>
+                {/* Sleeping Closed Curved Eyes */}
+                <path 
+                  d="M 40 48 Q 43 51 46 48" 
+                  stroke="#FFFFFF" 
+                  strokeWidth="2" 
+                  fill="none" 
+                  strokeLinecap="round" 
+                />
+                <path 
+                  d="M 54 48 Q 57 51 60 48" 
+                  stroke="#FFFFFF" 
+                  strokeWidth="2" 
+                  fill="none" 
+                  strokeLinecap="round" 
+                />
+              </>
+            ) : isStopping ? (
+              <>
+                {/* Dizzy Cross Eyes (X) */}
+                <path 
+                  d="M 40 45 L 46 51 M 46 45 L 40 51" 
+                  stroke="#FFFFFF" 
+                  strokeWidth="2" 
+                  strokeLinecap="round" 
+                />
+                <path 
+                  d="M 54 45 L 60 51 M 60 45 L 54 51" 
+                  stroke="#FFFFFF" 
+                  strokeWidth="2" 
+                  strokeLinecap="round" 
+                />
+              </>
+            ) : (
+              <>
+                {/* Cute Oval Eyes */}
+                <ellipse cx="43" cy="48" rx="2.5" ry="4" fill="#FFFFFF" />
+                <ellipse cx="43.5" cy="48.5" rx="1" ry="1.75" fill="#000000" />
+                
+                <ellipse cx="57" cy="48" rx="2.5" ry="4" fill="#FFFFFF" />
+                <ellipse cx="56.5" cy="48.5" rx="1" ry="1.75" fill="#000000" />
+              </>
+            )}
             
             {/* Blushing Cheeks */}
             <ellipse cx="40" cy="54" rx="2.5" ry="1.5" fill="#F43F5E" opacity="0.6" />
             <ellipse cx="60" cy="54" rx="2.5" ry="1.5" fill="#F43F5E" opacity="0.6" />
             
-            {/* Happy Mouth */}
-            <path 
-              d="M 48 53 Q 50 56 52 53" 
-              stroke="#FFFFFF" 
-              strokeWidth="1.5" 
-              fill="none" 
-              strokeLinecap="round" 
-            />
+            {/* Mouth */}
+            {isSleeping ? (
+              <path 
+                d="M 48 54 Q 50 55 52 54" 
+                stroke="#FFFFFF" 
+                strokeWidth="1.25" 
+                fill="none" 
+                strokeLinecap="round" 
+              />
+            ) : isStopping ? (
+              <path 
+                d="M 48 54 Q 50 51 52 54" 
+                stroke="#FFFFFF" 
+                strokeWidth="1.5" 
+                fill="none" 
+                strokeLinecap="round" 
+              />
+            ) : (
+              <path 
+                d="M 48 53 Q 50 56 52 53" 
+                stroke="#FFFFFF" 
+                strokeWidth="1.5" 
+                fill="none" 
+                strokeLinecap="round" 
+              />
+            )}
             
             {/* Cute Little Fluff on Forehead */}
             <path 
@@ -133,7 +231,7 @@ export const RunningPal: React.FC<RunningPalProps> = ({
               fill="#334155" 
               stroke="#0f172a" 
               strokeWidth="1.75"
-              className="animate-pal-left-arm origin-top-right"
+              className={isSleeping ? "origin-top-right" : "animate-pal-left-arm origin-top-right"}
             />
             {/* Stubby Right Arm */}
             <path 
@@ -141,11 +239,11 @@ export const RunningPal: React.FC<RunningPalProps> = ({
               fill="#334155" 
               stroke="#0f172a" 
               strokeWidth="1.75"
-              className="animate-pal-right-arm origin-top-left"
+              className={isSleeping ? "origin-top-left" : "animate-pal-right-arm origin-top-left"}
             />
           </g>
           
-          {/* Running Left Foot */}
+          {/* Left Foot */}
           <ellipse 
             cx="38" 
             cy="77" 
@@ -154,9 +252,9 @@ export const RunningPal: React.FC<RunningPalProps> = ({
             fill="#1E293B" 
             stroke="#0f172a" 
             strokeWidth="2" 
-            className="animate-pal-left-foot origin-center" 
+            className={leftFootClass}
           />
-          {/* Running Right Foot */}
+          {/* Right Foot */}
           <ellipse 
             cx="62" 
             cy="77" 
@@ -165,12 +263,17 @@ export const RunningPal: React.FC<RunningPalProps> = ({
             fill="#1E293B" 
             stroke="#0f172a" 
             strokeWidth="2" 
-            className="animate-pal-right-foot origin-center" 
+            className={rightFootClass}
           />
         </svg>
       </div>
       {label && (
-        <span className="mt-4 text-xs font-black uppercase tracking-[0.25em] text-gradient-cyan animate-pulse">
+        <span className={`mt-4 text-[10px] font-black uppercase tracking-[0.25em] ${
+          variant === 'sleeping' ? 'text-error-400/80 animate-pulse' :
+          variant === 'stopping' ? 'text-red-400/85 animate-pulse' :
+          variant === 'restarting' ? 'text-amber-400/85 animate-pulse' :
+          'text-gradient-cyan animate-pulse'
+        }`}>
           {label}
         </span>
       )}

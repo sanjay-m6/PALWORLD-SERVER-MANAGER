@@ -5,7 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useI18nStore } from '../../lib/i18n';
 
 export const CreateServer: React.FC = () => {
-  const { setCurrentView, setServers, showNotification, setSelectedServerId, setActiveServerTab } = useAppStore();
+  const { setCurrentView, setServers, showNotification, setSelectedServerId, setActiveServerTab, setInstallState } = useAppStore();
   const { t } = useI18nStore();
 
   const [step, setStep] = useState(1);
@@ -164,6 +164,33 @@ export const CreateServer: React.FC = () => {
       setSelectedServerId(server.id);
       setActiveServerTab('overview');
       setCurrentView('server-detail');
+
+      // Auto-install server files if mode is 'create'
+      if (mode === 'create') {
+        setInstallState(server.id, {
+          isInstalling: true,
+          progress: 0,
+          status: 'Preparing',
+          log: `Starting automatic Palworld Dedicated Server Installation (Branch: public)...\n`,
+          speed: 0,
+          eta: null,
+          stage: 'Preparing',
+          speedBps: 0,
+          avgSpeedBps: 0,
+          peakSpeedBps: 0,
+          diskWriteSpeedBps: 0,
+          diskReadSpeedBps: 0,
+          cdnServer: 'Connecting...',
+          elapsedSeconds: 0,
+        });
+        try {
+          await tauriCommands.startServerInstallation(server.id, 'public');
+          showNotification('success', 'Starting automatic server files installation...');
+        } catch (installErr: any) {
+          setInstallState(server.id, { isInstalling: false });
+          showNotification('error', `Failed to start auto-installation: ${installErr}`);
+        }
+      }
     } catch (e: any) {
       showNotification('error', `Failed to create server: ${e}`);
     } finally {

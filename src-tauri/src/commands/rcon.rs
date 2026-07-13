@@ -78,6 +78,27 @@ pub async fn rcon_connect(
         ).map_err(|e| format!("Server not found: {}", e))?
     };
 
+    // Check if the server is running (if it is a local server)
+    let (is_remote, status) = {
+        let db = app_state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        conn.query_row(
+            "SELECT is_remote, status FROM servers WHERE id = ?1",
+            [server_id],
+            |row| Ok((
+                row.get::<_, i32>(0).unwrap_or(0) != 0,
+                row.get::<_, String>(1).unwrap_or_else(|_| "stopped".to_string())
+            )),
+        ).map_err(|e| format!("Server not found: {}", e))?
+    };
+
+    if !is_remote {
+        let is_running = app_state.process_manager.is_server_running(server_id);
+        if !is_running || (status != "running" && status != "starting" && status != "online") {
+            return Err("Cannot connect to RCON console because the server is not running. Please start the server first.".to_string());
+        }
+    }
+
     // Check if the admin password was changed while the server is running
     if let Some(launched_password) = app_state.process_manager.get_launched_admin_password(server_id) {
         if launched_password != admin_password {

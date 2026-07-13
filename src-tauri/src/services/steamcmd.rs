@@ -6,6 +6,7 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 use anyhow::{Result, Context};
+use crate::AppState;
 
 const PALWORLD_SERVER_APP_ID: &str = "2394010";
 const STEAMCMD_URL: &str = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
@@ -72,7 +73,24 @@ impl SteamCmdService {
 
     /// Install or update Palworld Dedicated Server
     pub async fn install_palworld_server(&self, app_handle: tauri::AppHandle, install_path: &str, branch: Option<&str>) -> Result<String> {
-        let steamcmd_exe = self.get_steamcmd_exe();
+        use tauri::Manager;
+        let state = app_handle.try_state::<AppState>();
+        let custom_path: Option<String> = state.as_ref().and_then(|s| {
+            if let Ok(db) = s.db.lock() {
+                db.get_setting("steamcmd_path").unwrap_or(None)
+            } else {
+                None
+            }
+        });
+        let steamcmd_exe = if let Some(path) = custom_path {
+            if !path.trim().is_empty() {
+                PathBuf::from(path)
+            } else {
+                self.get_steamcmd_exe()
+            }
+        } else {
+            self.get_steamcmd_exe()
+        };
         if !steamcmd_exe.exists() {
             anyhow::bail!("SteamCMD not installed. Please install SteamCMD first.");
         }

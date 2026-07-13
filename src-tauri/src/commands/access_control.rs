@@ -76,9 +76,13 @@ pub async fn remove_ban(
     let content = std::fs::read_to_string(&ban_file)
         .map_err(|e| format!("Failed to read banlist.txt: {}", e))?;
     
+    let target_id = steam_id.trim().replace("steam_", "");
     let filtered: Vec<&str> = content
         .lines()
-        .filter(|line| line.trim() != steam_id.trim())
+        .filter(|line| {
+            let l = line.trim().replace("steam_", "");
+            l != target_id && !l.is_empty()
+        })
         .collect();
     
     let mut file = std::fs::File::create(&ban_file)
@@ -118,10 +122,19 @@ pub async fn add_to_ban_list(
 
     let ban_file = ban_dir.join("banlist.txt");
 
+    let formatted_id = if steam_id.trim().starts_with("steam_") {
+        steam_id.trim().to_string()
+    } else {
+        format!("steam_{}", steam_id.trim())
+    };
+
     // Check if already banned
     if ban_file.exists() {
         let content = std::fs::read_to_string(&ban_file).unwrap_or_default();
-        if content.lines().any(|line| line.trim() == steam_id.trim()) {
+        if content.lines().any(|line| {
+            let l = line.trim().replace("steam_", "");
+            l == formatted_id.replace("steam_", "")
+        }) {
             return Ok(()); // Already banned
         }
     }
@@ -132,7 +145,7 @@ pub async fn add_to_ban_list(
         .open(&ban_file)
         .map_err(|e| format!("Failed to open banlist.txt: {}", e))?;
     
-    writeln!(file, "{}", steam_id.trim()).map_err(|e| format!("Write error: {}", e))?;
+    writeln!(file, "{}", formatted_id).map_err(|e| format!("Write error: {}", e))?;
     Ok(())
 }
 

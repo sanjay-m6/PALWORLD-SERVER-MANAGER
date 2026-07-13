@@ -95,17 +95,18 @@ impl ConfigGenerator {
     fn preset_performance() -> PalworldConfig {
         PalworldConfig {
             pal_spawn_num_rate: 0.7,
-            drop_item_max_num: 1500,
+            drop_item_max_num: 800,
             base_camp_max_num: 64,
             base_camp_worker_max_num: 10,
             drop_item_alive_max_hours: 0.5,
             server_player_max_num: 16,
+            enable_invader_enemy: false,
             ..PalworldConfig::default()
         }
     }
 
     /// Write the complete PalWorldSettings.ini to disk
-    pub fn write_config(install_path: &str, config: &PalworldConfig) -> Result<(), String> {
+    pub fn write_config(install_path: &str, config: &PalworldConfig, optimize_ram: bool) -> Result<(), String> {
         let settings_path = Self::get_settings_path(install_path);
         let mut settings_map = if settings_path.exists() {
             crate::services::ini_parser::read_settings_file(&settings_path).unwrap_or_default()
@@ -118,7 +119,109 @@ impl ConfigGenerator {
             settings_map.insert(k, v);
         }
 
-        crate::services::ini_parser::write_settings_file(&settings_path, &settings_map)
+        crate::services::ini_parser::write_settings_file(&settings_path, &settings_map)?;
+
+        // Automatically optimize Engine.ini as well
+        let _ = Self::optimize_engine_ini(install_path, optimize_ram);
+
+        Ok(())
+    }
+
+    /// Automatically configure garbage collection settings in Engine.ini to reduce memory leaks/usage
+    pub fn optimize_engine_ini(install_path: &str, optimize: bool) -> Result<(), String> {
+        let engine_ini_path = PathBuf::from(install_path)
+            .join("Pal")
+            .join("Saved")
+            .join("Config")
+            .join("WindowsServer")
+            .join("Engine.ini");
+
+        // If file doesn't exist and we want to disable optimizations, we don't need to do anything
+        if !engine_ini_path.exists() && !optimize {
+            return Ok(());
+        }
+
+        // Create parent directories if they don't exist
+        if let Some(parent) = engine_ini_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
+
+        let content = if engine_ini_path.exists() {
+            std::fs::read_to_string(&engine_ini_path)
+                .map_err(|e| format!("Failed to read Engine.ini: {}", e))?
+        } else {
+            String::new()
+        };
+
+        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let section_header = "[/Script/Engine.GarbageCollectionSettings]";
+        
+        let mut section_index = None;
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim() == section_header {
+                section_index = Some(i);
+                break;
+            }
+        }
+
+        if optimize {
+            let gc_settings = vec![
+                "gc.NumObjectsPerFrame=2000".to_string(),
+                "gc.TimeBetweenPurgingPendingKillObjects=30".to_string(),
+                "gc.MaxObjectsNotConsideredByGC=1".to_string(),
+            ];
+
+            if let Some(idx) = section_index {
+                // Find where this section ends (either next section `[` or end of file)
+                let mut end_idx = idx + 1;
+                while end_idx < lines.len() {
+                    let trimmed = lines[end_idx].trim();
+                    if trimmed.starts_with('[') {
+                        break;
+                    }
+                    end_idx += 1;
+                }
+                
+                // Remove old settings in this section
+                lines.drain(idx + 1..end_idx);
+                
+                // Insert new settings
+                for (offset, setting) in gc_settings.iter().enumerate() {
+                    lines.insert(idx + 1 + offset, setting.clone());
+                }
+            } else {
+                // Section not found, append it to the end
+                if !lines.is_empty() && !lines.last().unwrap().trim().is_empty() {
+                    lines.push(String::new());
+                }
+                lines.push(section_header.to_string());
+                for setting in gc_settings {
+                    lines.push(setting);
+                }
+            }
+        } else {
+            // Remove section if it exists
+            if let Some(idx) = section_index {
+                let mut end_idx = idx + 1;
+                while end_idx < lines.len() {
+                    let trimmed = lines[end_idx].trim();
+                    if trimmed.starts_with('[') {
+                        break;
+                    }
+                    end_idx += 1;
+                }
+                // Drain the section header and settings
+                lines.drain(idx..end_idx);
+            }
+        }
+
+        let new_content = lines.join("\n");
+        std::fs::write(&engine_ini_path, new_content)
+            .map_err(|e| format!("Failed to write Engine.ini: {}", e))?;
+
+        log::info!("[CONFIG] Updated Engine.ini (optimize: {}) at {}", optimize, engine_ini_path.display());
+        Ok(())
     }
 
     /// Read the current config from disk

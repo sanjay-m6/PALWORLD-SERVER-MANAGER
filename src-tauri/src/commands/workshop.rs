@@ -31,12 +31,48 @@ pub async fn download_workshop_mod(
         ).map_err(|e| format!("Server not found: {}", e))?
     };
 
-    // Palworld app ID for dedicated server
-    let app_id = "1623730"; // Palworld dedicated server workshop
+    // Query Steam Web API to find the consumer_app_id of this workshop item
+    let mut app_id = "1623730".to_string();
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .build();
+        
+    if let Ok(client) = client {
+        let body = format!("itemcount=1&publishedfileids[0]={}", workshop_id);
+        if let Ok(resp) = client.post("https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/")
+            .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await 
+        {
+            let json: Result<serde_json::Value, _> = resp.json().await;
+            if let Ok(json_val) = json {
+                if let Some(details) = json_val["response"]["publishedfiledetails"].as_array() {
+                    if let Some(item) = details.first() {
+                        if let Some(consumer_app_id) = item["consumer_app_id"].as_i64() {
+                            app_id = consumer_app_id.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     // Run SteamCMD to download the workshop item
-    let steamcmd_dir = state.steamcmd.get_steamcmd_dir();
-    let steamcmd_exe = state.steamcmd.get_steamcmd_exe();
+    let (steamcmd_exe, steamcmd_dir) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(path)) = db.get_setting("steamcmd_path") {
+            if !path.trim().is_empty() {
+                let exe = std::path::PathBuf::from(path);
+                let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| state.steamcmd.get_steamcmd_dir());
+                (exe, dir)
+            } else {
+                (state.steamcmd.get_steamcmd_exe(), state.steamcmd.get_steamcmd_dir())
+            }
+        } else {
+            (state.steamcmd.get_steamcmd_exe(), state.steamcmd.get_steamcmd_dir())
+        }
+    };
 
     if !steamcmd_exe.exists() {
         return Ok(WorkshopDownloadResult {
@@ -46,14 +82,25 @@ pub async fn download_workshop_mod(
         });
     }
 
-    log::info!("[WORKSHOP] Downloading workshop item {} for server {}", workshop_id, server_id);
+    let steam_username = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_setting("steam_username").unwrap_or(None)
+    };
+    let login_user = steam_username
+        .as_ref()
+        .filter(|u| !u.trim().is_empty())
+        .map(|u| u.as_str())
+        .unwrap_or("anonymous");
+
+    log::info!("[WORKSHOP] Downloading workshop item {} for server {} using login {}", workshop_id, server_id, login_user);
 
     let mut cmd = tokio::process::Command::new(&steamcmd_exe);
     cmd.args([
-        "+login", "anonymous",
-        "+workshop_download_item", app_id, &workshop_id,
+        "+login", login_user,
+        "+workshop_download_item", &app_id, &workshop_id,
         "+quit",
     ]);
+    cmd.stdin(std::process::Stdio::null());
 
     #[cfg(target_os = "windows")]
     {
@@ -73,7 +120,7 @@ pub async fn download_workshop_mod(
         .join("steamapps")
         .join("workshop")
         .join("content")
-        .join(app_id)
+        .join(&app_id)
         .join(&workshop_id);
 
     let mut resolved_content_dir = None;
@@ -84,15 +131,15 @@ pub async fn download_workshop_mod(
     } else {
         // Fallback: Check all local Steam client library directories
         let mut paths_to_check = Vec::new();
-        for lib_dir in get_all_steam_library_workshop_dirs() {
+        for lib_dir in get_all_steam_library_workshop_dirs(&app_id) {
             paths_to_check.push(lib_dir.join(&workshop_id));
         }
 
         // Also add common fallback paths as a last resort
-        paths_to_check.push(std::path::PathBuf::from("C:\\Program Files (x86)\\Steam\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
-        paths_to_check.push(std::path::PathBuf::from("C:\\Program Files\\Steam\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
-        paths_to_check.push(std::path::PathBuf::from("D:\\SteamLibrary\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
-        paths_to_check.push(std::path::PathBuf::from("E:\\SteamLibrary\\steamapps\\workshop\\content\\1623730").join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from(format!("C:\\Program Files (x86)\\Steam\\steamapps\\workshop\\content\\{}", app_id)).join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from(format!("C:\\Program Files\\Steam\\steamapps\\workshop\\content\\{}", app_id)).join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from(format!("D:\\SteamLibrary\\steamapps\\workshop\\content\\{}", app_id)).join(&workshop_id));
+        paths_to_check.push(std::path::PathBuf::from(format!("E:\\SteamLibrary\\steamapps\\workshop\\content\\{}", app_id)).join(&workshop_id));
 
         for path in paths_to_check {
             if path.exists() {
@@ -155,8 +202,15 @@ pub async fn download_workshop_mod(
                     
                     if is_logic {
                         if let Some(rule) = info.get_mut("InstallRule") {
-                            rule["Paks"] = serde_json::json!(Vec::<String>::new());
-                            rule["LogicMods"] = serde_json::json!(paks);
+                            if rule.is_object() {
+                                rule["Paks"] = serde_json::json!(Vec::<String>::new());
+                                rule["LogicMods"] = serde_json::json!(paks);
+                            } else {
+                                info["InstallRule"] = serde_json::json!({
+                                    "Paks": Vec::<String>::new(),
+                                    "LogicMods": paks
+                                });
+                            }
                         } else {
                             info["InstallRule"] = serde_json::json!({
                                 "Paks": Vec::<String>::new(),
@@ -165,8 +219,15 @@ pub async fn download_workshop_mod(
                         }
                     } else {
                         if let Some(rule) = info.get_mut("InstallRule") {
-                            rule["Paks"] = serde_json::json!(paks);
-                            rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                            if rule.is_object() {
+                                rule["Paks"] = serde_json::json!(paks);
+                                rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                            } else {
+                                info["InstallRule"] = serde_json::json!({
+                                    "Paks": paks,
+                                    "LogicMods": Vec::<String>::new()
+                                });
+                            }
                         } else {
                             info["InstallRule"] = serde_json::json!({
                                 "Paks": paks,
@@ -285,9 +346,38 @@ pub async fn download_workshop_mod(
         }
     } else {
         log::error!("[WORKSHOP] Download failed. SteamCMD output: {}", stdout);
+        
+        let custom_msg = if stdout.contains("Steam Guard") || stdout.contains("Two-Factor") || stderr.contains("Steam Guard") || stderr.contains("Two-Factor") {
+            format!(
+                "Failed to download workshop item {}. SteamCMD requires a Steam Guard code. \
+                Please log in manually once in your server's terminal by running:\n\
+                steamcmd.exe +login {}\n\
+                and enter your password/Steam Guard code to cache your credentials.",
+                workshop_id, login_user
+            )
+        } else if stdout.contains("login failed") || stdout.contains("Login Failed") || stderr.contains("login failed") || stderr.contains("Login Failed") {
+            format!(
+                "Failed to download workshop item {}. SteamCMD login failed for user '{}'. \
+                Please verify your username or run SteamCMD manually to cache valid credentials.",
+                workshop_id, login_user
+            )
+        } else if login_user == "anonymous" {
+            format!(
+                "Failed to download workshop item {}. Paid games like Palworld do not support anonymous downloads. \
+                Please enter your Steam username in the Settings tab, log in once via SteamCMD to cache credentials, or subscribe to the mod in your Steam client to import it locally.",
+                workshop_id
+            )
+        } else {
+            format!(
+                "Failed to download workshop item {}. Paid games require owning the game on the account logged into SteamCMD. \
+                SteamCMD output:\n{}\n{}",
+                workshop_id, stdout, stderr
+            )
+        };
+
         Ok(WorkshopDownloadResult {
             success: false,
-            message: format!("Failed to download workshop item {}. Paid games require owning the game on the account logged into SteamCMD. To download, please subscribe to this mod in your Steam client, then try installing again.\n\nSteamCMD output:\n{}", workshop_id, stderr),
+            message: custom_msg,
             mod_name: None,
         })
     }
@@ -443,7 +533,7 @@ pub fn find_info_json(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     None
 }
 
-fn get_all_steam_library_workshop_dirs() -> Vec<std::path::PathBuf> {
+fn get_all_steam_library_workshop_dirs(app_id: &str) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
     
     // Get primary steam directory from registry
@@ -472,7 +562,7 @@ fn get_all_steam_library_workshop_dirs() -> Vec<std::path::PathBuf> {
 
     if let Some(steam_dir) = primary_steam_dir {
         // 1. Add the primary steam workshop folder
-        dirs.push(steam_dir.join("steamapps").join("workshop").join("content").join("1623730"));
+        dirs.push(steam_dir.join("steamapps").join("workshop").join("content").join(app_id));
 
         // 2. Read libraryfolders.vdf to find secondary libraries
         let vdf_path = steam_dir.join("steamapps").join("libraryfolders.vdf");
@@ -487,7 +577,7 @@ fn get_all_steam_library_workshop_dirs() -> Vec<std::path::PathBuf> {
                             let path_str = parts[3].replace("\\\\", "\\");
                             let path = std::path::PathBuf::from(path_str);
                             if path.exists() {
-                                dirs.push(path.join("steamapps").join("workshop").join("content").join("1623730"));
+                                dirs.push(path.join("steamapps").join("workshop").join("content").join(app_id));
                             }
                         }
                     }

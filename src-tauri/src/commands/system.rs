@@ -55,7 +55,79 @@ pub async fn get_local_ip() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn check_steamcmd_installed(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state.steamcmd.is_installed())
+    let has_custom = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(path)) = db.get_setting("steamcmd_path") {
+            if !path.trim().is_empty() {
+                Some(std::path::PathBuf::from(path).exists())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    if let Some(exists) = has_custom {
+        Ok(exists)
+    } else {
+        Ok(state.steamcmd.is_installed())
+    }
+}
+
+#[tauri::command]
+pub async fn detect_steamcmd(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    // 1. Search the PATH environment variable
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for path_dir in std::env::split_paths(&path_var) {
+            let exe_path = path_dir.join("steamcmd.exe");
+            if exe_path.exists() {
+                return Ok(Some(exe_path.to_string_lossy().to_string()));
+            }
+            let exe_path_no_ext = path_dir.join("steamcmd");
+            if exe_path_no_ext.exists() {
+                return Ok(Some(exe_path_no_ext.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    // 2. Check common Windows installation paths
+    let common_paths = vec![
+        "C:\\steamcmd\\steamcmd.exe",
+        "C:\\Program Files (x86)\\SteamCMD\\steamcmd.exe",
+        "C:\\Program Files\\SteamCMD\\steamcmd.exe",
+    ];
+
+    for path in common_paths {
+        let p = std::path::Path::new(path);
+        if p.exists() {
+            return Ok(Some(p.to_string_lossy().to_string()));
+        }
+    }
+
+    // 3. Check user profile paths
+    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+        let profile_path = std::path::PathBuf::from(user_profile);
+        let user_common_paths = vec![
+            profile_path.join("steamcmd").join("steamcmd.exe"),
+            profile_path.join("Downloads").join("steamcmd").join("steamcmd.exe"),
+            profile_path.join("Downloads").join("steamcmd.exe"),
+            profile_path.join("AppData").join("Local").join("SteamCMD").join("steamcmd.exe"),
+        ];
+
+        for p in user_common_paths {
+            if p.exists() {
+                return Ok(Some(p.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    // 4. Default app-managed location
+    let default_exe = state.steamcmd.get_steamcmd_exe();
+    if default_exe.exists() {
+        return Ok(Some(default_exe.to_string_lossy().to_string()));
+    }
+
+    Ok(None)
 }
 
 #[tauri::command]
@@ -223,19 +295,37 @@ pub async fn list_installed_mods(state: State<'_, AppState>, server_id: i64) -> 
 
     let base_path = std::path::PathBuf::from(&install_path);
     let paks_dir = base_path.join("Pal").join("Content").join("Paks");
+    let tilde_mods_dir = paks_dir.join("~mods");
     let logic_mods_dir = paks_dir.join("LogicMods");
 
-    let mut mods = Vec::new();
-
-    // 1. Regular Paks
+    // Automatically migrate any custom .pak or .pak.disabled files from root Paks folder to Paks/~mods
     if paks_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&paks_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
                     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-                    // Skip base game files!
-                    if file_name.ends_with(".pak") && !file_name.starts_with("Pal-") {
+                    if (file_name.ends_with(".pak") || file_name.ends_with(".pak.disabled")) && !file_name.starts_with("Pal-") {
+                        let _ = std::fs::create_dir_all(&tilde_mods_dir);
+                        let dest_path = tilde_mods_dir.join(&*file_name);
+                        log::info!("[MIGRATION] Moving custom mod from Paks/ to Paks/~mods/: {:?}", file_name);
+                        let _ = std::fs::rename(&path, &dest_path);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut mods = Vec::new();
+
+    // 1. Regular Paks (in ~mods)
+    if tilde_mods_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&tilde_mods_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                    if file_name.ends_with(".pak") {
                         if let Ok(metadata) = entry.metadata() {
                             mods.push(ModItem {
                                 name: file_name.to_string(),
@@ -439,7 +529,7 @@ pub async fn install_mod(
     let dest_dir = if is_logic_mod {
         paks_dir.join("LogicMods")
     } else {
-        paks_dir
+        paks_dir.join("~mods")
     };
 
     std::fs::create_dir_all(&dest_dir).map_err(|e| format!("Failed to create mod directory: {}", e))?;
@@ -513,8 +603,15 @@ pub async fn install_mod(
                         
                         // Enforce logic mods installation rule
                         if let Some(rule) = info.get_mut("InstallRule") {
-                            rule["Paks"] = serde_json::json!(Vec::<String>::new());
-                            rule["LogicMods"] = serde_json::json!(paks);
+                            if rule.is_object() {
+                                rule["Paks"] = serde_json::json!(Vec::<String>::new());
+                                rule["LogicMods"] = serde_json::json!(paks);
+                            } else {
+                                info["InstallRule"] = serde_json::json!({
+                                    "Paks": Vec::<String>::new(),
+                                    "LogicMods": paks
+                                });
+                            }
                         } else {
                             info["InstallRule"] = serde_json::json!({
                                 "Paks": Vec::<String>::new(),
@@ -542,8 +639,15 @@ pub async fn install_mod(
                         }
                         
                         if let Some(rule) = info.get_mut("InstallRule") {
-                            rule["Paks"] = serde_json::json!(paks);
-                            rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                            if rule.is_object() {
+                                rule["Paks"] = serde_json::json!(paks);
+                                rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                            } else {
+                                info["InstallRule"] = serde_json::json!({
+                                    "Paks": paks,
+                                    "LogicMods": Vec::<String>::new()
+                                });
+                            }
                         } else {
                             info["InstallRule"] = serde_json::json!({
                                 "Paks": paks,
@@ -614,6 +718,8 @@ pub async fn install_mod(
 
             for pak_path in paks {
                 if let Some(fname) = pak_path.file_name() {
+                    let fname_str = fname.to_string_lossy();
+                    cleanup_old_versions(&dest_dir, &fname_str);
                     let dest_path = dest_dir.join(fname);
                     std::fs::copy(&pak_path, &dest_path)
                         .map_err(|e| format!("Failed to copy pak file: {}", e))?;
@@ -628,6 +734,7 @@ pub async fn install_mod(
         if !final_file_name.ends_with(".pak") {
             final_file_name = format!("{}.pak", final_file_name);
         }
+        cleanup_old_versions(&dest_dir, &final_file_name);
         let dest_path = dest_dir.join(&final_file_name);
         std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy mod file: {}", e))?;
     }
@@ -679,7 +786,7 @@ fn enable_mod_in_ini(ini_path: &std::path::Path, package_name: &str) -> Result<(
             .map_err(|e| format!("Failed to create Mods directory: {}", e))?;
     }
 
-    std::fs::write(ini_path, lines.join("\n") + "\n")
+    std::fs::write(ini_path, lines.join("\r\n") + "\r\n")
         .map_err(|e| format!("Failed to write PalModSettings.ini: {}", e))?;
 
     Ok(())
@@ -702,10 +809,81 @@ fn disable_mod_in_ini(ini_path: &std::path::Path, package_name: &str) -> Result<
         }
     }
 
-    std::fs::write(ini_path, lines.join("\n") + "\n")
+    std::fs::write(ini_path, lines.join("\r\n") + "\r\n")
         .map_err(|e| format!("Failed to write PalModSettings.ini: {}", e))?;
 
     Ok(())
+}
+
+fn undeploy_workshop_mod(install_path: &str, mod_name: &str) {
+    let manifest_path = std::path::PathBuf::from(install_path)
+        .join("Mods")
+        .join("ManagedMods")
+        .join(mod_name)
+        .join("InstallManifest.json");
+
+    if manifest_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                // Delete files
+                if let Some(files) = json.get("Files").and_then(|f| f.as_array()) {
+                    for file_val in files {
+                        if let Some(rel_path) = file_val.as_str() {
+                            if !rel_path.starts_with("Mods/ManagedMods/") && !rel_path.starts_with("Mods/Workshop/") {
+                                let abs_path = std::path::PathBuf::from(install_path).join(rel_path);
+                                if abs_path.exists() && abs_path.is_file() {
+                                    let _ = std::fs::remove_file(&abs_path);
+                                    log::info!("[MODS] Deleted deployed workshop file: {:?}", abs_path);
+                                }
+                            }
+                        }
+                    }
+                }
+                // Delete directories (in reverse order to delete children first)
+                if let Some(dirs) = json.get("Dirs").and_then(|d| d.as_array()) {
+                    for dir_val in dirs.iter().rev() {
+                        if let Some(rel_path) = dir_val.as_str() {
+                            if !rel_path.starts_with("Mods/ManagedMods/") && !rel_path.starts_with("Mods/Workshop/") {
+                                let abs_path = std::path::PathBuf::from(install_path).join(rel_path);
+                                if abs_path.exists() && abs_path.is_dir() {
+                                    let _ = std::fs::remove_dir(&abs_path);
+                                    log::info!("[MODS] Removed deployed workshop directory: {:?}", abs_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: Delete folder in ~WorkshopMods
+    let tilde_workshop_dir = std::path::PathBuf::from(install_path)
+        .join("Pal")
+        .join("Content")
+        .join("Paks")
+        .join("~WorkshopMods")
+        .join(mod_name);
+    if tilde_workshop_dir.exists() {
+        let _ = std::fs::remove_dir_all(&tilde_workshop_dir);
+        log::info!("[MODS] Deleted fallback workshop pak dir: {:?}", tilde_workshop_dir);
+    }
+
+    // Fallback: Delete LogicMod pak file
+    let logic_pak = std::path::PathBuf::from(install_path)
+        .join("Pal")
+        .join("Content")
+        .join("Paks")
+        .join("LogicMods")
+        .join(format!("{}.pak", mod_name));
+    if logic_pak.exists() {
+        let _ = std::fs::remove_file(&logic_pak);
+        log::info!("[MODS] Deleted fallback logic mod pak: {:?}", logic_pak);
+    }
+    let logic_json = logic_pak.with_extension("modconfig.json");
+    if logic_json.exists() {
+        let _ = std::fs::remove_file(&logic_json);
+    }
 }
 
 #[tauri::command]
@@ -717,6 +895,11 @@ pub async fn toggle_mod(
     enable: bool,
     is_workshop_mod: Option<bool>,
 ) -> Result<(), String> {
+    log::info!(
+        "[MODS] toggle_mod called: server_id={}, mod_name='{}', is_logic_mod={}, enable={}, is_workshop_mod={:?}",
+        server_id, mod_name, is_logic_mod, enable, is_workshop_mod
+    );
+
     let install_path = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.get_server_install_path(server_id)?
@@ -731,6 +914,16 @@ pub async fn toggle_mod(
             enable_mod_in_ini(&ini_path, &mod_name)?;
         } else {
             disable_mod_in_ini(&ini_path, &mod_name)?;
+            undeploy_workshop_mod(&install_path, &mod_name);
+        }
+        {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            let _ = db.insert_server_event(
+                server_id,
+                "mod_change",
+                &format!("Workshop Mod {} {}", mod_name, if enable { "enabled" } else { "disabled" }),
+                "Official Workshop Mod Settings",
+            );
         }
         return Ok(());
     }
@@ -740,7 +933,7 @@ pub async fn toggle_mod(
     let dest_dir = if is_logic_mod {
         paks_dir.join("LogicMods")
     } else {
-        paks_dir
+        paks_dir.join("~mods")
     };
 
     if enable {
@@ -755,6 +948,16 @@ pub async fn toggle_mod(
         if enabled_path.exists() {
             std::fs::rename(&enabled_path, &disabled_path).map_err(|e| format!("Failed to disable mod: {}", e))?;
         }
+    }
+
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.insert_server_event(
+            server_id,
+            "mod_change",
+            &format!("Mod {} {}", mod_name, if enable { "enabled" } else { "disabled" }),
+            &format!("Mod type: {}", if is_logic_mod { "Logic" } else { "Asset" }),
+        );
     }
 
     Ok(())
@@ -779,6 +982,9 @@ pub async fn delete_mod(
             .join("Mods")
             .join("PalModSettings.ini");
         disable_mod_in_ini(&ini_path, &mod_name)?;
+
+        // Undeploy the mod files from active game folder
+        undeploy_workshop_mod(&install_path, &mod_name);
 
         let workshop_dir = std::path::PathBuf::from(&install_path)
             .join("Mods")
@@ -807,6 +1013,24 @@ pub async fn delete_mod(
                 }
             }
         }
+
+        // Clean up the ManagedMods manifest directory
+        let managed_dir = std::path::PathBuf::from(&install_path)
+            .join("Mods")
+            .join("ManagedMods")
+            .join(&mod_name);
+        if managed_dir.exists() {
+            let _ = std::fs::remove_dir_all(&managed_dir);
+        }
+        {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            let _ = db.insert_server_event(
+                server_id,
+                "mod_change",
+                &format!("Deleted Workshop Mod {}", mod_name),
+                "Official Workshop Mod Settings",
+            );
+        }
         return Ok(());
     }
 
@@ -815,11 +1039,11 @@ pub async fn delete_mod(
     let dest_dir = if is_logic_mod {
         paks_dir.join("LogicMods")
     } else {
-        paks_dir
+        paks_dir.join("~mods")
     };
 
     let target_name = if enabled {
-        mod_name
+        mod_name.clone()
     } else {
         format!("{}.disabled", mod_name)
     };
@@ -827,6 +1051,16 @@ pub async fn delete_mod(
     let file_path = dest_dir.join(target_name);
     if file_path.exists() {
         std::fs::remove_file(file_path).map_err(|e| format!("Failed to delete mod file: {}", e))?;
+    }
+
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = db.insert_server_event(
+            server_id,
+            "mod_change",
+            &format!("Deleted Mod {}", mod_name),
+            &format!("Mod type: {}", if is_logic_mod { "Logic" } else { "Asset" }),
+        );
     }
 
     Ok(())
@@ -1233,8 +1467,15 @@ pub async fn download_and_install_mod_via_url(
                     
                     if is_logic_mod {
                         if let Some(rule) = info.get_mut("InstallRule") {
-                            rule["Paks"] = serde_json::json!(Vec::<String>::new());
-                            rule["LogicMods"] = serde_json::json!(paks);
+                            if rule.is_object() {
+                                rule["Paks"] = serde_json::json!(Vec::<String>::new());
+                                rule["LogicMods"] = serde_json::json!(paks);
+                            } else {
+                                info["InstallRule"] = serde_json::json!({
+                                    "Paks": Vec::<String>::new(),
+                                    "LogicMods": paks
+                                });
+                            }
                         } else {
                             info["InstallRule"] = serde_json::json!({
                                 "Paks": Vec::<String>::new(),
@@ -1243,8 +1484,15 @@ pub async fn download_and_install_mod_via_url(
                         }
                     } else {
                         if let Some(rule) = info.get_mut("InstallRule") {
-                            rule["Paks"] = serde_json::json!(paks);
-                            rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                            if rule.is_object() {
+                                rule["Paks"] = serde_json::json!(paks);
+                                rule["LogicMods"] = serde_json::json!(Vec::<String>::new());
+                            } else {
+                                info["InstallRule"] = serde_json::json!({
+                                    "Paks": paks,
+                                    "LogicMods": Vec::<String>::new()
+                                });
+                            }
                         } else {
                             info["InstallRule"] = serde_json::json!({
                                 "Paks": paks,
@@ -1365,6 +1613,234 @@ pub struct SearchResult {
     pub workshop_id: Option<String>,
 }
 
+async fn fetch_steam_workshop_details(client: &reqwest::Client, workshop_id: &str) -> Option<SearchResult> {
+    let body = format!("itemcount=1&publishedfileids[0]={}", workshop_id);
+    let resp: reqwest::Response = client.post("https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/")
+        .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .ok()?;
+    
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let details = json["response"]["publishedfiledetails"].as_array()?;
+    let item = details.first()?;
+    
+    let publishedfileid = item["publishedfileid"].as_str()?;
+    let result = item["result"].as_i64().unwrap_or(0);
+    
+    if publishedfileid.is_empty() || result != 1 {
+        return None;
+    }
+    
+    let title = item["title"].as_str().unwrap_or("").to_string();
+    let description = item["description"].as_str().unwrap_or("").to_string();
+    let raw_summary = item["short_description"].as_str()
+        .or(item["description"].as_str())
+        .unwrap_or("");
+    let summary = safe_truncate(raw_summary, 120);
+    
+    let downloads = item["subscriptions"].as_i64()
+        .or_else(|| item["subscriptions"].as_str().and_then(|s: &str| s.parse::<i64>().ok()))
+        .unwrap_or(0)
+        .to_string();
+    
+    let picture_url = item["preview_url"].as_str().map(|s: &str| s.to_string());
+    let url = format!("https://steamcommunity.com/sharedfiles/filedetails/?id={}", publishedfileid);
+    
+    Some(SearchResult {
+        name: format!("workshop_{}", publishedfileid),
+        title,
+        description,
+        summary,
+        author: "Workshop Creator".to_string(),
+        downloads,
+        rating: 4.8,
+        category: "Steam Workshop".to_string(),
+        compat: "v0.2.4.0+".to_string(),
+        source: "steam".to_string(),
+        url,
+        download_url: None,
+        picture_url,
+        workshop_id: Some(publishedfileid.to_string()),
+    })
+}
+
+async fn fetch_nexus_mod_details(client: &reqwest::Client, mod_id: i64, api_key: &str) -> Option<SearchResult> {
+    let url = format!("https://api.nexusmods.com/v1/games/palworld/mods/{}.json", mod_id);
+    let resp: reqwest::Response = client.get(&url).header("apikey", api_key).send().await.ok()?;
+    let mod_info: serde_json::Value = resp.json().await.ok()?;
+    
+    let name = mod_info["name"].as_str()?;
+    let summary = mod_info["summary"].as_str().unwrap_or("").to_string();
+    let description = mod_info["description"].as_str().unwrap_or("").to_string();
+    let author = mod_info["author"].as_str().unwrap_or("").to_string();
+    let downloads = mod_info["mod_downloads"].as_i64().unwrap_or(0).to_string();
+    let url = format!("https://www.nexusmods.com/palworld/mods/{}", mod_id);
+    let picture_url = mod_info["picture_url"].as_str().map(|s: &str| s.to_string());
+
+    Some(SearchResult {
+        name: format!("nexus_{}.pak", mod_id),
+        title: name.to_string(),
+        description,
+        summary: safe_truncate(&summary, 120),
+        author,
+        downloads,
+        rating: 4.8,
+        category: "Nexus Mods".to_string(),
+        compat: "v0.2.4.0+".to_string(),
+        source: "nexus".to_string(),
+        url,
+        download_url: None,
+        picture_url,
+        workshop_id: None,
+    })
+}
+
+async fn fetch_curseforge_mod_details(client: &reqwest::Client, mod_id: i64, api_key: &str) -> Option<SearchResult> {
+    let url = format!("https://api.curseforge.com/v1/mods/{}", mod_id);
+    let resp: reqwest::Response = client.get(&url).header("x-api-key", api_key).send().await.ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let item = &json["data"];
+    
+    let id = item["id"].as_i64()?;
+    let title = item["name"].as_str()?.to_string();
+    let raw_summary = item["summary"].as_str().unwrap_or("");
+    let summary = safe_truncate(raw_summary, 120);
+    let description = summary.clone();
+    
+    let author = item["authors"].as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|a| a["name"].as_str())
+        .unwrap_or("CurseForge Creator")
+        .to_string();
+    
+    let downloads = item["downloadCount"].as_i64().unwrap_or(0).to_string();
+    let picture_url = item["logo"]["url"].as_str().map(|s: &str| s.to_string());
+    let url = item["links"]["websiteUrl"].as_str()
+        .map(|s: &str| s.to_string())
+        .unwrap_or_else(|| format!("https://www.curseforge.com/palworld/mods/{}", id));
+
+    Some(SearchResult {
+        name: format!("curseforge_{}.pak", id),
+        title,
+        description,
+        summary,
+        author,
+        downloads,
+        rating: 4.8,
+        category: "CurseForge".to_string(),
+        compat: "v0.2.4.0+".to_string(),
+        source: "curseforge".to_string(),
+        url,
+        download_url: Some(id.to_string()),
+        picture_url,
+        workshop_id: None,
+    })
+}
+
+async fn fetch_curseforge_search_single(client: &reqwest::Client, slug: &str, api_key: &str) -> Option<SearchResult> {
+    let url = format!(
+        "https://api.curseforge.com/v1/mods/search?gameId=825597&searchFilter={}&pageSize=1",
+        urlencoding::encode(slug)
+    );
+    let resp: reqwest::Response = client.get(&url).header("x-api-key", api_key).send().await.ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let data = json["data"].as_array()?;
+    let item = data.first()?;
+    
+    let id = item["id"].as_i64()?;
+    let title = item["name"].as_str()?.to_string();
+    let raw_summary = item["summary"].as_str().unwrap_or("");
+    let summary = safe_truncate(raw_summary, 120);
+    let description = summary.clone();
+    
+    let author = item["authors"].as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|a| a["name"].as_str())
+        .unwrap_or("CurseForge Creator")
+        .to_string();
+    
+    let downloads = item["downloadCount"].as_i64().unwrap_or(0).to_string();
+    let picture_url = item["logo"]["url"].as_str().map(|s: &str| s.to_string());
+    let url = item["links"]["websiteUrl"].as_str()
+        .map(|s: &str| s.to_string())
+        .unwrap_or_else(|| format!("https://www.curseforge.com/palworld/mods/{}", id));
+
+    Some(SearchResult {
+        name: format!("curseforge_{}.pak", id),
+        title,
+        description,
+        summary,
+        author,
+        downloads,
+        rating: 4.8,
+        category: "CurseForge".to_string(),
+        compat: "v0.2.4.0+".to_string(),
+        source: "curseforge".to_string(),
+        url,
+        download_url: Some(id.to_string()),
+        picture_url,
+        workshop_id: None,
+    })
+}
+
+async fn fetch_modrinth_details(client: &reqwest::Client, slug_or_id: &str) -> Option<SearchResult> {
+    let url = format!("https://api.modrinth.com/v2/project/{}", slug_or_id);
+    let resp: reqwest::Response = client.get(&url)
+        .header("User-Agent", "PlaworldServerManager/1.0")
+        .send()
+        .await
+        .ok()?;
+    
+    let hit: serde_json::Value = resp.json().await.ok()?;
+    let title = hit["title"].as_str()?.to_string();
+    let downloads = hit["downloads"].as_i64().unwrap_or(0).to_string();
+    let desc = hit["description"].as_str().unwrap_or("").to_string();
+    let project_id = hit["id"].as_str().unwrap_or("").to_string();
+    let slug = hit["slug"].as_str().unwrap_or("").to_string();
+    let url = format!("https://modrinth.com/mod/{}", slug);
+    let picture_url = hit["icon_url"].as_str().map(|s: &str| s.to_string());
+    
+    let summary = safe_truncate(&desc, 120);
+
+    let mut download_url = None;
+    let versions_url = format!("https://api.modrinth.com/v2/project/{}/version", project_id);
+    if let Ok(v_resp) = client.get(&versions_url).send().await {
+        let v_json: Result<serde_json::Value, _> = v_resp.json().await;
+        if let Ok(v_json_val) = v_json {
+            if let Some(v_arr) = v_json_val.as_array() {
+                if let Some(latest_version) = v_arr.first() {
+                    if let Some(files) = latest_version["files"].as_array() {
+                        if let Some(file) = files.first() {
+                            if let Some(dl) = file["url"].as_str() {
+                                download_url = Some(dl.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(SearchResult {
+        name: format!("{}.pak", slug),
+        title,
+        description: desc,
+        summary,
+        author: "Modrinth Creator".to_string(),
+        downloads,
+        rating: 4.9,
+        category: "Modrinth".to_string(),
+        compat: "v0.2.4.0+".to_string(),
+        source: "modrinth".to_string(),
+        url,
+        download_url,
+        picture_url,
+        workshop_id: None,
+    })
+}
+
 #[tauri::command]
 pub async fn search_mods_online(
     state: State<'_, AppState>,
@@ -1392,12 +1868,23 @@ pub async fn search_mods_online(
         .map_err(|e| e.to_string())?;
 
     let query_trimmed = query.trim();
+    let is_numeric = query_trimmed.chars().all(|c| c.is_ascii_digit());
+    let is_url = query_trimmed.starts_with("http://") || query_trimmed.starts_with("https://") || query_trimmed.contains(".com/");
 
-    // 1. Search Nexus Mods (if API key provided)
-    if !api_key.is_empty() {
-        let mut searched_mod_id = None;
-        if let Ok(id) = query_trimmed.parse::<i64>() {
-            searched_mod_id = Some(id);
+    if is_url {
+        // Parse URLs
+        if query_trimmed.contains("steamcommunity.com/") {
+            if let Some(pos) = query_trimmed.find("id=") {
+                let id_str: String = query_trimmed[pos + 3..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+                if !id_str.is_empty() {
+                    if let Some(res) = fetch_steam_workshop_details(&client, &id_str).await {
+                        results.push(res);
+                    }
+                }
+            }
         } else if query_trimmed.contains("nexusmods.com/") {
             if let Some(pos) = query_trimmed.find("/mods/") {
                 let start = pos + 6;
@@ -1406,76 +1893,142 @@ pub async fn search_mods_online(
                     .take_while(|c| c.is_ascii_digit())
                     .collect();
                 if let Ok(id) = id_str.parse::<i64>() {
-                    searched_mod_id = Some(id);
-                }
-            }
-        }
-
-        if let Some(mod_id) = searched_mod_id {
-            let url = format!("https://api.nexusmods.com/v1/games/palworld/mods/{}.json", mod_id);
-            if let Ok(resp) = client.get(&url).header("apikey", &api_key).send().await {
-                if let Ok(mod_info) = resp.json::<serde_json::Value>().await {
-                    if let Some(name) = mod_info["name"].as_str() {
-                        let summary = mod_info["summary"].as_str().unwrap_or("").to_string();
-                        let description = mod_info["description"].as_str().unwrap_or("").to_string();
-                        let author = mod_info["author"].as_str().unwrap_or("").to_string();
-                        let downloads = mod_info["mod_downloads"].as_i64().unwrap_or(0).to_string();
-                        let url = format!("https://www.nexusmods.com/palworld/mods/{}", mod_id);
-                        let picture_url = mod_info["picture_url"].as_str().map(|s| s.to_string());
-
-                        results.push(SearchResult {
-                            name: format!("nexus_{}.pak", mod_id),
-                            title: name.to_string(),
-                            description,
-                            summary: safe_truncate(&summary, 120),
-                            author,
-                            downloads,
-                            rating: 4.8,
-                            category: "Nexus Mods".to_string(),
-                            compat: "v0.2.4.0+".to_string(),
-                            source: "nexus".to_string(),
-                            url,
-                            download_url: None,
-                            picture_url,
-                            workshop_id: None,
-                        });
+                    if !api_key.is_empty() {
+                        if let Some(res) = fetch_nexus_mod_details(&client, id, &api_key).await {
+                            results.push(res);
+                        }
                     }
                 }
             }
-        } else {
+        } else if query_trimmed.contains("modrinth.com/mod/") {
+            if let Some(pos) = query_trimmed.find("/mod/") {
+                let slug: String = query_trimmed[pos + 5..]
+                    .chars()
+                    .take_while(|c| c != &'?' && c != &'/')
+                    .collect();
+                if !slug.is_empty() {
+                    if let Some(res) = fetch_modrinth_details(&client, &slug).await {
+                        results.push(res);
+                    }
+                }
+            }
+        } else if query_trimmed.contains("curseforge.com/palworld/mods/") {
+            if let Some(pos) = query_trimmed.find("/mods/") {
+                let slug: String = query_trimmed[pos + 6..]
+                    .chars()
+                    .take_while(|c| c != &'?' && c != &'/')
+                    .collect();
+                if !slug.is_empty() && !curseforge_key.is_empty() {
+                    if let Some(res) = fetch_curseforge_search_single(&client, &slug, &curseforge_key).await {
+                        results.push(res);
+                    }
+                }
+            }
+        }
+    } else if is_numeric {
+        // Query by numeric IDs on all systems
+        
+        // 1. Steam Workshop ID (all numeric queries can be checked on Steam Workshop publicly)
+        if let Some(res) = fetch_steam_workshop_details(&client, query_trimmed).await {
+            results.push(res);
+        }
+        
+        // 2. Nexus Mod ID (requires api_key)
+        if !api_key.is_empty() {
+            if let Ok(id) = query_trimmed.parse::<i64>() {
+                if let Some(res) = fetch_nexus_mod_details(&client, id, &api_key).await {
+                    results.push(res);
+                }
+            }
+        }
+        
+        // 3. CurseForge Mod ID (requires curseforge_key)
+        if !curseforge_key.is_empty() {
+            if let Ok(id) = query_trimmed.parse::<i64>() {
+                if let Some(res) = fetch_curseforge_mod_details(&client, id, &curseforge_key).await {
+                    results.push(res);
+                }
+            }
+        }
+    } else {
+        // Fallback to text search across APIs
+        
+        // 1. Search Nexus Mods (if API key provided)
+        if !api_key.is_empty() {
             // Fetch popular mods
             let popular_url = "https://api.nexusmods.com/v1/games/palworld/mods/trending.json";
-        if let Ok(resp) = client.get(popular_url).header("apikey", &api_key).send().await {
-            if let Ok(arr) = resp.json::<serde_json::Value>().await {
-                if let Some(mods) = arr.as_array() {
-                    for m in mods {
-                        let name = m["name"].as_str().unwrap_or("");
-                        let summary = m["summary"].as_str().unwrap_or("");
-                        let description = m["description"].as_str().unwrap_or("");
-                        let author = m["author"].as_str().unwrap_or("");
-                        let mod_id = m["mod_id"].as_i64().unwrap_or(0);
-                        let picture_url = m["picture_url"].as_str().map(|s| s.to_string());
-                        
-                        let query_lower = query.to_lowercase();
-                        if query_lower == "pal" || name.to_lowercase().contains(&query_lower) || summary.to_lowercase().contains(&query_lower) {
-                            let item_name = format!("nexus_{}.pak", mod_id);
-                            if !results.iter().any(|r: &SearchResult| r.name == item_name) {
-                                results.push(SearchResult {
-                                    name: item_name,
-                                    title: name.to_string(),
-                                    description: description.to_string(),
-                                    summary: safe_truncate(summary, 120),
-                                    author: author.to_string(),
-                                    downloads: m["mod_downloads"].as_i64().unwrap_or(0).to_string(),
-                                    rating: 4.8,
-                                    category: "Nexus Mods".to_string(),
-                                    compat: "v0.2.4.0+".to_string(),
-                                    source: "nexus".to_string(),
-                                    url: format!("https://www.nexusmods.com/palworld/mods/{}", mod_id),
-                                    download_url: None,
-                                    picture_url,
-                                    workshop_id: None,
-                                });
+            if let Ok(resp) = client.get(popular_url).header("apikey", &api_key).send().await {
+                if let Ok(arr) = resp.json::<serde_json::Value>().await {
+                    if let Some(mods) = arr.as_array() {
+                        for m in mods {
+                            let name = m["name"].as_str().unwrap_or("");
+                            let summary = m["summary"].as_str().unwrap_or("");
+                            let description = m["description"].as_str().unwrap_or("");
+                            let author = m["author"].as_str().unwrap_or("");
+                            let mod_id = m["mod_id"].as_i64().unwrap_or(0);
+                            let picture_url = m["picture_url"].as_str().map(|s| s.to_string());
+                            
+                            let query_lower = query_trimmed.to_lowercase();
+                            if query_lower == "pal" || name.to_lowercase().contains(&query_lower) || summary.to_lowercase().contains(&query_lower) {
+                                let item_name = format!("nexus_{}.pak", mod_id);
+                                if !results.iter().any(|r: &SearchResult| r.name == item_name) {
+                                    results.push(SearchResult {
+                                        name: item_name,
+                                        title: name.to_string(),
+                                        description: description.to_string(),
+                                        summary: safe_truncate(summary, 120),
+                                        author: author.to_string(),
+                                        downloads: m["mod_downloads"].as_i64().unwrap_or(0).to_string(),
+                                        rating: 4.8,
+                                        category: "Nexus Mods".to_string(),
+                                        compat: "v0.2.4.0+".to_string(),
+                                        source: "nexus".to_string(),
+                                        url: format!("https://www.nexusmods.com/palworld/mods/{}", mod_id),
+                                        download_url: None,
+                                        picture_url,
+                                        workshop_id: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fetch latest added mods
+            let latest_url = "https://api.nexusmods.com/v1/games/palworld/mods/latestadded.json";
+            if let Ok(resp) = client.get(latest_url).header("apikey", &api_key).send().await {
+                if let Ok(arr) = resp.json::<serde_json::Value>().await {
+                    if let Some(mods) = arr.as_array() {
+                        for m in mods {
+                            let name = m["name"].as_str().unwrap_or("");
+                            let summary = m["summary"].as_str().unwrap_or("");
+                            let description = m["description"].as_str().unwrap_or("");
+                            let author = m["author"].as_str().unwrap_or("");
+                            let mod_id = m["mod_id"].as_i64().unwrap_or(0);
+                            let picture_url = m["picture_url"].as_str().map(|s| s.to_string());
+                            
+                            let query_lower = query_trimmed.to_lowercase();
+                            if query_lower == "pal" || name.to_lowercase().contains(&query_lower) || summary.to_lowercase().contains(&query_lower) {
+                                let item_name = format!("nexus_{}.pak", mod_id);
+                                if !results.iter().any(|r: &SearchResult| r.name == item_name) {
+                                    results.push(SearchResult {
+                                        name: item_name,
+                                        title: name.to_string(),
+                                        description: description.to_string(),
+                                        summary: safe_truncate(summary, 120),
+                                        author: author.to_string(),
+                                        downloads: m["mod_downloads"].as_i64().unwrap_or(0).to_string(),
+                                        rating: 4.8,
+                                        category: "Nexus Mods".to_string(),
+                                        compat: "v0.2.4.0+".to_string(),
+                                        source: "nexus".to_string(),
+                                        url: format!("https://www.nexusmods.com/palworld/mods/{}", mod_id),
+                                        download_url: None,
+                                        picture_url,
+                                        workshop_id: None,
+                                    });
+                                }
                             }
                         }
                     }
@@ -1483,213 +2036,172 @@ pub async fn search_mods_online(
             }
         }
 
-        // Fetch latest added mods
-        let latest_url = "https://api.nexusmods.com/v1/games/palworld/mods/latestadded.json";
-        if let Ok(resp) = client.get(latest_url).header("apikey", &api_key).send().await {
-            if let Ok(arr) = resp.json::<serde_json::Value>().await {
-                if let Some(mods) = arr.as_array() {
-                    for m in mods {
-                        let name = m["name"].as_str().unwrap_or("");
-                        let summary = m["summary"].as_str().unwrap_or("");
-                        let description = m["description"].as_str().unwrap_or("");
-                        let author = m["author"].as_str().unwrap_or("");
-                        let mod_id = m["mod_id"].as_i64().unwrap_or(0);
-                        let picture_url = m["picture_url"].as_str().map(|s| s.to_string());
+        // 2. Search Modrinth (Public API)
+        let modrinth_url = format!(
+            "https://api.modrinth.com/v2/search?query={}&facets=%5B%5B%22game:palworld%22%5D%5D",
+            urlencoding::encode(query_trimmed)
+        );
+        if let Ok(response) = client.get(&modrinth_url).send().await {
+            if let Ok(modrinth_res) = response.json::<serde_json::Value>().await {
+                if let Some(hits) = modrinth_res["hits"].as_array() {
+                    for hit in hits {
+                        let title = hit["title"].as_str().unwrap_or("").to_string();
+                        let author = hit["author"].as_str().unwrap_or("").to_string();
+                        let downloads = hit["downloads"].as_i64().unwrap_or(0).to_string();
+                        let desc = hit["description"].as_str().unwrap_or("").to_string();
+                        let project_id = hit["project_id"].as_str().unwrap_or("").to_string();
+                        let slug = hit["slug"].as_str().unwrap_or("").to_string();
+                        let url = format!("https://modrinth.com/mod/{}", slug);
+                        let picture_url = hit["icon_url"].as_str().map(|s| s.to_string());
                         
-                        let query_lower = query.to_lowercase();
-                        if query_lower == "pal" || name.to_lowercase().contains(&query_lower) || summary.to_lowercase().contains(&query_lower) {
-                            let item_name = format!("nexus_{}.pak", mod_id);
-                            if !results.iter().any(|r: &SearchResult| r.name == item_name) {
-                                results.push(SearchResult {
-                                    name: item_name,
-                                    title: name.to_string(),
-                                    description: description.to_string(),
-                                    summary: safe_truncate(summary, 120),
-                                    author: author.to_string(),
-                                    downloads: m["mod_downloads"].as_i64().unwrap_or(0).to_string(),
-                                    rating: 4.8,
-                                    category: "Nexus Mods".to_string(),
-                                    compat: "v0.2.4.0+".to_string(),
-                                    source: "nexus".to_string(),
-                                    url: format!("https://www.nexusmods.com/palworld/mods/{}", mod_id),
-                                    download_url: None,
-                                    picture_url,
-                                    workshop_id: None,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+                        let summary = safe_truncate(&desc, 120);
 
-    // 2. Search Modrinth (Public API)
-    let modrinth_url = format!(
-        "https://api.modrinth.com/v2/search?query={}&facets=%5B%5B%22game:palworld%22%5D%5D",
-        urlencoding::encode(&query)
-    );
-    if let Ok(response) = client.get(&modrinth_url).send().await {
-        if let Ok(modrinth_res) = response.json::<serde_json::Value>().await {
-            if let Some(hits) = modrinth_res["hits"].as_array() {
-                for hit in hits {
-                    let title = hit["title"].as_str().unwrap_or("").to_string();
-                    let author = hit["author"].as_str().unwrap_or("").to_string();
-                    let downloads = hit["downloads"].as_i64().unwrap_or(0).to_string();
-                    let desc = hit["description"].as_str().unwrap_or("").to_string();
-                    let project_id = hit["project_id"].as_str().unwrap_or("").to_string();
-                    let slug = hit["slug"].as_str().unwrap_or("").to_string();
-                    let url = format!("https://modrinth.com/mod/{}", slug);
-                    let picture_url = hit["icon_url"].as_str().map(|s| s.to_string());
-                    
-                    let summary = safe_truncate(&desc, 120);
-
-                    let mut download_url = None;
-                    let versions_url = format!("https://api.modrinth.com/v2/project/{}/version", project_id);
-                    if let Ok(v_resp) = client.get(&versions_url).send().await {
-                        if let Ok(v_json) = v_resp.json::<serde_json::Value>().await {
-                            if let Some(v_arr) = v_json.as_array() {
-                                if let Some(latest_version) = v_arr.first() {
-                                    if let Some(files) = latest_version["files"].as_array() {
-                                        if let Some(file) = files.first() {
-                                            if let Some(dl) = file["url"].as_str() {
-                                                download_url = Some(dl.to_string());
+                        let mut download_url = None;
+                        let versions_url = format!("https://api.modrinth.com/v2/project/{}/version", project_id);
+                        if let Ok(v_resp) = client.get(&versions_url).send().await {
+                            if let Ok(v_json) = v_resp.json::<serde_json::Value>().await {
+                                if let Some(v_arr) = v_json.as_array() {
+                                    if let Some(latest_version) = v_arr.first() {
+                                        if let Some(files) = latest_version["files"].as_array() {
+                                            if let Some(file) = files.first() {
+                                                if let Some(dl) = file["url"].as_str() {
+                                                    download_url = Some(dl.to_string());
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    results.push(SearchResult {
-                        name: format!("{}.pak", slug),
-                        title,
-                        description: desc,
-                        summary,
-                        author,
-                        downloads,
-                        rating: 4.9,
-                        category: "Modrinth".to_string(),
-                        compat: "v0.2.4.0+".to_string(),
-                        source: "modrinth".to_string(),
-                        url,
-                        download_url,
-                        picture_url,
-                        workshop_id: None,
-                    });
-                }
-            }
-        }
-    }
-
-    // 3. Search Steam Workshop (if API key provided)
-    if !steam_key.is_empty() {
-        let steam_url = format!(
-            "https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key={}&query_type=0&page=1&numperpage=20&appid=1623730&creator_appid=1623730&search_text={}&return_short_description=1&return_metadata=1",
-            steam_key,
-            urlencoding::encode(&query)
-        );
-
-        if let Ok(resp) = client.get(&steam_url).send().await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(details) = json["response"]["publishedfiledetails"].as_array() {
-                    for item in details {
-                        let publishedfileid = item["publishedfileid"].as_str().unwrap_or("");
-                        if publishedfileid.is_empty() {
-                            continue;
-                        }
-                        
-                        let title = item["title"].as_str().unwrap_or("").to_string();
-                        let description = item["description"].as_str().unwrap_or("").to_string();
-                        let raw_summary = item["short_description"].as_str()
-                            .or(item["description"].as_str())
-                            .unwrap_or("");
-                        let summary = safe_truncate(raw_summary, 120);
-                        
-                        let downloads = item["subscriptions"].as_i64()
-                            .or_else(|| item["subscriptions"].as_str().and_then(|s| s.parse().ok()))
-                            .unwrap_or(0)
-                            .to_string();
-                        
-                        let picture_url = item["preview_url"].as_str().map(|s| s.to_string());
-                        let url = format!("https://steamcommunity.com/sharedfiles/filedetails/?id={}", publishedfileid);
-                        
                         results.push(SearchResult {
-                            name: format!("workshop_{}", publishedfileid),
+                            name: format!("{}.pak", slug),
                             title,
-                            description,
-                            summary,
-                            author: "Workshop Creator".to_string(),
-                            downloads,
-                            rating: 4.8,
-                            category: "Steam Workshop".to_string(),
-                            compat: "v0.2.4.0+".to_string(),
-                            source: "steam".to_string(),
-                            url,
-                            download_url: None,
-                            picture_url,
-                            workshop_id: Some(publishedfileid.to_string()),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // 4. Search CurseForge (if API key provided)
-    if !curseforge_key.is_empty() {
-        let curseforge_url = format!(
-            "https://api.curseforge.com/v1/mods/search?gameId=825597&searchFilter={}&pageSize=20",
-            urlencoding::encode(&query)
-        );
-
-        if let Ok(resp) = client.get(&curseforge_url)
-            .header("x-api-key", &curseforge_key)
-            .send()
-            .await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(data) = json["data"].as_array() {
-                    for item in data {
-                        let id = item["id"].as_i64().unwrap_or(0);
-                        if id == 0 {
-                            continue;
-                        }
-                        
-                        let title = item["name"].as_str().unwrap_or("").to_string();
-                        let raw_summary = item["summary"].as_str().unwrap_or("");
-                        let summary = safe_truncate(raw_summary, 120);
-                        let description = summary.clone();
-                        
-                        let author = item["authors"].as_array()
-                            .and_then(|arr| arr.first())
-                            .and_then(|a| a["name"].as_str())
-                            .unwrap_or("CurseForge Creator")
-                            .to_string();
-                        
-                        let downloads = item["downloadCount"].as_i64().unwrap_or(0).to_string();
-                        let picture_url = item["logo"]["url"].as_str().map(|s| s.to_string());
-                        let url = item["links"]["websiteUrl"].as_str()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("https://www.curseforge.com/palworld/mods/{}", id));
-                        
-                        results.push(SearchResult {
-                            name: format!("curseforge_{}.pak", id),
-                            title,
-                            description,
+                            description: desc,
                             summary,
                             author,
                             downloads,
-                            rating: 4.8,
-                            category: "CurseForge".to_string(),
+                            rating: 4.9,
+                            category: "Modrinth".to_string(),
                             compat: "v0.2.4.0+".to_string(),
-                            source: "curseforge".to_string(),
+                            source: "modrinth".to_string(),
                             url,
-                            download_url: Some(id.to_string()),
+                            download_url,
                             picture_url,
                             workshop_id: None,
                         });
+                    }
+                }
+            }
+        }
+
+        // 3. Search Steam Workshop (if API key provided)
+        if !steam_key.is_empty() {
+            let steam_url = format!(
+                "https://api.steampowered.com/IPublishedFileService/QueryFiles/v1/?key={}&query_type=0&page=1&numperpage=20&appid=1623730&creator_appid=1623730&search_text={}&return_short_description=1&return_metadata=1",
+                steam_key,
+                urlencoding::encode(query_trimmed)
+            );
+
+            if let Ok(resp) = client.get(&steam_url).send().await {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(details) = json["response"]["publishedfiledetails"].as_array() {
+                        for item in details {
+                            let publishedfileid = item["publishedfileid"].as_str().unwrap_or("");
+                            if publishedfileid.is_empty() {
+                                continue;
+                            }
+                            
+                            let title = item["title"].as_str().unwrap_or("").to_string();
+                            let description = item["description"].as_str().unwrap_or("").to_string();
+                            let raw_summary = item["short_description"].as_str()
+                                .or(item["description"].as_str())
+                                .unwrap_or("");
+                            let summary = safe_truncate(raw_summary, 120);
+                            
+                            let downloads = item["subscriptions"].as_i64()
+                                .or_else(|| item["subscriptions"].as_str().and_then(|s| s.parse().ok()))
+                                .unwrap_or(0)
+                                .to_string();
+                            
+                            let picture_url = item["preview_url"].as_str().map(|s| s.to_string());
+                            let url = format!("https://steamcommunity.com/sharedfiles/filedetails/?id={}", publishedfileid);
+                            
+                            results.push(SearchResult {
+                                name: format!("workshop_{}", publishedfileid),
+                                title,
+                                description,
+                                summary,
+                                author: "Workshop Creator".to_string(),
+                                downloads,
+                                rating: 4.8,
+                                category: "Steam Workshop".to_string(),
+                                compat: "v0.2.4.0+".to_string(),
+                                source: "steam".to_string(),
+                                url,
+                                download_url: None,
+                                picture_url,
+                                workshop_id: Some(publishedfileid.to_string()),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Search CurseForge (if API key provided)
+        if !curseforge_key.is_empty() {
+            let curseforge_url = format!(
+                "https://api.curseforge.com/v1/mods/search?gameId=825597&searchFilter={}&pageSize=20",
+                urlencoding::encode(query_trimmed)
+            );
+
+            if let Ok(resp) = client.get(&curseforge_url)
+                .header("x-api-key", &curseforge_key)
+                .send()
+                .await {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(data) = json["data"].as_array() {
+                        for item in data {
+                            let id = item["id"].as_i64().unwrap_or(0);
+                            if id == 0 {
+                                continue;
+                            }
+                            
+                            let title = item["name"].as_str().unwrap_or("").to_string();
+                            let raw_summary = item["summary"].as_str().unwrap_or("");
+                            let summary = safe_truncate(raw_summary, 120);
+                            let description = summary.clone();
+                            
+                            let author = item["authors"].as_array()
+                                .and_then(|arr| arr.first())
+                                .and_then(|a| a["name"].as_str())
+                                .unwrap_or("CurseForge Creator")
+                                .to_string();
+                            
+                            let downloads = item["downloadCount"].as_i64().unwrap_or(0).to_string();
+                            let picture_url = item["logo"]["url"].as_str().map(|s| s.to_string());
+                            let url = item["links"]["websiteUrl"].as_str()
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| format!("https://www.curseforge.com/palworld/mods/{}", id));
+                            
+                            results.push(SearchResult {
+                                name: format!("curseforge_{}.pak", id),
+                                title,
+                                description,
+                                summary,
+                                author,
+                                downloads,
+                                rating: 4.8,
+                                category: "CurseForge".to_string(),
+                                compat: "v0.2.4.0+".to_string(),
+                                source: "curseforge".to_string(),
+                                url,
+                                download_url: Some(id.to_string()),
+                                picture_url,
+                                workshop_id: None,
+                            });
+                        }
                     }
                 }
             }
@@ -2234,7 +2746,82 @@ pub async fn save_pal_mod_settings(state: State<'_, AppState>, server_id: i64, c
     std::fs::write(ini_path, content).map_err(|e| format!("Failed to write PalModSettings.ini: {}", e))
 }
 
+fn get_mod_base_name(filename: &str) -> String {
+    let name_without_ext = filename.strip_suffix(".pak").unwrap_or(filename);
+    let name_without_disabled = name_without_ext.strip_suffix(".disabled").unwrap_or(name_without_ext);
+    let name_without_pak2 = name_without_disabled.strip_suffix(".pak").unwrap_or(name_without_disabled);
 
+    let mut chars: Vec<char> = name_without_pak2.chars().collect();
+    while !chars.is_empty() {
+        let last = chars[chars.len() - 1];
+        if last.is_numeric() || last == '.' || last == '-' || last == '_' || last == 'v' || last == 'V' {
+            chars.pop();
+        } else {
+            break;
+        }
+    }
+    
+    let base = chars.into_iter().collect::<String>();
+    if base.is_empty() {
+        name_without_pak2.to_string()
+    } else {
+        base
+    }
+}
 
+fn cleanup_old_versions(dest_dir: &std::path::Path, new_filename: &str) {
+    let new_base = get_mod_base_name(new_filename);
+    if let Ok(entries) = std::fs::read_dir(dest_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name_os) = path.file_name() {
+                    let name_str = name_os.to_string_lossy();
+                    if get_mod_base_name(&name_str) == new_base {
+                        log::info!("[MOD CLEANUP] Removing old/conflicting mod file: {:?}", path);
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+            }
+        }
+    }
+}
 
+const EDITABLE_EXTENSIONS: &[&str] = &[
+    ".json", ".ini", ".txt", ".lua", ".cfg", ".xml", ".yaml", ".yml", ".toml", ".log", ".md", ".csv",
+];
+
+fn is_editable_file(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    EDITABLE_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
+#[tauri::command]
+pub async fn read_mod_file_content(file_path: String) -> Result<String, String> {
+    if !is_editable_file(&file_path) {
+        return Err("This file type cannot be edited. Only text-based files (.json, .ini, .txt, .lua, .cfg, .xml, .yaml, .toml, .log) are supported.".to_string());
+    }
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        return Err("File does not exist.".to_string());
+    }
+    std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[tauri::command]
+pub async fn save_mod_file_content(file_path: String, content: String) -> Result<(), String> {
+    if !is_editable_file(&file_path) {
+        return Err("This file type cannot be edited. Only text-based files (.json, .ini, .txt, .lua, .cfg, .xml, .yaml, .toml, .log) are supported.".to_string());
+    }
+    let path = std::path::Path::new(&file_path);
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        }
+    }
+    std::fs::write(path, content)
+        .map_err(|e| format!("Failed to save file: {}", e))
+}
 

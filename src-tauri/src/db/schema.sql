@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS servers (
     host TEXT DEFAULT '127.0.0.1',
     is_remote INTEGER DEFAULT 0,
     auto_restart INTEGER DEFAULT 1,
-    run_as_admin INTEGER DEFAULT 0
+    run_as_admin INTEGER DEFAULT 1,
+    optimize_ram INTEGER DEFAULT 1
 );
 
 -- ─── Backups ────────────────────────────────────────────────────────────────

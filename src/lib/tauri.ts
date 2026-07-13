@@ -15,6 +15,8 @@ export const tauriCommands = {
   stopServer: (serverId: number, force: boolean) =>
     invoke<void>('stop_server', { serverId, force }),
   restartServer: (serverId: number) => invoke<void>('restart_server', { serverId }),
+  cloneServer: (serverId: number, newName: string, newInstallPath: string) =>
+    invoke<Server>('clone_server', { serverId, newName, newInstallPath }),
   getServerStatus: (serverId: number) =>
     invoke<{ isRunning: boolean; pid: number | null; uptimeSeconds: number | null; cpuUsage: number | null; memoryMb: number | null }>('get_server_status', { serverId }),
   updateServerBranch: (serverId: number, branch: string) =>
@@ -25,6 +27,10 @@ export const tauriCommands = {
     invoke<void>('update_server_auto_restart', { serverId, autoRestart }),
   updateServerRunAsAdmin: (serverId: number, runAsAdmin: boolean) =>
     invoke<void>('update_server_run_as_admin', { serverId, runAsAdmin }),
+  updateServerOptimizeRam: (serverId: number, optimizeRam: boolean) =>
+    invoke<void>('update_server_optimize_ram', { serverId, optimizeRam }),
+  clearServerCache: (serverId: number) =>
+    invoke<void>('clear_server_cache', { serverId }),
   wipeServer: (serverId: number, wipeSaves: boolean, wipeConfigs: boolean) =>
     invoke<void>('wipe_server', { serverId, wipeSaves, wipeConfigs }),
 
@@ -65,6 +71,14 @@ export const tauriCommands = {
   restoreBackup: (serverId: number, backupId: number) =>
     invoke<void>('restore_backup', { serverId, backupId }),
   deleteBackup: (backupId: number) => invoke<void>('delete_backup', { backupId }),
+  exportBackup: (backupId: number, destPath: string) =>
+    invoke<void>('export_backup', { backupId, destPath }),
+  importBackup: (serverId: number, sourcePath: string, label?: string) =>
+    invoke<any>('import_backup', { serverId, sourcePath, label }),
+  exportServerMigration: (serverId: number, destPath: string) =>
+    invoke<void>('export_server_migration', { serverId, destPath }),
+  importServerMigration: (zipPath: string, newInstallPath: string) =>
+    invoke<void>('import_server_migration', { zipPath, newInstallPath }),
 
   // System commands
   getSystemInfo: () => invoke<any>('get_system_info'),
@@ -111,6 +125,7 @@ export const tauriCommands = {
   getSetting: (key: string) => invoke<string | null>('get_setting', { key }),
   setSetting: (key: string, value: string) =>
     invoke<void>('set_setting', { key, value }),
+  detectSteamCmd: () => invoke<string | null>('detect_steamcmd'),
   setupFirewallRules: (serverId: number) =>
     invoke<void>('setup_firewall_rules', { serverId }),
   listInstalledMods: (serverId: number) =>
@@ -121,6 +136,10 @@ export const tauriCommands = {
     invoke<void>('save_pal_mod_settings', { serverId, content }),
   getModFiles: (modPath: string) =>
     invoke<string[]>('get_mod_files', { modPath }),
+  readModFileContent: (filePath: string) =>
+    invoke<string>('read_mod_file_content', { filePath }),
+  saveModFileContent: (filePath: string, content: string) =>
+    invoke<void>('save_mod_file_content', { filePath, content }),
   installMod: (serverId: number, sourceFilePath: string, isLogicMod: boolean) =>
     invoke<void>('install_mod', { serverId, sourceFilePath, isLogicMod }),
   toggleMod: (serverId: number, modName: string, isLogicMod: boolean, enable: boolean, isWorkshopMod?: boolean) =>
@@ -139,6 +158,10 @@ export const tauriCommands = {
     invoke<void>('restore_mod_snapshot', { serverId, snapshotId }),
   downloadAndInstallModViaUrl: (serverId: number, url: string, isLogicMod: boolean) =>
     invoke<void>('download_and_install_mod_via_url', { serverId, url, isLogicMod }),
+  checkModCompatibility: (serverId: number) =>
+    invoke<any[]>('check_mod_compatibility', { serverId }),
+  cleanModResidue: (serverId: number) =>
+    invoke<string>('clean_mod_residue', { serverId }),
   searchModsOnline: (query: string) =>
     invoke<any[]>('search_mods_online', { query }),
   downloadNexusModViaApi: (serverId: number, modId: number, apiKey: string, isLogicMod: boolean) =>

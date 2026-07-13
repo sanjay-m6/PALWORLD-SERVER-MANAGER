@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppStore, type ServerTab } from '../../stores/useAppStore';
+import { open } from '@tauri-apps/plugin-dialog';
 import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
 import { useI18nStore } from '../../lib/i18n';
 import { RconConsole } from '../tabs/RconConsole';
@@ -116,8 +117,17 @@ export const ServerDetail: React.FC = () => {
 
   const [liveStats, setLiveStats] = useState<any>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneInstallPath, setCloneInstallPath] = useState('');
+  const [isCloning, setIsCloning] = useState(false);
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [backupFirst, setBackupFirst] = useState(true);
+
+  // Mod compatibility warning states
+  const [showModWarningModal, setShowModWarningModal] = useState(false);
+  const [outdatedModsList, setOutdatedModsList] = useState<any[]>([]);
+  const [pendingStartAction, setPendingStartAction] = useState<(() => Promise<void>) | null>(null);
 
   const server = servers.find((s) => s.id === selectedServerId);
 
@@ -158,15 +168,35 @@ export const ServerDetail: React.FC = () => {
 
   const isActive = server.status === 'running' || server.status === 'online';
 
-  const handleStart = async () => {
+  const checkModCompatibilityAndRun = async (action: () => Promise<void>) => {
     try {
-      await tauriCommands.startServer(server.id);
-      showNotification('success', 'Server starting...');
-      const updated = await tauriCommands.getServers();
-      setServers(updated);
-    } catch (e: any) {
-      showNotification('error', `Start failed: ${e}`);
+      const compats = await tauriCommands.checkModCompatibility(server.id);
+      const outdated = compats.filter((m: any) => m.status === 'outdated');
+      if (outdated.length > 0) {
+        setOutdatedModsList(outdated);
+        setPendingStartAction(() => action);
+        setShowModWarningModal(true);
+      } else {
+        await action();
+      }
+    } catch (e) {
+      // Fallback: start server anyway if compatibility check fails
+      await action();
     }
+  };
+
+  const handleStart = async () => {
+    checkModCompatibilityAndRun(async () => {
+      try {
+        await tauriCommands.startServer(server.id);
+        showNotification('success', 'Server starting...');
+        setActiveServerTab('logs');
+        const updated = await tauriCommands.getServers();
+        setServers(updated);
+      } catch (e: any) {
+        showNotification('error', `Start failed: ${e}`);
+      }
+    });
   };
 
   const handleStop = async () => {
@@ -181,20 +211,74 @@ export const ServerDetail: React.FC = () => {
   };
 
   const handleRestart = async () => {
-    try {
-      await tauriCommands.restartServer(server.id);
-      showNotification('success', 'Server restarting...');
-      const updated = await tauriCommands.getServers();
-      setServers(updated);
-    } catch (e: any) {
-      showNotification('error', `Restart failed: ${e}`);
-    }
+    checkModCompatibilityAndRun(async () => {
+      try {
+        await tauriCommands.restartServer(server.id);
+        showNotification('success', 'Server restarting...');
+        setActiveServerTab('logs');
+        const updated = await tauriCommands.getServers();
+        setServers(updated);
+      } catch (e: any) {
+        showNotification('error', `Restart failed: ${e}`);
+      }
+    });
   };
 
   const handleDelete = () => {
     setDeleteFiles(false);
     setBackupFirst(true);
     setIsDeleteModalOpen(true);
+  };
+
+  const handleClone = () => {
+    setCloneName(`${server.name} - Clone`);
+    setCloneInstallPath(`${server.installPath}_clone`);
+    setIsCloneModalOpen(true);
+  };
+
+  const handleBrowseClonePath = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: cloneInstallPath || undefined,
+      });
+      if (selected && typeof selected === 'string') {
+        setCloneInstallPath(selected);
+      }
+    } catch (err) {
+      console.error('Failed to open directory dialog:', err);
+    }
+  };
+
+  const handleExecuteClone = async () => {
+    if (!cloneName.trim()) {
+      showNotification('error', 'Please enter a name for the clone');
+      return;
+    }
+    if (!cloneInstallPath.trim()) {
+      showNotification('error', 'Please enter/select a destination path');
+      return;
+    }
+
+    setIsCloning(true);
+    try {
+      showNotification('info', `Cloning server "${server.name}" to "${cloneName}"...`);
+      const newServer = await tauriCommands.cloneServer(server.id, cloneName.trim(), cloneInstallPath.trim());
+      showNotification('success', `Successfully cloned server to "${newServer.name}"!`);
+      
+      // Refresh servers in the store
+      const updated = await tauriCommands.getServers();
+      setServers(updated);
+      
+      // Close the modal and redirect to dashboard
+      setIsCloneModalOpen(false);
+      setCurrentView('dashboard');
+    } catch (err: any) {
+      showNotification('error', `Failed to clone server: ${err}`);
+    } finally {
+      setIsCloning(false);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -211,6 +295,16 @@ export const ServerDetail: React.FC = () => {
       setCurrentView('dashboard');
     } catch (e: any) {
       showNotification('error', `Delete failed: ${e}`);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (!confirm('Are you sure you want to clear the server cache? This will delete temporary logs, crash dumps, and SteamCMD appcache to resolve startup issues and free up disk space. Your game save data will NOT be affected.')) return;
+    try {
+      await tauriCommands.clearServerCache(server.id);
+      showNotification('success', 'Server cache cleared successfully.');
+    } catch (e: any) {
+      showNotification('error', `Failed to clear cache: ${e}`);
     }
   };
 
@@ -294,14 +388,20 @@ export const ServerDetail: React.FC = () => {
             <>
               <button
                 onClick={handleRestart}
-                className="px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-dark-200 hover:text-dark-100 bg-dark-800 hover:bg-dark-750 border border-dark-700/50 hover:border-dark-600 rounded-lg transition-all duration-200 active:scale-95"
+                className="group flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-dark-200 hover:text-dark-100 bg-dark-800 hover:bg-dark-750 border border-dark-700/50 hover:border-dark-600 rounded-lg transition-all duration-200 active:scale-95"
               >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5 transition-transform duration-700 ease-out group-hover:rotate-[360deg]">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
                 Restart
               </button>
               <button
                 onClick={handleStop}
-                className="btn-danger px-4 py-1.5 text-xs font-bold uppercase tracking-wider shadow-md active:scale-95 transition-all duration-200"
+                className="btn-danger group animate-danger-hover flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold uppercase tracking-wider shadow-md active:scale-95 transition-all duration-200"
               >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5 animate-warning-shake">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
+                </svg>
                 Stop Server
               </button>
             </>
@@ -314,6 +414,23 @@ export const ServerDetail: React.FC = () => {
               {server.status === 'starting' ? 'Starting...' : 'Start Server'}
             </button>
           )}
+          {!server.isRemote && (
+            <button
+              onClick={handleClearCache}
+              disabled={server.status === 'starting' || server.status === 'running'}
+              className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-warning-400 hover:text-warning-300 hover:bg-warning-500/10 border border-warning-500/25 hover:border-warning-500/40 rounded-lg transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+              title="Clear crash dumps, temporary logs, and SteamCMD cache to avoid crash loops and free up disk space"
+            >
+              Clear Cache
+            </button>
+          )}
+          <button
+            onClick={handleClone}
+            className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/25 hover:border-cyan-500/40 rounded-lg transition-all duration-200 active:scale-95"
+            title="Clone this server instance config, ports and saves"
+          >
+            Clone Server
+          </button>
           <button
             onClick={handleDelete}
             className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-error-400 hover:text-error-300 hover:bg-error-500/10 border border-error-500/20 hover:border-error-500/30 rounded-lg transition-all duration-200 active:scale-95"
@@ -349,47 +466,28 @@ export const ServerDetail: React.FC = () => {
       <div className="flex-1 overflow-hidden relative">
         {(server.status === 'starting' || server.status === 'stopping' || server.status === 'restarting' || server.status === 'updating') && (
           <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-dark-950/85 backdrop-blur-md animate-fade-in">
-            {/* Pulsing glow particle ring */}
-            <div className="relative w-24 h-24 flex items-center justify-center">
-              {/* Outer cyber ring */}
-              <div className={`absolute inset-0 rounded-full border-2 border-dashed ${
-                server.status === 'stopping' ? 'border-error-500/40 animate-spin-slow' : 'border-primary-500/40 animate-spin'
-              }`} />
-              <div className={`absolute inset-2.5 rounded-full border ${
-                server.status === 'stopping' ? 'border-red-400/20' : 'border-cyan-400/20'
-              } animate-ping`} />
-              
-              {/* Central icon */}
-              <div className="z-10">
-                {server.status === 'stopping' ? (
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-error-400 animate-pulse">
-                    <path d="M6 19h12V5H6v14z" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-primary-400 animate-pulse">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" />
-                  </svg>
-                )}
-              </div>
-            </div>
-
-            {/* Glowing Text status */}
-            <h2 className={`text-sm font-black tracking-widest mt-5 uppercase ${
-              server.status === 'stopping' ? 'text-error-400' : 'text-gradient-cyan'
-            }`}>
-              {server.status === 'starting' && 'Booting server nodes...'}
-              {server.status === 'stopping' && 'Terminating server process...'}
-              {server.status === 'restarting' && 'Rebooting system service...'}
-              {server.status === 'updating' && 'Downloading server updates...'}
-            </h2>
-            <p className="text-[9px] tracking-widest text-dark-500 uppercase font-bold mt-1.5 font-mono">
+            <RunningPal
+              size={96}
+              variant={
+                server.status === 'stopping' ? 'stopping' :
+                server.status === 'restarting' ? 'restarting' :
+                'running'
+              }
+              label={
+                server.status === 'starting' ? 'Booting server nodes...' :
+                server.status === 'stopping' ? 'Terminating server process...' :
+                server.status === 'restarting' ? 'Rebooting system service...' :
+                'Downloading server updates...'
+              }
+            />
+            <p className="text-[9px] tracking-widest text-dark-500 uppercase font-bold mt-2.5 font-mono">
               Please stand by. Spawning desktop console.
             </p>
           </div>
         )}
 
         <div className={activeServerTab === 'overview' ? 'h-full block' : 'hidden'}>
-          <OverviewTab key={server.id} server={server} stats={liveStats} />
+          <OverviewTab key={server.id} server={server} stats={liveStats} onStart={handleStart} onClearCache={handleClearCache} />
         </div>
         <div className={activeServerTab === 'config' ? 'h-full block' : 'hidden'}>
           <ConfigEditor key={server.id} serverId={server.id} />
@@ -496,13 +594,186 @@ export const ServerDetail: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Outdated Mods Warning Modal */}
+      {showModWarningModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md" 
+            onClick={() => setShowModWarningModal(false)} 
+          />
+          
+          {/* Content Card */}
+          <div className="relative glass-card border border-error-500/30 bg-dark-900/80 p-8 rounded-2xl shadow-2xl max-w-md w-full space-y-6 text-center animate-scale-in">
+            {/* Warning Icon */}
+            <div className="w-16 h-16 rounded-full bg-error-500/10 border border-error-500/20 text-error-400 mx-auto flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-8 h-8">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            
+            {/* Title */}
+            <div className="space-y-2">
+              <h2 className="text-md font-black uppercase text-error-400 tracking-wider">
+                Outdated Mods Detected!
+              </h2>
+              <p className="text-xs text-dark-400 leading-relaxed">
+                The following mods were updated prior to the last server game update. Running them on a multiplayer server can cause connection crashes or disconnects.
+              </p>
+            </div>
+
+            {/* List of outdated mods */}
+            <div className="max-h-40 overflow-y-auto space-y-1.5 p-2 bg-dark-950/40 border border-dark-800 rounded-xl text-left custom-scrollbar">
+              {outdatedModsList.map((m) => (
+                <div key={m.name} className="flex items-center justify-between text-[10px] text-dark-300">
+                  <span className="font-semibold truncate">{m.name}</span>
+                  <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-error-500/10 text-error-400 border border-error-500/20 flex-shrink-0 uppercase">
+                    Outdated
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={async () => {
+                  setShowModWarningModal(false);
+                  try {
+                    for (const m of outdatedModsList) {
+                      await tauriCommands.toggleMod(server.id, m.name, m.isLogicMod, false, m.isWorkshopMod);
+                    }
+                    showNotification('success', 'Outdated mods disabled.');
+                    if (pendingStartAction) {
+                      await pendingStartAction();
+                    }
+                  } catch (err) {
+                    showNotification('error', `Failed to disable mods: ${err}`);
+                  }
+                }}
+                className="w-full bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 hover:to-primary-400 text-white rounded-xl py-3 text-xs font-black uppercase tracking-wider shadow-lg active:scale-[0.98] transition-all"
+              >
+                Disable Mods & Continue
+              </button>
+              <button
+                onClick={async () => {
+                  setShowModWarningModal(false);
+                  if (pendingStartAction) {
+                    await pendingStartAction();
+                  }
+                }}
+                className="w-full bg-dark-800 hover:bg-dark-750 text-dark-200 border border-dark-700/60 rounded-xl py-2.5 text-xs font-bold transition-all"
+              >
+                Start Anyway (At Your Own Risk)
+              </button>
+              <button
+                onClick={() => setShowModWarningModal(false)}
+                className="w-full text-xs text-dark-500 hover:text-dark-300 font-bold uppercase tracking-wider transition-colors pt-1"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Clone Confirmation Modal */}
+      {isCloneModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity" 
+            onClick={() => setIsCloneModalOpen(false)} 
+          />
+          
+          {/* Modal Content */}
+          <div className="relative glass-card max-w-md w-full border border-cyan-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-6 animate-scale-in">
+            {/* Title */}
+            <div className="flex items-center gap-3 text-cyan-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-cyan-400">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
+                Clone Server Instance
+              </h2>
+            </div>
+            
+            {/* Body */}
+            <div className="space-y-4 pt-1">
+              <div>
+                <label className="text-[10px] text-dark-400 font-bold uppercase tracking-wider block mb-1.5">New Server Name</label>
+                <input
+                  type="text"
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.target.value)}
+                  className="input-field text-xs bg-dark-950 border-dark-800"
+                  placeholder="e.g. My Cloned Server"
+                  disabled={isCloning}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-dark-400 font-bold uppercase tracking-wider block mb-1.5">Destination Directory</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={cloneInstallPath}
+                    onChange={(e) => setCloneInstallPath(e.target.value)}
+                    className="input-field text-xs bg-dark-950 border-dark-800 flex-1"
+                    placeholder="C:\PalworldServers\MyClone"
+                    disabled={isCloning}
+                  />
+                  <button
+                    onClick={handleBrowseClonePath}
+                    disabled={isCloning}
+                    className="btn-ghost text-xs px-3 border border-dark-700/50 hover:bg-dark-800 font-semibold flex items-center justify-center gap-1.5"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-[9px] text-dark-500 mt-1">
+                  We will copy the save files and configs from the original server directory to this destination.
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setIsCloneModalOpen(false)}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200 transition-colors"
+                disabled={isCloning}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteClone}
+                disabled={isCloning}
+                className="bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2"
+              >
+                {isCloning ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+                    Cloning...
+                  </>
+                ) : (
+                  'Clone Instance'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 // ─── Overview Tab ───────────────────────────────────────────────────────────
 
-const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) => {
+const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onClearCache?: () => void }> = ({ server, stats, onStart, onClearCache }) => {
   const { showNotification, installStates, setInstallState, setServers } = useAppStore();
   const [steamcmdInstalled, setSteamcmdInstalled] = useState<boolean | null>(null);
   const [isInstallingSteamcmd, setIsInstallingSteamcmd] = useState(false);
@@ -520,12 +791,14 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
   const [autoStartEnabled, setAutoStartEnabled] = useState(server.autoStart ?? false);
   const [autoRestartEnabled, setAutoRestartEnabled] = useState(server.autoRestart ?? true);
   const [runAsAdminEnabled, setRunAsAdminEnabled] = useState(server.runAsAdmin ?? false);
+  const [optimizeRamEnabled, setOptimizeRamEnabled] = useState(server.optimizeRam ?? true);
 
   useEffect(() => {
     setAutoStartEnabled(server.autoStart ?? false);
     setAutoRestartEnabled(server.autoRestart ?? true);
     setRunAsAdminEnabled(server.runAsAdmin ?? false);
-  }, [server.autoStart, server.autoRestart, server.runAsAdmin]);
+    setOptimizeRamEnabled(server.optimizeRam ?? true);
+  }, [server.autoStart, server.autoRestart, server.runAsAdmin, server.optimizeRam]);
 
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [isRunningDiag, setIsRunningDiag] = useState(false);
@@ -937,21 +1210,51 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
           </>
         ) : (
           <div className="col-span-4 glass-card p-5 flex flex-col items-center justify-center bg-dark-900/10 border-dashed border-dark-800/40">
-            <span className={`px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-[0.2em] shadow-lg ${
-              server.status === 'starting'
-                ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 shadow-cyan-950/20 animate-pulse'
-                : server.status === 'stopping' || server.status === 'updating'
-                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-amber-950/20 animate-pulse'
-                : 'bg-error-500/10 text-error-400 border border-error-500/30 shadow-error-950/20'
-            }`}>
-              {server.status === 'starting' && '● Starting Server'}
-              {server.status === 'stopping' && '● Stopping Server'}
-              {server.status === 'updating' && '● Updating Server'}
-              {server.status !== 'starting' && server.status !== 'stopping' && server.status !== 'updating' && '● Server Offline'}
-            </span>
+            {(server.status === 'starting' || server.status === 'stopping' || server.status === 'restarting' || server.status === 'updating') ? (
+              <RunningPal
+                size={88}
+                variant={
+                  server.status === 'stopping' ? 'stopping' :
+                  server.status === 'restarting' ? 'restarting' :
+                  'running'
+                }
+                label={
+                  server.status === 'starting' ? 'Starting Server...' :
+                  server.status === 'stopping' ? 'Stopping Server...' :
+                  server.status === 'restarting' ? 'Restarting Server...' :
+                  'Updating Server...'
+                }
+              />
+            ) : (
+              <span className="px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-[0.2em] shadow-lg bg-error-500/10 text-error-400 border border-error-500/30 shadow-error-950/20">
+                ● Server Offline
+              </span>
+            )}
           </div>
         )}
       </div>
+
+      {server.status === 'crashed' && !server.isRemote && (
+        <div className="glass-card p-5 border border-error-500/25 bg-error-500/5 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="w-8 h-8 rounded-full bg-error-500/10 border border-error-500/20 text-error-400 flex items-center justify-center shrink-0">
+              ⚠️
+            </span>
+            <div className="space-y-1">
+              <h4 className="text-xs font-bold text-error-400 uppercase tracking-wider">Server Crash Detected</h4>
+              <p className="text-xs text-dark-400 leading-relaxed">
+                The server has crashed or failed to start. Deleting cached logs, crash dumps, and SteamCMD cache files can resolve file locking conflicts, recover disk space, and prevent crash-loops.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClearCache}
+            className="w-full md:w-auto bg-gradient-to-r from-warning-600 to-amber-500 hover:from-warning-500 hover:to-amber-400 text-white rounded-lg px-4 py-2.5 text-xs font-black uppercase tracking-wider shadow-lg shadow-warning-950/20 active:scale-95 transition-all shrink-0"
+          >
+            Clear Cache & Fix
+          </button>
+        </div>
+      )}
 
       {/* SteamCMD Installation Panel */}
       {!isActive && (
@@ -1153,6 +1456,28 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
                         Run Server as Admin
                       </label>
                     </div>
+
+                    <div className="flex items-center gap-2 bg-dark-900/40 px-3 py-1.5 rounded-lg border border-dark-800/60" title="Enable custom garbage collection (Engine.ini Tuning) and launch performance flags to reduce RAM overhead">
+                      <input
+                        type="checkbox"
+                        id={`optimize-ram-toggle-${server.id}`}
+                        checked={optimizeRamEnabled}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setOptimizeRamEnabled(checked);
+                          try {
+                            await tauriCommands.updateServerOptimizeRam(server.id, checked);
+                            showNotification('success', checked ? 'RAM Optimization enabled' : 'RAM Optimization disabled');
+                          } catch (err: any) {
+                            showNotification('error', `Failed to update RAM optimization: ${err}`);
+                          }
+                        }}
+                        className="w-3.5 h-3.5 accent-primary-500 rounded bg-dark-950 border-dark-700 cursor-pointer"
+                      />
+                      <label htmlFor={`optimize-ram-toggle-${server.id}`} className="text-xs font-bold text-dark-300 cursor-pointer select-none">
+                        Optimize Server RAM
+                      </label>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-3">
@@ -1172,6 +1497,14 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
                           title="Verify files integrity"
                         >
                           Validate Files
+                        </button>
+                        <button
+                          onClick={onClearCache}
+                          disabled={installState.isInstalling || isActive}
+                          className="btn-ghost text-xs border border-warning-500/20 hover:border-warning-500/35 text-warning-400 rounded-lg px-4 py-2 hover:bg-warning-500/10 active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none"
+                          title="Clear crash dumps, temporary logs, and SteamCMD cache"
+                        >
+                          Clear Cache
                         </button>
                         <button
                           onClick={handleInstallServer}
@@ -1904,7 +2237,11 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
               <button
                 onClick={() => {
                   dismissCompletionModal();
-                  tauriCommands.startServer(server.id).catch(console.error);
+                  if (onStart) {
+                    onStart();
+                  } else {
+                    tauriCommands.startServer(server.id).catch(console.error);
+                  }
                 }}
                 className="flex-1 bg-gradient-to-r from-success-600 to-emerald-500 hover:from-success-500 hover:to-emerald-400 text-white rounded-xl py-3 text-xs font-black uppercase tracking-wider shadow-lg shadow-success-900/20 active:scale-[0.98] transition-all"
               >
@@ -1964,6 +2301,7 @@ const OverviewTab: React.FC<{ server: any; stats: any }> = ({ server, stats }) =
           </div>
         </div>
       )}
+
     </div>
   );
 };

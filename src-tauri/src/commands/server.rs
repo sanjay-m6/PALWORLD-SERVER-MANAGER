@@ -94,7 +94,7 @@ pub async fn create_server(
     // Write PalWorldSettings.ini to disk if not remote and not an import
     drop(db); // Release lock before file I/O
     if !request.is_remote.unwrap_or(false) && !request.is_import.unwrap_or(false) {
-        crate::services::config_generator::ConfigGenerator::write_config(&request.install_path, &config)?;
+        crate::services::config_generator::ConfigGenerator::write_config(&request.install_path, &config, true)?;
     }
 
     // Fetch the created server
@@ -203,6 +203,24 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
         ).map_err(|e| format!("Server not found: {}", e))?
     };
 
+    // Check if server is already running in ProcessManager
+    if state.process_manager.is_server_running(server_id) {
+        return Err("Server is already running.".to_string());
+    }
+
+    // Check if another process for this server is already running on the OS from the same install directory
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let install_path_lower = install_path.to_lowercase();
+    let is_already_running_on_system = sys.processes().values().any(|p| {
+        let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let name = p.name().to_string_lossy().to_lowercase();
+        (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower)
+    });
+    if is_already_running_on_system {
+        return Err("Another process for this server is already running on the system.".to_string());
+    }
+
     // Check port availability
     if !crate::services::network::NetworkUtils::is_port_available(game_port) {
         return Err(format!("Game Port {} is already in use. Please choose a different port or stop the conflicting process.", game_port));
@@ -213,17 +231,18 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     }
 
     // Sync config from DB to INI file right before starting
-    let config: PalworldConfig = {
+    let (config, optimize_ram): (PalworldConfig, bool) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
-        let config_json: String = conn.query_row(
-            "SELECT config_json FROM servers WHERE id = ?1",
+        let (config_json, opt_ram) = conn.query_row(
+            "SELECT config_json, optimize_ram FROM servers WHERE id = ?1",
             [server_id],
-            |row| row.get(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1).unwrap_or(1) != 0)),
         ).map_err(|e| format!("Failed to get server config: {}", e))?;
-        serde_json::from_str(&config_json).map_err(|e| format!("Failed to parse config: {}", e))?
+        let parsed = serde_json::from_str(&config_json).map_err(|e| format!("Failed to parse config: {}", e))?;
+        (parsed, opt_ram)
     };
-    ConfigGenerator::write_config(&install_path, &config)?;
+    ConfigGenerator::write_config(&install_path, &config, optimize_ram)?;
 
     // Update status to starting
     {
@@ -289,6 +308,8 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
             let db = state.db.lock().map_err(|e| e.to_string())?;
             db.update_server_status(server_id, "running")?;
 
+            state.log_watcher.start_watching(server_id, &install_path);
+
             Ok(())
         }
         Err(e) => {
@@ -297,6 +318,128 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
             Err(format!("Failed to start server: {}", e))
         }
     }
+}
+
+fn kill_all_processes_for_install_path(install_path: &str) {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let install_path_lower = install_path.to_lowercase();
+    
+    for (pid, p) in sys.processes() {
+        let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let name = p.name().to_string_lossy().to_lowercase();
+        
+        if (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower) {
+            let pid_str = pid.to_string();
+            log::info!("[PROCESS] Force-killing untracked server process with PID {}", pid_str);
+            
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid_str])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .output();
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                if let Ok(pid_val) = pid_str.parse::<i32>() {
+                    unsafe {
+                        libc::kill(pid_val, libc::SIGKILL);
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn execute_graceful_shutdown_sequence(
+    app_handle: &tauri::AppHandle,
+    state: &crate::AppState,
+    server_id: i64,
+) -> bool {
+    let (is_remote, host, rest_api_port, rest_api_enabled, rcon_port, rcon_enabled, admin_password) = {
+        if let Ok(db) = state.db.lock() {
+            if let Ok(conn) = db.get_connection() {
+                conn.query_row(
+                    "SELECT is_remote, host, rest_api_port, rest_api_enabled, rcon_port, rcon_enabled, admin_password FROM servers WHERE id = ?1",
+                    [server_id],
+                    |row| Ok((
+                        row.get::<_, i32>(0).unwrap_or(0) != 0,
+                        row.get::<_, String>(1).unwrap_or_else(|_| "127.0.0.1".to_string()),
+                        row.get::<_, u16>(2).unwrap_or(8212),
+                        row.get::<_, i32>(3).unwrap_or(1) != 0,
+                        row.get::<_, u16>(4).unwrap_or(25575),
+                        row.get::<_, i32>(5).unwrap_or(1) != 0,
+                        row.get::<_, String>(6).unwrap_or_default(),
+                    )),
+                ).unwrap_or((false, "127.0.0.1".to_string(), 8212, true, 25575, true, "".to_string()))
+            } else {
+                (false, "127.0.0.1".to_string(), 8212, true, 25575, true, "".to_string())
+            }
+        } else {
+            (false, "127.0.0.1".to_string(), 8212, true, 25575, true, "".to_string())
+        }
+    };
+
+    if is_remote {
+        return false;
+    }
+
+    // Try REST API first
+    if rest_api_enabled {
+        let client = crate::services::palworld_rest_api::PalworldRestApiClient::new(&host, rest_api_port, &admin_password);
+        let player_count = match client.get_players().await {
+            Ok(players) => players.len(),
+            Err(_) => 0,
+        };
+
+        if player_count > 0 {
+            log::info!("[SERVER] Active players detected. Sending countdown via REST API.");
+            if let Ok(_) = client.shutdown(30, "Server_stopping_in_30_seconds!").await {
+                tokio::time::sleep(std::time::Duration::from_secs(33)).await;
+                return true;
+            }
+        } else {
+            if let Ok(_) = client.shutdown(1, "Server_stopping_now!").await {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                return true;
+            }
+        }
+    }
+
+    // Try RCON if REST API failed or was disabled
+    if rcon_enabled {
+        if let Some(rcon_state) = app_handle.try_state::<crate::commands::rcon::RconState>() {
+            if let Ok(_) = rcon_state.0.connect(server_id, &host, rcon_port, &admin_password).await {
+                let mut player_count = 0;
+                if let Ok(response) = rcon_state.0.send_command(server_id, "ShowPlayers").await {
+                    let players = crate::services::rcon::RconService::parse_player_list(&response);
+                    player_count = players.len();
+                }
+
+                if player_count > 0 {
+                    log::info!("[SERVER] Active players detected. Sending countdown via RCON.");
+                    let _ = rcon_state.0.send_command(server_id, "Broadcast Server_stopping_in_30_seconds!_Please_log_out.").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                    let _ = rcon_state.0.send_command(server_id, "Broadcast Server_stopping_in_15_seconds!").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    let _ = rcon_state.0.send_command(server_id, "Save").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    let _ = rcon_state.0.send_command(server_id, "Shutdown 1 Server_stopping_now!").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    return true;
+                } else {
+                    let _ = rcon_state.0.send_command(server_id, "Save").await;
+                    let _ = rcon_state.0.send_command(server_id, "Shutdown 1 Server_stopping_now!").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 #[tauri::command]
@@ -319,6 +462,11 @@ pub async fn stop_server(
         return Err("Cannot stop a remote server locally. It is managed externally.".to_string());
     }
 
+    let install_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_server_install_path(server_id)?
+    };
+
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.update_server_status(server_id, "stopping")?;
@@ -327,24 +475,28 @@ pub async fn stop_server(
     // Stop log watcher
     state.log_watcher.stop_watching(server_id);
 
-    let reason = if force {
-        StopReason::UserAction
-    } else {
-        StopReason::UserAction
-    };
-
-    match state.process_manager.stop_server(server_id, reason) {
-        Ok(_) => {
-            let db = state.db.lock().map_err(|e| e.to_string())?;
-            db.update_server_status(server_id, "stopped")?;
-            Ok(())
-        }
-        Err(e) => {
-            let db = state.db.lock().map_err(|e2| e2.to_string())?;
-            db.update_server_status(server_id, "stopped")?;
-            Err(format!("Error stopping server: {}", e))
-        }
+    // Try graceful RCON/REST API shutdown first if force is false
+    let mut graceful_done = false;
+    if !force {
+        state.process_manager.set_server_stopping(server_id, true);
+        graceful_done = execute_graceful_shutdown_sequence(&state.app_handle, &state, server_id).await;
     }
+
+    if !graceful_done {
+        // Fallback to standard process manager stop (taskkill)
+        let _ = state.process_manager.stop_server(server_id, StopReason::UserAction);
+        kill_all_processes_for_install_path(&install_path);
+    } else {
+        // Just make sure it is untracked in ProcessManager and database status updated
+        state.process_manager.untrack_server(server_id, StopReason::UserAction);
+    }
+
+    {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.update_server_status(server_id, "stopped")?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -354,16 +506,25 @@ pub async fn restart_server(state: State<'_, AppState>, server_id: i64) -> Resul
         db.update_server_status(server_id, "restarting")?;
     }
 
+    let install_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_server_install_path(server_id)?
+    };
+
     // Stop
+    state.log_watcher.stop_watching(server_id);
     if state.process_manager.is_server_running(server_id) {
-        state.log_watcher.stop_watching(server_id);
-        let _ = state.process_manager.stop_server(server_id, StopReason::ScheduledRestart);
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let _ = stop_server(state.clone(), server_id, false).await;
     }
+
+    // Force-kill any remaining processes for this server path
+    kill_all_processes_for_install_path(&install_path);
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // Start
     start_server(state, server_id).await
 }
+
 
 #[tauri::command]
 pub async fn get_server_status(
@@ -469,10 +630,15 @@ pub async fn wipe_server(
         return Err("Cannot wipe server data while the server is running. Please stop the server first.".to_string());
     }
 
-    // 2. Get install path
-    let install_path = {
+    // 2. Get install path & optimize_ram setting
+    let (install_path, optimize_ram) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.get_server_install_path(server_id)?
+        let conn = db.get_connection()?;
+        conn.query_row(
+            "SELECT install_path, optimize_ram FROM servers WHERE id = ?1",
+            [server_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1).unwrap_or(1) != 0)),
+        ).map_err(|e| e.to_string())?
     };
 
     let install = std::path::PathBuf::from(&install_path);
@@ -538,7 +704,7 @@ pub async fn wipe_server(
         }
 
         // Write to INI file
-        ConfigGenerator::write_config(&install_path, &default_config)?;
+        ConfigGenerator::write_config(&install_path, &default_config, optimize_ram)?;
     }
 
     Ok(())
@@ -575,4 +741,206 @@ pub async fn update_server_run_as_admin(
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn update_server_optimize_ram(
+    state: State<'_, AppState>,
+    server_id: i64,
+    optimize_ram: bool,
+) -> Result<(), String> {
+    use rusqlite::params;
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = db.get_connection()?;
+    conn.execute(
+        "UPDATE servers SET optimize_ram = ?1 WHERE id = ?2",
+        params![if optimize_ram { 1 } else { 0 }, server_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_server_cache(
+    state: State<'_, AppState>,
+    server_id: i64,
+) -> Result<(), String> {
+    // 1. Get install path
+    let install_path = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_server_install_path(server_id)?
+    };
+
+    let base = std::path::PathBuf::from(&install_path);
+
+    // 2. Clear Crashes folder
+    let crashes_dir = base.join("Pal").join("Saved").join("Crashes");
+    if crashes_dir.exists() {
+        log::info!("[CACHE] Clearing Crashes directory: {:?}", crashes_dir);
+        let _ = std::fs::remove_dir_all(&crashes_dir);
+        let _ = std::fs::create_dir_all(&crashes_dir);
+    }
+
+    // 3. Clear Logs folder
+    let logs_dir = base.join("Pal").join("Saved").join("Logs");
+    if logs_dir.exists() {
+        log::info!("[CACHE] Clearing Logs directory: {:?}", logs_dir);
+        let _ = std::fs::remove_dir_all(&logs_dir);
+        let _ = std::fs::create_dir_all(&logs_dir);
+    }
+
+    // 4. Clear SteamCMD appcache
+    let steamcmd_appcache = state.steamcmd.get_steamcmd_dir().join("appcache");
+    if steamcmd_appcache.exists() {
+        log::info!("[CACHE] Clearing SteamCMD appcache: {:?}", steamcmd_appcache);
+        let _ = std::fs::remove_dir_all(&steamcmd_appcache);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clone_server(
+    state: State<'_, AppState>,
+    server_id: i64,
+    new_name: String,
+    new_install_path: String,
+) -> Result<Server, String> {
+    // 1. Fetch source server from database
+    let source_server = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let servers = db.get_all_servers()?;
+        servers
+            .into_iter()
+            .find(|s| s.id == server_id)
+            .ok_or_else(|| "Source server not found".to_string())?
+    };
+
+    // 2. Automatically find next available ports starting from source server's ports
+    let ports = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection()?;
+        
+        let mut stmt = conn.prepare("SELECT game_port, rcon_port, rest_api_port FROM servers")
+            .map_err(|e| e.to_string())?;
+        
+        let port_rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+        }).map_err(|e| e.to_string())?;
+
+        let mut reserved_game = std::collections::HashSet::new();
+        let mut reserved_rcon = std::collections::HashSet::new();
+        let mut reserved_rest = std::collections::HashSet::new();
+
+        for row in port_rows {
+            if let Ok((game, rcon, rest)) = row {
+                reserved_game.insert(game as u16);
+                reserved_rcon.insert(rcon as u16);
+                reserved_rest.insert(rest as u16);
+            }
+        }
+
+        fn is_port_free(port: u16) -> bool {
+            let tcp_ok = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
+            let udp_ok = std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok();
+            tcp_ok && udp_ok
+        }
+
+        let mut game_port = source_server.ports.game_port;
+        while reserved_game.contains(&game_port) || !is_port_free(game_port) {
+            game_port += 1;
+        }
+
+        let mut rcon_port = source_server.ports.rcon_port;
+        while reserved_rcon.contains(&rcon_port) || !is_port_free(rcon_port) {
+            rcon_port += 1;
+        }
+
+        let mut rest_api_port = source_server.ports.rest_api_port;
+        while reserved_rest.contains(&rest_api_port) || rest_api_port == game_port || !is_port_free(rest_api_port) {
+            rest_api_port += 1;
+        }
+
+        crate::models::ServerPorts {
+            game_port,
+            rcon_port,
+            rest_api_port,
+        }
+    };
+
+    // 3. Copy save files and config files from source to target install path if not remote
+    if !source_server.is_remote {
+        let src_saved_dir = source_server.install_path.join("Pal").join("Saved");
+        let dest_saved_dir = std::path::PathBuf::from(&new_install_path).join("Pal").join("Saved");
+
+        if src_saved_dir.exists() {
+            fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+                std::fs::create_dir_all(dst)?;
+                for entry in std::fs::read_dir(src)? {
+                    let entry = entry?;
+                    let ty = entry.file_type()?;
+                    if ty.is_dir() {
+                        copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
+                    } else {
+                        std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
+                    }
+                }
+                Ok(())
+            }
+
+            let _ = copy_dir_all(&src_saved_dir, &dest_saved_dir);
+        }
+    }
+
+    // 4. Create server request to insert in DB
+    let request = CreateServerRequest {
+        name: new_name,
+        description: Some(source_server.description.clone()),
+        install_path: new_install_path,
+        preset: source_server.preset.clone(),
+        game_port: ports.game_port,
+        rcon_port: ports.rcon_port,
+        rest_api_port: ports.rest_api_port,
+        max_players: source_server.max_players,
+        admin_password: source_server.admin_password.clone(),
+        server_password: source_server.server_password.clone(),
+        is_public: source_server.is_public,
+        auto_start: source_server.auto_start,
+        host: Some(source_server.host.clone()),
+        is_remote: Some(source_server.is_remote),
+        is_import: Some(true),
+        auto_restart: Some(source_server.auto_restart),
+        run_as_admin: Some(source_server.run_as_admin),
+    };
+
+    // Parse config_json or update the ports in config_json
+    let mut config: PalworldConfig = serde_json::from_str(&source_server.config_json)
+        .unwrap_or_else(|_| crate::services::config_generator::ConfigGenerator::from_preset(&request.preset));
+    
+    // Update ports in the config
+    config.public_port = request.game_port;
+    config.rcon_port = request.rcon_port;
+    config.rest_api_port = request.rest_api_port;
+    config.server_name = request.name.clone();
+
+    let config_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
+
+    // Create in database
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let id = db.create_server(&request, &config_json)?;
+
+    // Write updated config file to the new destination to reflect the new ports
+    if !request.is_remote.unwrap_or(false) {
+        let _ = crate::services::config_generator::ConfigGenerator::write_config(&request.install_path, &config, true);
+    }
+
+    drop(db);
+
+    // Fetch the created server
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let servers = db.get_all_servers()?;
+    servers
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| "Server cloned but not found".to_string())
+}
+
 

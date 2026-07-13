@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useAppStore } from '../../stores/useAppStore';
+import { useAppStore, type Player } from '../../stores/useAppStore';
 import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
 import { SponsorBanner } from '../ui/SponsorBanner';
 import { useI18nStore } from '../../lib/i18n';
+import { RunningPal } from '../ui/RunningPal';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 // Custom SVGs for stats & actions
 const ServerStackIcon = () => (
@@ -82,11 +84,111 @@ export const Dashboard: React.FC = () => {
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
   const [consoleLoading, setConsoleLoading] = useState(false);
 
+  // Mod compatibility warning states
+  const [showModWarningModal, setShowModWarningModal] = useState(false);
+  const [outdatedModsList, setOutdatedModsList] = useState<any[]>([]);
+  const [pendingStartAction, setPendingStartAction] = useState<(() => Promise<void>) | null>(null);
+  const [warningServerId, setWarningServerId] = useState<number | null>(null);
+
   const [activePlayersServerId, setActivePlayersServerId] = useState<number | null>(null);
   const [playersList, setPlayersList] = useState<any[]>([]);
   const [playersLoading, setPlayersLoading] = useState(false);
 
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [serverToDelete, setServerToDelete] = useState<any | null>(null);
+  const [deleteFiles, setDeleteFiles] = useState(false);
+  const [backupFirst, setBackupFirst] = useState(true);
+
   const consoleEndRef = useRef<HTMLDivElement>(null);
+
+  const handleDeleteServer = (server: any) => {
+    setServerToDelete(server);
+    setDeleteFiles(false);
+    setBackupFirst(true);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!serverToDelete) return;
+    setIsDeleteModalOpen(false);
+    try {
+      await tauriCommands.deleteServer(
+        serverToDelete.id,
+        serverToDelete.isRemote ? false : backupFirst,
+        serverToDelete.isRemote ? false : deleteFiles
+      );
+      showNotification(
+        'success',
+        serverToDelete.isRemote
+          ? 'Server connection removed'
+          : deleteFiles
+          ? 'Server and installation files deleted'
+          : 'Server profile deleted'
+      );
+      loadServers();
+    } catch (e: any) {
+      showNotification('error', `Delete failed: ${e}`);
+    } finally {
+      setServerToDelete(null);
+    }
+  };
+
+  // Cloning states
+  const [cloningServer, setCloningServer] = useState<any | null>(null);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneInstallPath, setCloneInstallPath] = useState('');
+  const [isCloning, setIsCloning] = useState(false);
+
+  const handleCloneServerPrompt = (server: any) => {
+    setCloningServer(server);
+    setCloneName(`${server.name} - Clone`);
+    setCloneInstallPath(`${server.installPath}_clone`);
+  };
+
+  const handleBrowseClonePath = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: cloneInstallPath || undefined,
+      });
+      if (selected && typeof selected === 'string') {
+        setCloneInstallPath(selected);
+      }
+    } catch (err) {
+      console.error('Failed to open directory dialog:', err);
+    }
+  };
+
+  const handleExecuteClone = async () => {
+    if (!cloningServer) return;
+    if (!cloneName.trim()) {
+      showNotification('error', 'Please enter a name for the clone');
+      return;
+    }
+    if (!cloneInstallPath.trim()) {
+      showNotification('error', 'Please enter/select a destination path');
+      return;
+    }
+
+    setIsCloning(true);
+    try {
+      showNotification('info', `Cloning server "${cloningServer.name}" to "${cloneName}"...`);
+      const newServer = await tauriCommands.cloneServer(cloningServer.id, cloneName.trim(), cloneInstallPath.trim());
+      showNotification('success', `Successfully cloned server to "${newServer.name}"!`);
+      
+      // Refresh servers in the store
+      const updated = await tauriCommands.getServers();
+      setServers(updated);
+      
+      // Close the modal
+      setCloningServer(null);
+    } catch (err: any) {
+      showNotification('error', `Failed to clone server: ${err}`);
+    } finally {
+      setIsCloning(false);
+    }
+  };
 
   // Load servers and stats on mount
   useEffect(() => {
@@ -122,6 +224,22 @@ export const Dashboard: React.FC = () => {
       consoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [consoleLogs]);
+
+  // Auto-refresh Dashboard players list while modal is open
+  useEffect(() => {
+    if (activePlayersServerId === null) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await tauriCommands.getPlayerList(activePlayersServerId);
+        setPlayersList(data || []);
+      } catch (e) {
+        console.error("Failed to auto-refresh dashboard players list:", e);
+      }
+    }, 10000); // 10s interval
+
+    return () => clearInterval(interval);
+  }, [activePlayersServerId]);
 
   const loadServers = async () => {
     try {
@@ -260,15 +378,38 @@ export const Dashboard: React.FC = () => {
     showNotification('success', 'Firewall rules updated for all server ports.');
   };
 
+  const checkModCompatibilityAndRun = async (serverId: number, action: () => Promise<void>) => {
+    try {
+      const compats = await tauriCommands.checkModCompatibility(serverId);
+      const outdated = compats.filter((m: any) => m.status === 'outdated');
+      if (outdated.length > 0) {
+        setOutdatedModsList(outdated);
+        setWarningServerId(serverId);
+        setPendingStartAction(() => action);
+        setShowModWarningModal(true);
+      } else {
+        await action();
+      }
+    } catch (e) {
+      // Fallback: start server anyway if compatibility check fails
+      await action();
+    }
+  };
+
   // Card Level Operations
   const handleStartServer = async (serverId: number) => {
-    try {
-      await tauriCommands.startServer(serverId);
-      showNotification('success', 'Server starting...');
-      await loadServers();
-    } catch (e: any) {
-      showNotification('error', `Start failed: ${e}`);
-    }
+    checkModCompatibilityAndRun(serverId, async () => {
+      try {
+        await tauriCommands.startServer(serverId);
+        showNotification('success', 'Server starting...');
+        setSelectedServerId(serverId);
+        setActiveServerTab('logs');
+        setCurrentView('server-detail');
+        await loadServers();
+      } catch (e: any) {
+        showNotification('error', `Start failed: ${e}`);
+      }
+    });
   };
 
   const handleStopServer = async (serverId: number) => {
@@ -285,6 +426,9 @@ export const Dashboard: React.FC = () => {
     try {
       await tauriCommands.restartServer(serverId);
       showNotification('success', 'Restarting server...');
+      setSelectedServerId(serverId);
+      setActiveServerTab('logs');
+      setCurrentView('server-detail');
       await loadServers();
     } catch (e: any) {
       showNotification('error', `Restart failed: ${e}`);
@@ -298,6 +442,55 @@ export const Dashboard: React.FC = () => {
       showNotification('success', 'Backup created successfully!');
     } catch (e: any) {
       showNotification('error', `Backup failed: ${e}`);
+    }
+  };
+
+  const handleImportServerMigration = async () => {
+    try {
+      const zipPath = await open({
+        filters: [{
+          name: 'Server Migration Package',
+          extensions: ['zip']
+        }],
+        multiple: false,
+        title: 'Select Server Migration Zip File'
+      });
+      if (zipPath && typeof zipPath === 'string') {
+        const destPath = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Destination Folder to Restore Server files'
+        });
+        if (destPath && typeof destPath === 'string') {
+          showNotification('info', 'Importing server migration package... This may take a minute.');
+          // @ts-ignore
+          await tauriCommands.importServerMigration(zipPath, destPath);
+          showNotification('success', 'Server node and save files imported successfully!');
+          await loadServers();
+        }
+      }
+    } catch (e: any) {
+      showNotification('error', `Import migration failed: ${e}`);
+    }
+  };
+
+  const handleExportServerMigration = async (server: any) => {
+    try {
+      const destPath = await save({
+        filters: [{
+          name: 'Server Migration Package',
+          extensions: ['zip']
+        }],
+        defaultPath: `PalServer_Migration_${server.name.replace(/\s+/g, '_')}.zip`
+      });
+      if (destPath) {
+        showNotification('info', 'Exporting entire server saves and configs... This may take a moment.');
+        // @ts-ignore
+        await tauriCommands.exportServerMigration(server.id, destPath);
+        showNotification('success', 'Server migration package exported successfully!');
+      }
+    } catch (e: any) {
+      showNotification('error', `Export migration failed: ${e}`);
     }
   };
 
@@ -325,12 +518,28 @@ export const Dashboard: React.FC = () => {
 
   // RCON Console Dialog handlers
   const openConsole = async (serverId: number) => {
+    if (activeConsoleServerId === serverId) {
+      showNotification('info', 'Console is already open for this server.');
+      return;
+    }
+    const server = servers.find((s) => s.id === serverId);
+    if (!server) return;
+    const isRunning = server.isRemote || server.status === 'running' || server.status === 'online';
+    if (!isRunning) {
+      showNotification('error', 'Cannot connect to console because the server is not running.');
+      return;
+    }
+
     setActiveConsoleServerId(serverId);
     setConsoleLogs(['Connecting to RCON console...']);
     setConsoleLoading(true);
     try {
-      await tauriCommands.rconConnect(serverId);
-      setConsoleLogs((prev) => [...prev, '✓ Connected to RCON server.', 'Type a command (e.g. Broadcast Welcome!) or Broadcast message below.']);
+      const res = await tauriCommands.rconConnect(serverId);
+      if (res && res.success === false) {
+        setConsoleLogs((prev) => [...prev, `❌ Connection failed: ${res.message}`]);
+      } else {
+        setConsoleLogs((prev) => [...prev, '✓ Connected to RCON server.', 'Type a command (e.g. Broadcast Welcome!) or Broadcast message below.']);
+      }
     } catch (e: any) {
       setConsoleLogs((prev) => [...prev, `❌ Connection failed: ${e}`]);
     } finally {
@@ -390,12 +599,19 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleKickPlayer = async (steamId: string) => {
+  const handleKickPlayer = async (player: Player) => {
     if (activePlayersServerId === null) return;
-    if (!confirm(`Are you sure you want to kick player ${steamId}?`)) return;
+    const identifier = player.steamId && player.steamId.trim() && player.steamId.trim() !== '0'
+      ? player.steamId.trim()
+      : player.playerUid.trim();
+    if (!confirm(`Are you sure you want to kick player "${player.name}"?`)) return;
     try {
-      await tauriCommands.kickPlayer(activePlayersServerId, steamId);
-      showNotification('success', 'Player kicked.');
+      const res = await tauriCommands.kickPlayer(activePlayersServerId, identifier);
+      if (res && res.success === false) {
+        showNotification('error', `Kick failed: ${res.message}`);
+      } else {
+        showNotification('success', `Player "${player.name}" kicked.`);
+      }
       // Refresh list
       const players = await tauriCommands.getPlayerList(activePlayersServerId);
       setPlayersList(players || []);
@@ -404,12 +620,19 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleBanPlayer = async (steamId: string) => {
+  const handleBanPlayer = async (player: Player) => {
     if (activePlayersServerId === null) return;
-    if (!confirm(`Are you sure you want to ban player ${steamId}?`)) return;
+    const identifier = player.steamId && player.steamId.trim() && player.steamId.trim() !== '0'
+      ? player.steamId.trim()
+      : player.playerUid.trim();
+    if (!confirm(`Are you sure you want to ban player "${player.name}"?`)) return;
     try {
-      await tauriCommands.banPlayer(activePlayersServerId, steamId);
-      showNotification('success', 'Player banned.');
+      const res = await tauriCommands.banPlayer(activePlayersServerId, identifier);
+      if (res && res.success === false) {
+        showNotification('error', `Ban failed: ${res.message}`);
+      } else {
+        showNotification('success', `Player "${player.name}" banned.`);
+      }
       // Refresh list
       const players = await tauriCommands.getPlayerList(activePlayersServerId);
       setPlayersList(players || []);
@@ -440,6 +663,15 @@ export const Dashboard: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleImportServerMigration}
+            className="btn-ghost border border-dark-700/60 hover:border-dark-600 rounded-lg text-xs py-2 px-4 whitespace-nowrap flex items-center gap-1.5 transition-all text-primary-400 font-semibold"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+              <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707A1 1 0 017.707 6.707L9 8.000V3a1 1 0 112 0v5.000l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+            <span>Import Server</span>
+          </button>
           <button
             onClick={() => setCurrentView('create-server')}
             className="btn-primary flex items-center gap-1.5 px-4 py-2 text-xs font-semibold"
@@ -601,22 +833,16 @@ export const Dashboard: React.FC = () => {
                 {/* Mini start/stop overlay */}
                 {(server.status === 'starting' || server.status === 'stopping' || server.status === 'restarting' || server.status === 'updating') && (
                   <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-dark-950/90 backdrop-blur-sm animate-fade-in p-4 text-center select-none">
-                    <div className="relative w-12 h-12 flex items-center justify-center">
-                      <div className={`absolute inset-0 rounded-full border-2 border-dashed ${
-                        server.status === 'stopping' ? 'border-error-500/40 animate-spin-slow' : 'border-primary-500/40 animate-spin'
-                      }`} />
-                      <div className={`absolute inset-1.5 rounded-full border ${
-                        server.status === 'stopping' ? 'border-red-400/30 animate-pulse' : 'border-cyan-400/30 animate-pulse'
-                      }`} />
-                    </div>
-                    <span className={`text-[10px] font-black tracking-widest mt-3 uppercase ${
-                      server.status === 'stopping' ? 'text-error-400 animate-pulse' : 'text-primary-400 animate-pulse'
-                    }`}>
-                      {server.status === 'starting' && 'Starting...'}
-                      {server.status === 'stopping' && 'Stopping...'}
-                      {server.status === 'restarting' && 'Restarting...'}
-                      {server.status === 'updating' && 'Updating...'}
-                    </span>
+                    <RunningPal 
+                      size={64} 
+                      variant={server.status === 'stopping' ? 'sleeping' : 'running'}
+                      label={
+                        server.status === 'starting' ? 'Starting...' :
+                        server.status === 'stopping' ? 'Stopping...' :
+                        server.status === 'restarting' ? 'Restarting...' :
+                        'Updating...'
+                      }
+                    />
                   </div>
                 )}
                 <div className="relative z-10">
@@ -730,15 +956,29 @@ export const Dashboard: React.FC = () => {
                 {/* Grid controls */}
                 <div className="space-y-2 pt-2 border-t border-dark-800 relative z-10">
                   {server.isRemote ? (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openServerDetail(server.id);
-                      }}
-                      className="btn-primary w-full py-1.5 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 border-none"
-                    >
-                      Manage Connection
-                    </button>
+                    <div className="flex gap-1.5 w-full">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openServerDetail(server.id);
+                        }}
+                        className="btn-primary flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 border-none"
+                      >
+                        Manage Connection
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteServer(server);
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg border border-error-500/30 hover:border-error-500/50 hover:bg-error-500/10 text-error-400 hover:text-error-300 transition-all duration-200 active:scale-95"
+                        title="Remove Remote Connection"
+                      >
+                        <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1-1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    </div>
                   ) : installState && installState.isInstalling ? (
                     <div className="space-y-1.5 py-1 px-1" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-between items-center text-[10px]">
@@ -868,6 +1108,35 @@ export const Dashboard: React.FC = () => {
                           >
                             {t('nav.firewall')}
                           </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleExportServerMigration(server);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-primary-500/30 hover:border-primary-500/50 hover:bg-primary-500/10 text-primary-400 hover:text-primary-300 text-center block transition-all duration-200 active:scale-95"
+                            title="Export entire server save and config data for migration"
+                          >
+                            Export
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteServer(server);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-error-500/30 hover:border-error-500/50 hover:bg-error-500/10 text-error-400 hover:text-error-300 text-center block transition-all duration-200 active:scale-95"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCloneServerPrompt(server);
+                            }}
+                            className="btn-ghost py-1 text-[9px] font-semibold border border-cyan-500/30 hover:border-cyan-500/50 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 text-center block transition-all duration-200 active:scale-95 col-span-2"
+                            title="Clone this server instance config, ports and saves"
+                          >
+                            Clone Instance
+                          </button>
                         </div>
                       )}
                     </>
@@ -979,13 +1248,13 @@ export const Dashboard: React.FC = () => {
 
                       <div className="flex gap-2">
                         <button
-                          onClick={() => handleKickPlayer(player.steamId)}
+                          onClick={() => handleKickPlayer(player)}
                           className="bg-warning-500/10 border border-warning-500/20 text-warning-400 hover:bg-warning-500/20 text-[10px] px-2.5 py-1 rounded transition-all font-semibold"
                         >
                           Kick
                         </button>
                         <button
-                          onClick={() => handleBanPlayer(player.steamId)}
+                          onClick={() => handleBanPlayer(player)}
                           className="bg-error-500/10 border border-error-500/20 text-error-400 hover:bg-error-500/20 text-[10px] px-2.5 py-1 rounded transition-all font-semibold"
                         >
                           Ban
@@ -1017,6 +1286,258 @@ export const Dashboard: React.FC = () => {
         </div>
       </button>
 
+      {/* Outdated Mods Warning Modal */}
+      {showModWarningModal && warningServerId && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md" 
+            onClick={() => setShowModWarningModal(false)} 
+          />
+          
+          {/* Content Card */}
+          <div className="relative glass-card border border-error-500/30 bg-dark-900/80 p-8 rounded-2xl shadow-2xl max-w-md w-full space-y-6 text-center animate-scale-in">
+            {/* Warning Icon */}
+            <div className="w-16 h-16 rounded-full bg-error-500/10 border border-error-500/20 text-error-400 mx-auto flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-8 h-8">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            
+            {/* Title */}
+            <div className="space-y-2">
+              <h2 className="text-md font-black uppercase text-error-400 tracking-wider">
+                Outdated Mods Detected!
+              </h2>
+              <p className="text-xs text-dark-400 leading-relaxed">
+                The following mods were updated prior to the last server game update. Running them on a multiplayer server can cause connection crashes or disconnects.
+              </p>
+            </div>
+
+            {/* List of outdated mods */}
+            <div className="max-h-40 overflow-y-auto space-y-1.5 p-2 bg-dark-950/40 border border-dark-800 rounded-xl text-left custom-scrollbar">
+              {outdatedModsList.map((m) => (
+                <div key={m.name} className="flex items-center justify-between text-[10px] text-dark-300">
+                  <span className="font-semibold truncate">{m.name}</span>
+                  <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-error-500/10 text-error-400 border border-error-500/20 flex-shrink-0 uppercase">
+                    Outdated
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={async () => {
+                  setShowModWarningModal(false);
+                  try {
+                    for (const m of outdatedModsList) {
+                      await tauriCommands.toggleMod(warningServerId, m.name, m.isLogicMod, false, m.isWorkshopMod);
+                    }
+                    showNotification('success', 'Outdated mods disabled.');
+                    if (pendingStartAction) {
+                      await pendingStartAction();
+                    }
+                  } catch (err) {
+                    showNotification('error', `Failed to disable mods: ${err}`);
+                  }
+                }}
+                className="w-full bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 hover:to-primary-400 text-white rounded-xl py-3 text-xs font-black uppercase tracking-wider shadow-lg active:scale-[0.98] transition-all"
+              >
+                Disable Mods & Continue
+              </button>
+              <button
+                onClick={async () => {
+                  setShowModWarningModal(false);
+                  if (pendingStartAction) {
+                    await pendingStartAction();
+                  }
+                }}
+                className="w-full bg-dark-800 hover:bg-dark-750 text-dark-200 border border-dark-700/60 rounded-xl py-2.5 text-xs font-bold transition-all"
+              >
+                Start Anyway (At Your Own Risk)
+              </button>
+              <button
+                onClick={() => setShowModWarningModal(false)}
+                className="w-full text-xs text-dark-500 hover:text-dark-300 font-bold uppercase tracking-wider transition-colors pt-1"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Delete Confirmation Modal */}
+      {isDeleteModalOpen && serverToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity" 
+            onClick={() => setIsDeleteModalOpen(false)} 
+          />
+          
+          {/* Modal Content */}
+          <div className="relative glass-card max-w-sm w-full border border-error-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-6 animate-scale-in">
+            {/* Warning Icon & Title */}
+            <div className="flex items-center gap-3 text-error-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-error-500/10 border border-error-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-error-500">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
+                {serverToDelete.isRemote ? 'Remove Connection' : 'Confirm Server Deletion'}
+              </h2>
+            </div>
+            
+            {/* Body text */}
+            <p className="text-xs text-dark-300 leading-relaxed">
+              {serverToDelete.isRemote ? (
+                <>Are you sure you want to remove the connection to <strong className="text-dark-100 font-bold">"{serverToDelete.name}"</strong>? This will only remove this profile from the application. The remote server will not be affected.</>
+              ) : (
+                <>Are you sure you want to delete server <strong className="text-dark-100 font-bold">"{serverToDelete.name}"</strong>? This will remove all configuration settings. This action cannot be undone.</>
+              )}
+            </p>
+
+            {/* Options */}
+            {!serverToDelete.isRemote && (
+              <div className="space-y-3 pt-1">
+                <label className="flex items-start gap-2.5 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={backupFirst}
+                    onChange={(e) => setBackupFirst(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500/20"
+                  />
+                  <span className="text-xs text-dark-300 group-hover:text-dark-200 transition-colors selection:bg-transparent">
+                    Create a backup before deleting configuration
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2.5 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={deleteFiles}
+                    onChange={(e) => setDeleteFiles(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-error-500/30 bg-dark-800 text-error-500 focus:ring-error-500/20"
+                  />
+                  <span className="text-xs text-dark-300 group-hover:text-error-400/90 transition-colors selection:bg-transparent">
+                    Delete server installation directory & files from disk (Cannot be undone)
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:text-error-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+              >
+                {serverToDelete.isRemote ? 'Remove' : 'Delete Server'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Clone Confirmation Modal */}
+      {cloningServer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity" 
+            onClick={() => setCloningServer(null)} 
+          />
+          
+          {/* Modal Content */}
+          <div className="relative glass-card max-w-md w-full border border-cyan-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-6 animate-scale-in">
+            {/* Title */}
+            <div className="flex items-center gap-3 text-cyan-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-cyan-400">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
+                Clone Server Instance
+              </h2>
+            </div>
+            
+            {/* Body */}
+            <div className="space-y-4 pt-1">
+              <div>
+                <label className="text-[10px] text-dark-400 font-bold uppercase tracking-wider block mb-1.5">New Server Name</label>
+                <input
+                  type="text"
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.target.value)}
+                  className="input-field text-xs bg-dark-950 border-dark-800"
+                  placeholder="e.g. My Cloned Server"
+                  disabled={isCloning}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] text-dark-400 font-bold uppercase tracking-wider block mb-1.5">Destination Directory</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={cloneInstallPath}
+                    onChange={(e) => setCloneInstallPath(e.target.value)}
+                    className="input-field text-xs bg-dark-950 border-dark-800 flex-1"
+                    placeholder="C:\PalworldServers\MyClone"
+                    disabled={isCloning}
+                  />
+                  <button
+                    onClick={handleBrowseClonePath}
+                    disabled={isCloning}
+                    className="btn-ghost text-xs px-3 border border-dark-700/50 hover:bg-dark-800 font-semibold flex items-center justify-center gap-1.5"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-[9px] text-dark-500 mt-1">
+                  We will copy the save files and configs from the original server directory to this destination.
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setCloningServer(null)}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200 transition-colors"
+                disabled={isCloning}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteClone}
+                disabled={isCloning}
+                className="bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2"
+              >
+                {isCloning ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+                    Cloning...
+                  </>
+                ) : (
+                  'Clone Instance'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

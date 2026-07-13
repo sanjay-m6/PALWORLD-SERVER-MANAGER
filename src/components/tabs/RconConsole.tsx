@@ -173,7 +173,7 @@ export const RconConsole: React.FC<{ serverId: number }> = ({ serverId }) => {
 
     const intervalMs = autoAnnounceInterval * 60 * 1000;
     const timer = setInterval(() => {
-      const formattedMsg = autoAnnounceMessage.trim().replace(/\s+/g, '_');
+      const formattedMsg = autoAnnounceMessage.trim();
       const cmd = `Broadcast ${formattedMsg}`;
       addLine('cmd', `[Auto-Announce] > ${cmd}`);
       
@@ -244,8 +244,7 @@ export const RconConsole: React.FC<{ serverId: number }> = ({ serverId }) => {
   const handleSendAnnouncement = async () => {
     const text = announcementText.trim();
     if (!text) return;
-    const formattedText = text.replace(/\s+/g, '_');
-    const cmd = `Broadcast ${formattedText}`;
+    const cmd = `Broadcast ${text}`;
     addLine('cmd', `> ${cmd}`);
     setAnnouncementText('');
     try {
@@ -318,9 +317,6 @@ export const RconConsole: React.FC<{ serverId: number }> = ({ serverId }) => {
         if (!val) {
           showNotification('error', `${p.name} is required`);
           valid = false;
-        }
-        if (p.name.toLowerCase().includes('message')) {
-          val = val.replace(/\s+/g, '_');
         }
         cmdString = cmdString.replace(`<${p.placeholder}>`, val);
       });

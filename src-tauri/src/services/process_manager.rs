@@ -69,6 +69,7 @@ struct TrackedProcess {
 pub struct ProcessManager {
     app_handle: AppHandle,
     processes: Arc<Mutex<HashMap<i64, TrackedProcess>>>,
+    crash_history: Arc<Mutex<HashMap<i64, Vec<std::time::Instant>>>>,
 }
 
 impl ProcessManager {
@@ -76,6 +77,7 @@ impl ProcessManager {
         Self {
             app_handle,
             processes: Arc::new(Mutex::new(HashMap::new())),
+            crash_history: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -89,6 +91,12 @@ impl ProcessManager {
         _rcon_port: u16,
         admin_password: &str,
     ) -> Result<u32> {
+        // Clear crash history for this server since the user is starting/restarting it manually
+        {
+            let mut history = self.crash_history.lock().unwrap();
+            history.remove(&server_id);
+        }
+
         // Check for existing process
         {
             let processes = self.processes.lock().unwrap();
@@ -116,14 +124,34 @@ impl ProcessManager {
             );
         }
 
+        let optimize_ram = {
+            if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
+                if let Ok(db) = state.db.lock() {
+                    if let Ok(conn) = db.get_connection() {
+                        conn.query_row(
+                            "SELECT optimize_ram FROM servers WHERE id = ?1",
+                            [server_id],
+                            |row| row.get::<_, i32>(0),
+                        ).map(|v| v != 0).unwrap_or(true)
+                    } else { true }
+                } else { true }
+            } else { true }
+        };
+
         // Build command line arguments
         let mut args: Vec<String> = vec![
             format!("-port={}", game_port),
+            "-log".to_string(),
             "-stdout".to_string(),
             "-FORCELOGFLUSH".to_string(),
             "EpicApp=PalServer".to_string(),
             "-publiclobby".to_string(),
         ];
+
+        if optimize_ram {
+            args.push("-useperformanceboost".to_string());
+            args.push("-NoAsyncLoadingThread".to_string());
+        }
 
         // RCON is configured via PalWorldSettings.ini (RCONEnabled, RCONPort, AdminPassword).
         // No command-line RCON arguments are needed for Palworld.
@@ -168,19 +196,28 @@ impl ProcessManager {
             } else { false }
         };
 
+        let log_dir = std::path::Path::new(&install_path)
+            .join("Pal")
+            .join("Saved")
+            .join("Logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let console_log_path = log_dir.join("PalServer-console.log");
+
         #[cfg(target_os = "windows")]
-        let pid = if run_as_admin {
-            let escaped_exe = server_exe.to_string_lossy().replace('\"', "\\\"");
+        let pid = if run_as_admin && !is_app_elevated() {
+            let escaped_exe = server_exe.to_string_lossy().replace('\'', "''");
+            let escaped_log_path = console_log_path.to_string_lossy().replace('\'', "''");
             let escaped_args = args.iter()
-                .map(|a| format!("'{}'", a.replace('\'', "''")))
+                .map(|a| format!("''{}''", a.replace('\'', "''")))
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join(" ");
 
             let ps_cmd = format!(
-                "Start-Process -FilePath \"{}\" -ArgumentList @({}) -WorkingDirectory \"{}\" -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
+                "Start-Process -FilePath \"powershell.exe\" -ArgumentList \"-NoProfile -Command & {{ & ''{}'' {} > ''{}'' 2>&1 }}\" -WorkingDirectory \"{}\" -WindowStyle Hidden -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
                 escaped_exe,
                 escaped_args,
-                install_path.replace('\"', "\\\"")
+                escaped_log_path,
+                install_path.replace('\"', "\\\""),
             );
 
             log::info!("[PROCESS] Spawning elevated PalServer on Windows via: {}", ps_cmd);
@@ -204,8 +241,16 @@ impl ProcessManager {
         } else {
             let mut cmd = Command::new(&server_exe);
             cmd.args(&args)
-                .current_dir(install_path);
-            cmd.creation_flags(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP);
+                .current_dir(&install_path);
+
+            if let Ok(f) = std::fs::File::create(&console_log_path) {
+                if let Ok(f_err) = f.try_clone() {
+                    cmd.stdout(std::process::Stdio::from(f));
+                    cmd.stderr(std::process::Stdio::from(f_err));
+                }
+            }
+
+            cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
             let child = cmd.spawn().context("Failed to spawn PalServer executable")?;
             child.id()
         };
@@ -214,7 +259,15 @@ impl ProcessManager {
         let pid = {
             let mut cmd = Command::new(&server_exe);
             cmd.args(&args)
-                .current_dir(install_path);
+                .current_dir(&install_path);
+
+            if let Ok(f) = std::fs::File::create(&console_log_path) {
+                if let Ok(f_err) = f.try_clone() {
+                    cmd.stdout(std::process::Stdio::from(f));
+                    cmd.stderr(std::process::Stdio::from(f_err));
+                }
+            }
+
             let child = cmd.spawn().context("Failed to spawn PalServer executable")?;
             child.id()
         };
@@ -298,21 +351,33 @@ impl ProcessManager {
         // Try graceful shutdown first via taskkill
         #[cfg(target_os = "windows")]
         {
+            // Try graceful shutdown without elevation first (works if target server has same privileges)
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string()])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output();
 
             // Wait a moment for graceful shutdown
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_secs(3));
 
-            // Force kill if still running
+            // Force kill without elevation if still running
             if self.is_process_alive(pid) {
-                log::warn!("[PROCESS] Force killing PID {}", pid);
                 let _ = Command::new("taskkill")
                     .args(["/F", "/PID", &pid.to_string()])
                     .creation_flags(CREATE_NO_WINDOW)
                     .output();
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+
+            // Fallback to elevated force kill only if still alive and app is not elevated
+            if self.is_process_alive(pid) && !is_app_elevated() {
+                log::warn!("[PROCESS] Process still alive. Attempting elevated taskkill for PID {}", pid);
+                let ps_cmd = format!("Start-Process taskkill -ArgumentList '/F', '/PID', '{}' -Verb RunAs -WindowStyle Hidden", pid);
+                let _ = Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+                std::thread::sleep(std::time::Duration::from_secs(2));
             }
         }
 
@@ -329,7 +394,21 @@ impl ProcessManager {
             }
         }
 
-        // Remove from tracking
+        self.untrack_server(server_id, reason);
+
+        Ok(())
+    }
+
+    /// Set the stopping state on a tracked server process to prevent crash detection triggers
+    pub fn set_server_stopping(&self, server_id: i64, stopping: bool) {
+        let processes = self.processes.lock().unwrap();
+        if let Some(p) = processes.get(&server_id) {
+            p.stopping.store(stopping, Ordering::SeqCst);
+        }
+    }
+
+    /// Untrack a server process, emit stopped lifecycle event, and send Discord stop alert
+    pub fn untrack_server(&self, server_id: i64, reason: StopReason) {
         let uptime = {
             let mut processes = self.processes.lock().unwrap();
             let uptime = processes.get(&server_id).map(|p| p.start_time.elapsed().as_secs());
@@ -371,8 +450,6 @@ impl ProcessManager {
                 ).await;
             }
         });
-
-        Ok(())
     }
 
     /// Check if a specific PID is still alive
@@ -414,6 +491,7 @@ impl ProcessManager {
     fn spawn_crash_monitor(&self, server_id: i64, pid: u32) {
         let processes = self.processes.clone();
         let app_handle = self.app_handle.clone();
+        let crash_history = self.crash_history.clone();
 
         std::thread::spawn(move || {
             loop {
@@ -445,6 +523,38 @@ impl ProcessManager {
                         procs.remove(&server_id);
                         uptime
                     };
+
+                    let is_rapid = uptime.unwrap_or(0) < 30;
+                    let mut should_block_restart = false;
+
+                    if is_rapid {
+                        let mut history = crash_history.lock().unwrap();
+                        let entry = history.entry(server_id).or_insert_with(Vec::new);
+                        entry.push(std::time::Instant::now());
+
+                        // Clean old crash timestamps (older than 2 minutes)
+                        entry.retain(|t| t.elapsed() < std::time::Duration::from_secs(120));
+
+                        if entry.len() >= 2 {
+                            should_block_restart = true;
+                            log::warn!("[PROCESS] Server {} is crash-looping! Blocking auto-restart.", server_id);
+
+                            // Log server event in SQLite
+                            if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                                if let Ok(db) = state.db.lock() {
+                                    let _ = db.insert_server_event(
+                                        server_id,
+                                        "crash_loop",
+                                        "Server is crash-looping and was auto-paused.",
+                                        "PalServer process crashed within 30 seconds of starting twice consecutively. Please check your mod compatibility settings.",
+                                    );
+                                }
+                            }
+
+                            // Emit crash-loop event
+                            let _ = app_handle.emit("server-crash-loop", server_id);
+                        }
+                    }
 
                     // Emit crash event
                     let _ = app_handle.emit("server-lifecycle", ServerLifecycleEvent {
@@ -493,7 +603,7 @@ impl ProcessManager {
                                 } else { true }
                             };
 
-                            if auto_restart {
+                            if auto_restart && !should_block_restart {
                                 log::info!("[PROCESS] Auto-restart active. Initializing recovery for server {} ({}) in 5 seconds...", server_id, server_name);
                                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
@@ -577,5 +687,15 @@ fn detect_log_level(line: &str) -> String {
     } else {
         "info".to_string()
     }
+}
+
+#[cfg(target_os = "windows")]
+fn is_app_elevated() -> bool {
+    let output = std::process::Command::new("net")
+        .arg("session")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output();
+    output.map(|o| o.status.success()).unwrap_or(false)
 }
 

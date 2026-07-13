@@ -29,6 +29,10 @@ pub async fn save_server_config(
     server_id: i64,
     config: PalworldConfig,
 ) -> Result<(), String> {
+    if state.process_manager.get_server_pid(server_id).is_some() {
+        return Err("Cannot save configuration while the server is running. Please stop the server first, as Palworld Dedicated Server will overwrite any settings file changes upon shutting down.".to_string());
+    }
+
     // Check if the ports are already in use by another server in the DB
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -83,12 +87,18 @@ pub async fn save_server_config(
     }
 
     // Write to INI file
-    let install_path = {
+    let (install_path, optimize_ram) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
-        db.get_server_install_path(server_id)?
+        let conn = db.get_connection()?;
+        let (path, opt) = conn.query_row(
+            "SELECT install_path, optimize_ram FROM servers WHERE id = ?1",
+            [server_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1).unwrap_or(1) != 0)),
+        ).map_err(|e| e.to_string())?;
+        (path, opt)
     };
 
-    ConfigGenerator::write_config(&install_path, &config)?;
+    ConfigGenerator::write_config(&install_path, &config, optimize_ram)?;
 
     #[cfg(debug_assertions)]
     {
@@ -337,6 +347,10 @@ pub async fn save_raw_config(
     server_id: i64,
     content: String,
 ) -> Result<(), String> {
+    if state.process_manager.get_server_pid(server_id).is_some() {
+        return Err("Cannot save configuration while the server is running. Please stop the server first, as Palworld Dedicated Server will overwrite any settings file changes upon shutting down.".to_string());
+    }
+
     let install_path = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         db.get_server_install_path(server_id)?
@@ -446,10 +460,14 @@ pub async fn apply_preset(
     server_id: i64,
     preset: String,
 ) -> Result<PalworldConfig, String> {
+    if state.process_manager.get_server_pid(server_id).is_some() {
+        return Err("Cannot apply preset while the server is running. Please stop the server first, as Palworld Dedicated Server will overwrite any settings file changes upon shutting down.".to_string());
+    }
+
     let config = ConfigGenerator::from_preset(&preset);
     let config_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
 
-    let (db, install_path) = {
+    let (db, install_path, optimize_ram) = {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         db_lock.update_server_config(server_id, &config_json)?;
         db_lock.update_server_preset(server_id, &preset)?;
@@ -463,11 +481,19 @@ pub async fn apply_preset(
             &config.server_password,
         )?;
         let path = db_lock.get_server_install_path(server_id)?;
-        (db_lock, path)
+        let opt = {
+            let conn = db_lock.get_connection()?;
+            conn.query_row(
+                "SELECT optimize_ram FROM servers WHERE id = ?1",
+                [server_id],
+                |row| row.get::<_, i32>(0),
+            ).map(|v| v != 0).unwrap_or(true)
+        };
+        (db_lock, path, opt)
     };
     drop(db);
 
-    ConfigGenerator::write_config(&install_path, &config)?;
+    ConfigGenerator::write_config(&install_path, &config, optimize_ram)?;
 
     Ok(config)
 }

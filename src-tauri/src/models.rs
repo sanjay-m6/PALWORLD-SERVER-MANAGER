@@ -62,6 +62,7 @@ pub struct Server {
     pub is_remote: bool,
     pub auto_restart: bool,
     pub run_as_admin: bool,
+    pub optimize_ram: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -775,4 +776,17 @@ pub struct InstallationRecoveryState {
     pub bytes_total: u64,
     pub logs: String,
     pub updated_at: String,
+}
+
+// ─── Server Event ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerEvent {
+    pub id: i64,
+    pub server_id: i64,
+    pub event_type: String,
+    pub message: String,
+    pub details: String,
+    pub created_at: String,
 }

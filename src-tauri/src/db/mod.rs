@@ -31,7 +31,8 @@ impl Database {
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN host TEXT DEFAULT '127.0.0.1'", []);
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN is_remote INTEGER DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN auto_restart INTEGER DEFAULT 1", []);
-        let _ = conn.execute("ALTER TABLE servers ADD COLUMN run_as_admin INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE servers ADD COLUMN run_as_admin INTEGER DEFAULT 1", []);
+        let _ = conn.execute("ALTER TABLE servers ADD COLUMN optimize_ram INTEGER DEFAULT 1", []);
 
         // Migration for installation_history table
         let _ = conn.execute(
@@ -111,7 +112,7 @@ impl Database {
             "SELECT id, name, description, install_path, save_path, status, game_port, rcon_port, rcon_enabled,
                     rest_api_port, rest_api_enabled, max_players, admin_password, server_password, is_public,
                     preset, startup_args, crossplay_platforms, auto_start, auto_restart_schedule,
-                    created_at, last_started, config_json, branch, host, is_remote, auto_restart, run_as_admin
+                    created_at, last_started, config_json, branch, host, is_remote, auto_restart, run_as_admin, optimize_ram
              FROM servers ORDER BY id"
         ).map_err(|e| e.to_string())?;
 
@@ -162,6 +163,7 @@ impl Database {
                 is_remote: row.get::<_, bool>(25).unwrap_or(false),
                 auto_restart: row.get::<_, i32>(26).unwrap_or(1) != 0,
                 run_as_admin: row.get::<_, i32>(27).unwrap_or(0) != 0,
+                optimize_ram: row.get::<_, i32>(28).unwrap_or(1) != 0,
             })
         }).map_err(|e| e.to_string())?;
 
@@ -192,7 +194,7 @@ impl Database {
                 req.host.as_deref().unwrap_or("127.0.0.1"),
                 req.is_remote.unwrap_or(false) as i32,
                 req.auto_restart.unwrap_or(true) as i32,
-                req.run_as_admin.unwrap_or(false) as i32,
+                req.run_as_admin.unwrap_or(true) as i32,
             ],
         ).map_err(|e| e.to_string())?;
 
@@ -558,5 +560,45 @@ impl Database {
             params![server_id],
         ).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub fn insert_server_event(&self, server_id: i64, event_type: &str, message: &str, details: &str) -> Result<(), String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO server_events (server_id, event_type, message, details, created_at)
+             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+            params![server_id, event_type, message, details],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn get_recent_server_events(&self, server_id: i64, limit: i64) -> Result<Vec<crate::models::ServerEvent>, String> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, server_id, event_type, message, details, created_at
+             FROM server_events
+             WHERE server_id = ?1
+             ORDER BY id DESC
+             LIMIT ?2"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([server_id, limit], |row| {
+            Ok(crate::models::ServerEvent {
+                id: row.get(0)?,
+                server_id: row.get(1)?,
+                event_type: row.get(2)?,
+                message: row.get(3)?,
+                details: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        }).map_err(|e| e.to_string())?;
+
+        let mut events = Vec::new();
+        for r in rows {
+            if let Ok(event) = r {
+                events.push(event);
+            }
+        }
+        Ok(events)
     }
 }

@@ -13,8 +13,20 @@ pub async fn start_server_installation(
     // Write optimization config first
     state.steamcmd.write_optimization_config();
     
-    let steamcmd_dir = state.steamcmd.get_steamcmd_dir();
-    let steamcmd_exe = state.steamcmd.get_steamcmd_exe();
+    let (steamcmd_exe, steamcmd_dir) = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Ok(Some(path)) = db.get_setting("steamcmd_path") {
+            if !path.trim().is_empty() {
+                let exe = std::path::PathBuf::from(path);
+                let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| state.steamcmd.get_steamcmd_dir());
+                (exe, dir)
+            } else {
+                (state.steamcmd.get_steamcmd_exe(), state.steamcmd.get_steamcmd_dir())
+            }
+        } else {
+            (state.steamcmd.get_steamcmd_exe(), state.steamcmd.get_steamcmd_dir())
+        }
+    };
     
     state.installation_manager.start_installation(
         app_handle,

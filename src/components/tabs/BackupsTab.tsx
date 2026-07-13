@@ -3,11 +3,13 @@ import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands, formatBytes } from '../../lib/tauri';
 import type { Backup } from '../../stores/useAppStore';
 import { CustomSelect } from '../ui/CustomSelect';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const { showNotification } = useAppStore();
   const [backups, setBackups] = useState<Backup[]>([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [label, setLabel] = useState('');
 
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
@@ -95,6 +97,55 @@ export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
+  const handleExport = async (backup: Backup) => {
+    try {
+      const destPath = await save({
+        filters: [{
+          name: 'Palworld Server Backup',
+          extensions: ['zip']
+        }],
+        defaultPath: backup.label ? `PalServer_Backup_${backup.label.replace(/\s+/g, '_')}.zip` : `PalServer_Backup_${backup.id}.zip`
+      });
+      if (destPath) {
+        showNotification('info', 'Exporting backup...');
+        // @ts-ignore
+        await tauriCommands.exportBackup(backup.id, destPath);
+        showNotification('success', 'Backup exported successfully!');
+      }
+    } catch (e: any) {
+      showNotification('error', `Export failed: ${e}`);
+    }
+  };
+
+  const handleImport = async () => {
+    setIsImporting(true);
+    try {
+      const selected = await open({
+        filters: [{
+          name: 'Palworld Server Backup',
+          extensions: ['zip']
+        }],
+        multiple: false
+      });
+      if (selected && typeof selected === 'string') {
+        const importLabel = prompt('Enter a label for this imported backup:', 'Imported Migration');
+        if (importLabel === null) {
+          setIsImporting(false);
+          return;
+        }
+        showNotification('info', 'Importing backup...');
+        // @ts-ignore
+        await tauriCommands.importBackup(serverId, selected, importLabel || undefined);
+        showNotification('success', 'Backup imported successfully!');
+        await loadBackups();
+      }
+    } catch (e: any) {
+      showNotification('error', `Import failed: ${e}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="p-5 overflow-y-auto h-full space-y-5">
       {/* Auto Backup Configuration */}
@@ -168,9 +219,21 @@ export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       </div>
       {/* Create backup */}
       <div className="glass-card p-4">
-        <h3 className="text-xs font-semibold text-dark-300 uppercase tracking-wider mb-3">
-          Create Backup
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-semibold text-dark-300 uppercase tracking-wider">
+            Create or Import Backup
+          </h3>
+          <button
+            onClick={handleImport}
+            disabled={isImporting}
+            className="btn-ghost border border-dark-700/60 hover:border-dark-600 rounded-lg text-[10px] py-1.5 px-3 whitespace-nowrap flex items-center gap-1.5 transition-all"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-primary-400">
+              <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707A1 1 0 017.707 6.707L9 8.000V3a1 1 0 112 0v5.000l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+            {isImporting ? 'Importing...' : 'Import Save (.zip)'}
+          </button>
+        </div>
         <div className="flex items-center gap-3">
           <input
             type="text"
@@ -217,6 +280,12 @@ export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleExport(backup)}
+                  className="btn-ghost text-[10px] py-1 px-2 text-primary-400 hover:text-primary-300"
+                >
+                  Export
+                </button>
                 <button
                   onClick={() => handleRestore(backup.id)}
                   className="btn-ghost text-[10px] py-1 px-2"

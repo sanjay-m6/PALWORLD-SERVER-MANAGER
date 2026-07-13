@@ -41,6 +41,7 @@ export interface Server {
   isRemote: boolean;
   autoRestart: boolean;
   runAsAdmin: boolean;
+  optimizeRam: boolean;
 }
 
 // Backup model

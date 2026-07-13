@@ -52,8 +52,12 @@ impl LogWatcherService {
             // Build list of candidate log file locations
             let base = PathBuf::from(&install_path);
             let candidates = vec![
+                base.join("Pal").join("Saved").join("Logs").join("PalServer-console.log"),
+                base.join("Pal").join("Saved").join("Logs").join("Pal.log"),
                 base.join("Pal").join("Saved").join("Logs").join("PalServer.log"),
+                base.join("Saved").join("Logs").join("Pal.log"),
                 base.join("Saved").join("Logs").join("PalServer.log"),
+                base.join("Pal.log"),
                 base.join("PalServer.log"),
                 base.join("Pal").join("Saved").join("Logs").join("PalServer-backup.log"),
             ];

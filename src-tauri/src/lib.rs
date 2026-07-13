@@ -184,6 +184,28 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
 
             app.manage(RconState(rcon_service));
 
+            // Start watching logs for already running servers
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                let running_servers: Vec<(i64, String)> = {
+                    if let Ok(db) = state.db.lock() {
+                        if let Ok(conn) = db.get_connection() {
+                            if let Ok(mut stmt) = conn.prepare("SELECT id, install_path FROM servers WHERE status = 'running'") {
+                                let rows = stmt.query_map([], |row| {
+                                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                                });
+                                if let Ok(rows) = rows {
+                                    rows.filter_map(|r| r.ok()).collect()
+                                } else { Vec::new() }
+                            } else { Vec::new() }
+                        } else { Vec::new() }
+                    } else { Vec::new() }
+                };
+                for (server_id, install_path) in running_servers {
+                    log::info!("[STARTUP] Restoring log watcher for running server ID {}", server_id);
+                    state.log_watcher.start_watching(server_id, &install_path);
+                }
+            }
+
             // Start background services
             if !safe_mode {
                 scheduler.start();
@@ -240,6 +262,7 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
                             ) {
                                 Ok(_) => {
                                     log::info!("[STARTUP] Auto-started server ID {}", server_id);
+                                    state.log_watcher.start_watching(server_id, &install_path);
                                 }
                                 Err(e) => {
                                     log::error!("[STARTUP] Failed to auto-start server ID {}: {}", server_id, e);
@@ -263,11 +286,14 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::server::start_server,
             commands::server::stop_server,
             commands::server::restart_server,
+            commands::server::clone_server,
             commands::server::get_server_status,
             commands::server::update_server_branch,
             commands::server::update_server_auto_start,
             commands::server::update_server_auto_restart,
             commands::server::update_server_run_as_admin,
+            commands::server::update_server_optimize_ram,
+            commands::server::clear_server_cache,
             commands::server::wipe_server,
             // Config commands
             commands::config::get_server_config,
@@ -287,11 +313,14 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::rcon::kick_player,
             commands::rcon::ban_player,
             commands::rcon::broadcast_message,
-            // Backup commands
             commands::backup::create_backup,
             commands::backup::get_backups,
             commands::backup::restore_backup,
             commands::backup::delete_backup,
+            commands::backup::export_backup,
+            commands::backup::import_backup,
+            commands::backup::export_server_migration,
+            commands::backup::import_server_migration,
             // System commands
             commands::system::get_system_info,
             commands::system::get_process_stats,
@@ -299,6 +328,7 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::system::get_public_ip,
             commands::system::get_local_ip,
             commands::system::check_steamcmd_installed,
+            commands::system::detect_steamcmd,
             commands::system::check_server_installed,
             commands::system::install_steamcmd,
             commands::system::install_palworld_server,
@@ -326,6 +356,11 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::system::parse_existing_server_config,
             commands::system::read_pal_mod_settings,
             commands::system::save_pal_mod_settings,
+            commands::system::read_mod_file_content,
+            commands::system::save_mod_file_content,
+            // Mod compatibility commands
+            commands::compatibility::check_mod_compatibility,
+            commands::compatibility::clean_mod_residue,
             // Installation commands
             commands::installation::start_server_installation,
             commands::installation::cancel_server_installation,

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 import { check } from '@tauri-apps/plugin-updater';
+import { open } from '@tauri-apps/plugin-dialog';
 import { RunningPal } from '../ui/RunningPal';
 import { useI18nStore, LANGUAGES } from '../../lib/i18n';
 
@@ -13,6 +14,7 @@ export const SettingsView: React.FC = () => {
   const [defaultPort, setDefaultPort] = useState(8211);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [detectingSteamCmd, setDetectingSteamCmd] = useState(false);
 
   // ── Windows Startup State ──────────────────────────────────────────────────
   const [startupEnabled, setStartupEnabled] = useState(false);
@@ -30,6 +32,16 @@ export const SettingsView: React.FC = () => {
     try { return localStorage.getItem('palworld_auto_update') === 'true'; } catch { return false; }
   });
   const [checkingForUpdates, setCheckingForUpdates] = useState(false);
+
+  // ── Version History & Rollback State ──────────────────────────────────────
+  interface Release {
+    id: number;
+    tag_name: string;
+    html_url: string;
+    published_at: string;
+  }
+  const [versions, setVersions] = useState<Release[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -96,19 +108,43 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const triggerFirewallAllocation = async () => {
+  const handleAutoDetectSteamCmd = async () => {
+    setDetectingSteamCmd(true);
     try {
-      const servers = await tauriCommands.getServers();
-      if (servers.length === 0) {
-        showNotification('info', 'No servers found to allocate firewall rules for.');
-        return;
+      const detected = await tauriCommands.detectSteamCmd();
+      if (detected) {
+        setSteamcmdPath(detected);
+        showNotification('success', `SteamCMD detected at: ${detected}`);
+      } else {
+        showNotification('warning', 'SteamCMD could not be automatically detected. Please specify the path manually.');
       }
-      for (const server of servers) {
-        await tauriCommands.setupFirewallRules(server.id);
-      }
-      showNotification('success', 'Windows Defender Firewall rules successfully registered!');
     } catch (e: any) {
-      showNotification('error', `Firewall configuration failed: ${e}. Please ensure the app is running with administrator privileges.`);
+      showNotification('error', `Detection failed: ${e}`);
+    } finally {
+      setDetectingSteamCmd(false);
+    }
+  };
+
+  const handleBrowseSteamCmd = async () => {
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        filters: [
+          {
+            name: 'SteamCMD Executable',
+            extensions: ['exe'],
+          },
+        ],
+        defaultPath: steamcmdPath || undefined,
+      });
+      if (selected && typeof selected === 'string') {
+        setSteamcmdPath(selected);
+        showNotification('success', `Selected SteamCMD path: ${selected}`);
+      }
+    } catch (err) {
+      console.error('Failed to open file dialog:', err);
+      showNotification('error', 'Failed to open file dialog');
     }
   };
 
@@ -145,6 +181,27 @@ export const SettingsView: React.FC = () => {
       setCheckingForUpdates(false);
     }
   }, [showNotification]);
+
+  const fetchVersions = useCallback(async () => {
+    setLoadingVersions(true);
+    try {
+      const response = await fetch('https://api.github.com/repos/sanjay-m6/PALWORLD-SERVER-MANAGER/releases');
+      if (response.ok) {
+        const data = await response.json();
+        setVersions(data);
+      } else {
+        console.error('Failed to fetch releases:', response.statusText);
+      }
+    } catch (e) {
+      console.error('Error fetching releases:', e);
+    } finally {
+      setLoadingVersions(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchVersions();
+  }, [fetchVersions]);
 
   if (loading) {
     return (
@@ -236,14 +293,42 @@ export const SettingsView: React.FC = () => {
 
             {/* Custom SteamCMD path */}
             <div className="space-y-1.5">
-              <label className="text-xs text-dark-200 font-semibold block">{t('settings.customSteamcmd')}</label>
-              <input
-                type="text"
-                value={steamcmdPath}
-                onChange={(e) => setSteamcmdPath(e.target.value)}
-                className="input-field text-xs w-full bg-dark-900/60 border border-dark-700/50"
-                placeholder="Leave blank to use default location"
-              />
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-dark-200 font-semibold block">{t('settings.customSteamcmd')}</label>
+                <button
+                  type="button"
+                  onClick={handleAutoDetectSteamCmd}
+                  disabled={detectingSteamCmd}
+                  className="text-[10px] text-primary-400 hover:text-primary-300 font-medium transition-all flex items-center gap-1 disabled:opacity-50"
+                >
+                  {detectingSteamCmd ? 'Detecting...' : 'Auto Detect'}
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={steamcmdPath}
+                  onChange={(e) => setSteamcmdPath(e.target.value)}
+                  className="input-field text-xs flex-1 bg-dark-900/60 border border-dark-700/50"
+                  placeholder="Leave blank to use default location"
+                />
+                <button
+                  type="button"
+                  onClick={handleBrowseSteamCmd}
+                  className="px-3 bg-dark-800 hover:bg-dark-700 active:bg-dark-600 text-dark-200 hover:text-white rounded-lg border border-dark-700/50 text-xs font-medium transition-all duration-200 flex items-center justify-center gap-1.5"
+                  title="Browse local file"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="w-4 h-4 text-dark-300"
+                  >
+                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                  </svg>
+                  <span>Browse</span>
+                </button>
+              </div>
               <span className="text-[10px] text-dark-500 block">Override default steamcmd path if installed elsewhere.</span>
             </div>
 
@@ -265,43 +350,6 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
         </div>
-
-        {/* Windows Defender Firewall Card */}
-        <div className="bg-dark-900/40 border border-dark-700/30 rounded-xl p-5 space-y-5">
-          <h2 className="text-sm font-semibold text-dark-100 flex items-center gap-2">
-            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-warning-400">
-              <path fillRule="evenodd" d="M10 1.944A11.954 11.954 0 012.166 5C2.056 5.649 2 6.319 2 7c0 5.225 3.34 9.67 8 11.317C14.66 16.67 18 12.225 18 7c0-.682-.057-1.35-.166-2A11.954 11.954 0 0110 1.944zM11 14a1 1 0 11-2 0 1 1 0 012 0zm-1-7a1 1 0 00-1 1v3a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-            </svg>
-            Windows Firewall Automatic Rules
-          </h2>
-
-          <div className="space-y-4">
-            <p className="text-xs text-dark-300 leading-relaxed">
-              Palworld uses <strong className="text-primary-400">UDP Port 8211</strong> (and any custom port you configure) to accept game client connections.
-              Our automated system can register appropriate incoming rules on Windows Defender Firewall.
-            </p>
-            <div className="p-3 bg-dark-950/60 border border-dark-800 rounded-lg text-[11px] text-dark-400 space-y-2">
-              <div className="flex items-center gap-1.5 text-warning-400/90 font-medium">
-                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                Administrator Rights Required
-              </div>
-              <p>
-                Windows Defender Firewall rule allocation requires administrative access. Please run the Palworld Server Manager as Administrator to allow this command to succeed.
-              </p>
-            </div>
-            <button
-              onClick={triggerFirewallAllocation}
-              className="w-full bg-warning-600/10 border border-warning-500/20 hover:bg-warning-600/20 text-warning-400 rounded-lg py-2.5 text-xs font-semibold transition-all"
-            >
-              Allocate and Open Ports in Windows Firewall
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Application Updates Card */}
         <div className="bg-dark-900/40 border border-dark-700/30 rounded-xl p-5 space-y-5 flex flex-col justify-between">
           <div className="space-y-5">
@@ -354,6 +402,67 @@ export const SettingsView: React.FC = () => {
                 <p>
                   <strong className="text-dark-300">Manual Mode:</strong> A notification banner appears when an update is available. Click to install at your convenience.
                 </p>
+              </div>
+
+              {/* Version History & Rollback */}
+              <div className="border-t border-dark-800/60 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-dark-400 uppercase tracking-wider block">
+                    Version History & Rollback
+                  </span>
+                  <button
+                    onClick={fetchVersions}
+                    disabled={loadingVersions}
+                    className="text-[10px] text-primary-400 hover:text-primary-300 font-medium transition-all"
+                  >
+                    {loadingVersions ? 'Loading...' : 'Refresh History'}
+                  </button>
+                </div>
+
+                {versions.length > 0 ? (
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                    {versions.map((rel) => {
+                      const isCurrent = rel.tag_name === `v${appVersion}` || rel.tag_name === appVersion;
+                      return (
+                        <div
+                          key={rel.id}
+                          className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                            isCurrent
+                              ? 'bg-primary-500/5 border-primary-500/30'
+                              : 'bg-dark-950/40 border-dark-800/60 hover:border-dark-700/60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-mono font-bold ${isCurrent ? 'text-primary-400' : 'text-dark-200'}`}>
+                              {rel.tag_name}
+                            </span>
+                            {isCurrent && (
+                              <span className="bg-primary-500/10 text-primary-400 border border-primary-500/20 text-[9px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => window.open(rel.html_url, '_blank')}
+                            className={`text-[10px] px-2.5 py-1 rounded transition-all font-semibold ${
+                              isCurrent
+                                ? 'bg-dark-800 text-dark-500 cursor-default pointer-events-none'
+                                : 'bg-primary-600/10 border border-primary-500/20 hover:bg-primary-600/20 text-primary-400 hover:text-primary-300'
+                            }`}
+                          >
+                            {isCurrent ? 'Current' : 'Rollback / Install'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-4 bg-dark-950/20 border border-dark-800/40 rounded-lg">
+                    <p className="text-[10px] text-dark-500">
+                      {loadingVersions ? 'Loading release history...' : 'Click Refresh History to view available versions.'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -86,15 +86,20 @@ jobs:
           releaseBody: |
             ## Palworld Server Manager v__VERSION__
 
-            This release introduces server auto-restart on crashes, running the server as administrator, player direct messaging (broadcasts), system resource polling optimizations, and Steam Workshop/local ZIP logic mods registration overrides.
+            This major release introduces multi-server instance cloning, graceful countdown restarts, direct server migration packages, logs terminal upgrades, and advanced game configuration options.
 
             ### 🚀 New Features & Improvements
-            - **Auto-Restart on Crash:** Automatically recovers the dedicated server process if it crashes or stops unexpectedly.
-            - **Run Server as Administrator:** Added backend & UI support to spawn the `PalServer` process elevated on Windows via PowerShell (`Start-Process -Verb RunAs`).
-            - **Player Direct Messages:** Allows administrators to broadcast targeted alert warnings to individual players on the server using RCON.
-            - **Workshop & URL Logic Mods Support:** Dynamically overrides and updates the `InstallRule` in `Info.json` when installing logic/script mods (forcing registration under `LogicMods` rather than `Paks`) for Steam Workshop subscriptions, URL downloads, and local file imports.
-            - **Warning Modal Local Import Integration:** Added an "Import Downloaded File" action directly inside the Steam Workshop warning modal for easier manual installations.
-            - **Performance Optimizations:** Refactored system analyzer and crash monitoring loops to query process statistics only for the target PID via `sysinfo::ProcessesToUpdate::Some(&[Pid])`, reducing app CPU usage to 0%.
+            - **Multi-Server Instance Cloning:** Instantly replicate any existing server's configuration, SQLite entries, non-conflicting port allocations, and world save files to a new directory from the Dashboard or Server Detail view.
+            - **Graceful Restarts & Countdown Warnings:** Restarts and stops now broadcast countdown messages in-game over REST API/RCON (e.g. 30s/15s warnings) if players are online, trigger a save, and perform a clean shutdown. Suppresses false-positive crash-monitor alerts.
+            - **Direct Server Migration Packages:** Export a server's complete world save data (`Pal/Saved`) and installed mods (`Mods`) into a single ZIP migration package with a `server_metadata.json` manifest, then import it on any machine to set up the server instantly.
+            - **Upgraded Logs Terminal:** Complete terminal emulator in the Logs tab supporting direct RCON command execution, clean console logs streaming (hides headers/timestamps), auto-scroll toggle, command history, and log exports.
+            - **Garbage Collection (Engine) Optimizations:** Automatically configures garbage collection tuning settings inside `Engine.ini` (`[/Script/Engine.GarbageCollectionSettings]`) when "Optimize RAM" is active to mitigate server process memory leaks.
+            - **Steam Workshop Authenticated Downloads:** Supports authenticated logins (`steam_username` setting) instead of anonymous downloads, fixing SteamCMD download restrictions for paid games, with helpful error messages for Steam Guard caching.
+            - **CurseForge Integration & Autocleanup:** Integrated CurseForge API searches for Palworld mods, and auto-cleans up older version files of the same mod in the destination folder to prevent startup conflicts.
+
+            ### 🐛 Bug Fixes
+            - **Ban List Formatting Fixes:** Standardizes Steam ID bans with or without `steam_` prefixes, preventing entry duplication and formatting bugs.
+            - **Donation Options Clean-Up:** Removed credit card validation scripts and layouts to focus entirely on direct links for Ko-fi, PayPal, and GitHub sponsorships.
 
             ---
             _Developed by Sanjay._

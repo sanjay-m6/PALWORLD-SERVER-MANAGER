@@ -439,6 +439,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [selectedSourceFilter, setSelectedSourceFilter] = useState<'all' | 'nexus' | 'modrinth' | 'steam' | 'curseforge'>('all');
   const [apiKey, setApiKey] = useState('');
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [steamApiKey, setSteamApiKey] = useState('');
@@ -455,6 +456,14 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const [selectedBrowserMod, setSelectedBrowserMod] = useState<ModItem | null>(null);
   const [browserModFiles, setBrowserModFiles] = useState<string[]>([]);
   const [loadingBrowserFiles, setLoadingBrowserFiles] = useState(false);
+
+  // File Editor States
+  const [editingFilePath, setEditingFilePath] = useState<string | null>(null);
+  const [editingFileName, setEditingFileName] = useState<string>('');
+  const [editingFileContent, setEditingFileContent] = useState<string>('');
+  const [editingFileOriginal, setEditingFileOriginal] = useState<string>('');
+  const [loadingFileContent, setLoadingFileContent] = useState(false);
+  const [savingFile, setSavingFile] = useState(false);
 
   const checkUe4ss = async () => {
     try {
@@ -477,6 +486,24 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       loadIniContent();
     }
   }, [serverId, activeSubTab]);
+
+  // Debounced auto-search when searchQuery changes in Discover tab
+  useEffect(() => {
+    if (activeSubTab !== 'discover') return;
+
+    if (!searchQuery.trim()) {
+      const timer = setTimeout(() => {
+        loadDefaultMods();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+
+    const timer = setTimeout(() => {
+      handleSearch();
+    }, 600); // 600ms debounce delay to avoid hitting rate limits while typing
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, activeSubTab]);
 
   useEffect(() => {
     const loadApiKeys = async () => {
@@ -743,6 +770,54 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     } finally {
       setLoadingBrowserFiles(false);
     }
+  };
+
+  const EDITABLE_EXTENSIONS = ['.json', '.ini', '.txt', '.lua', '.cfg', '.xml', '.yaml', '.yml', '.toml', '.log', '.md', '.csv'];
+
+  const isFileEditable = (fileName: string) => {
+    const lower = fileName.toLowerCase();
+    return EDITABLE_EXTENSIONS.some(ext => lower.endsWith(ext));
+  };
+
+  const handleOpenFileEditor = async (relativeFile: string) => {
+    if (!selectedBrowserMod) return;
+    const fullPath = selectedBrowserMod.path + '\\' + relativeFile.replace(/\//g, '\\');
+    setEditingFileName(relativeFile);
+    setEditingFilePath(fullPath);
+    setLoadingFileContent(true);
+    try {
+      const content = await tauriCommands.readModFileContent(fullPath);
+      setEditingFileContent(content);
+      setEditingFileOriginal(content);
+    } catch (e: any) {
+      showNotification('error', `Failed to open file: ${e}`);
+      setEditingFilePath(null);
+    } finally {
+      setLoadingFileContent(false);
+    }
+  };
+
+  const handleSaveFileEditor = async () => {
+    if (!editingFilePath) return;
+    setSavingFile(true);
+    try {
+      await tauriCommands.saveModFileContent(editingFilePath, editingFileContent);
+      setEditingFileOriginal(editingFileContent);
+      showNotification('success', 'File saved successfully.');
+    } catch (e: any) {
+      showNotification('error', `Failed to save file: ${e}`);
+    } finally {
+      setSavingFile(false);
+    }
+  };
+
+  const handleCloseFileEditor = () => {
+    const isDirty = editingFileContent !== editingFileOriginal;
+    if (isDirty && !confirm('You have unsaved changes. Close without saving?')) return;
+    setEditingFilePath(null);
+    setEditingFileName('');
+    setEditingFileContent('');
+    setEditingFileOriginal('');
   };
 
   const handleToggle = async (mod: ModItem) => {
@@ -1045,25 +1120,100 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                       </div>
                     ) : (
                       <div className="space-y-1 pr-2">
-                        {browserModFiles.map((file, fIdx) => (
-                          <div
-                            key={fIdx}
-                            className="flex items-center justify-between px-3 py-2 text-[10px] hover:bg-dark-900/30 rounded-lg transition-colors border border-transparent hover:border-dark-800/40 text-dark-300"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-dark-500 flex-shrink-0">
-                                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 2h4v2H6V6z" clipRule="evenodd" />
-                              </svg>
-                              <span className="font-mono truncate" title={file}>{file}</span>
+                        {browserModFiles.map((file, fIdx) => {
+                          const editable = isFileEditable(file);
+                          return (
+                            <div
+                              key={fIdx}
+                              className={`flex items-center justify-between px-3 py-2 text-[10px] rounded-lg transition-colors border border-transparent text-dark-300 ${
+                                editable
+                                  ? 'hover:bg-primary-500/5 hover:border-primary-500/20 cursor-pointer'
+                                  : 'hover:bg-dark-900/30 hover:border-dark-800/40'
+                              }`}
+                              onClick={() => editable && handleOpenFileEditor(file)}
+                              title={editable ? `Click to edit ${file}` : file}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <svg viewBox="0 0 20 20" fill="currentColor" className={`w-4 h-4 flex-shrink-0 ${editable ? 'text-primary-400' : 'text-dark-500'}`}>
+                                  <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 2h4v2H6V6z" clipRule="evenodd" />
+                                </svg>
+                                <span className="font-mono truncate" title={file}>{file}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                {editable && (
+                                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-primary-400/60">
+                                    <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                                  </svg>
+                                )}
+                                <span className="text-[8px] font-mono text-dark-500 uppercase bg-dark-900 px-1 py-0.5 rounded">
+                                  {file.split('.').pop() || 'file'}
+                                </span>
+                              </div>
                             </div>
-                            <span className="text-[8px] font-mono text-dark-500 flex-shrink-0 uppercase bg-dark-900 px-1 py-0.5 rounded ml-2">
-                              {file.split('.').pop() || 'file'}
-                            </span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
+
+                  {/* File Editor Modal */}
+                  {editingFilePath && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}>
+                      <div className="glass-card w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden border border-dark-700/50 shadow-2xl">
+                        {/* Editor Header */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-dark-800/50 flex-shrink-0">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-primary-400 flex-shrink-0">
+                              <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                            </svg>
+                            <div className="min-w-0">
+                              <h3 className="text-xs font-bold text-dark-100 truncate">{editingFileName}</h3>
+                              <p className="text-[9px] text-dark-500 font-mono truncate mt-0.5">{editingFilePath}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {editingFileContent !== editingFileOriginal && (
+                              <span className="text-[8px] font-bold text-warning-400 bg-warning-500/10 border border-warning-500/20 px-1.5 py-0.5 rounded uppercase">Modified</span>
+                            )}
+                            <button
+                              onClick={handleSaveFileEditor}
+                              disabled={savingFile || editingFileContent === editingFileOriginal}
+                              className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all bg-success-500/10 text-success-400 border border-success-500/20 hover:bg-success-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {savingFile ? 'Saving...' : 'Save'}
+                            </button>
+                            <button
+                              onClick={handleCloseFileEditor}
+                              className="px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all bg-dark-800/50 text-dark-300 border border-dark-700/50 hover:bg-dark-700/50 hover:text-dark-100"
+                            >
+                              Close
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Editor Body */}
+                        <div className="flex-1 overflow-hidden">
+                          {loadingFileContent ? (
+                            <div className="flex items-center justify-center h-full gap-3">
+                              <svg className="animate-spin h-5 w-5 text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              <span className="text-xs text-dark-400">Loading file...</span>
+                            </div>
+                          ) : (
+                            <textarea
+                              value={editingFileContent}
+                              onChange={(e) => setEditingFileContent(e.target.value)}
+                              className="w-full h-full resize-none bg-dark-950 text-dark-200 font-mono text-[11px] leading-relaxed p-4 outline-none border-none custom-scrollbar"
+                              spellCheck={false}
+                              style={{ minHeight: '400px', tabSize: 2 }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-center py-20">
@@ -1301,7 +1451,7 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                   className="input-field text-xs pl-8 w-full"
-                  placeholder="Search across Nexus Mods & Modrinth repositories (press Enter)..."
+                  placeholder="Search by name, Mod ID, or paste URL (Nexus, Modrinth, Steam, CurseForge)..."
                 />
                 <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-dark-500 absolute left-2.5 top-2.5">
                   <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
@@ -1316,6 +1466,30 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
               </button>
             </div>
 
+            {/* Source Filters & Help Tooltip */}
+            <div className="flex flex-col gap-2 mt-1">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex gap-1.5 flex-wrap">
+                  {(['all', 'nexus', 'modrinth', 'steam', 'curseforge'] as const).map((src) => (
+                    <button
+                      key={src}
+                      onClick={() => setSelectedSourceFilter(src)}
+                      className={`px-3 py-1 rounded-full text-[10px] font-semibold border transition-all duration-200 ${
+                        selectedSourceFilter === src
+                          ? 'bg-primary-600/20 text-primary-400 border-primary-500/30 shadow-sm'
+                          : 'bg-dark-900/20 text-dark-400 border-dark-800/40 hover:bg-dark-800/50 hover:text-dark-300'
+                      }`}
+                    >
+                      {src === 'all' ? 'All Sources' : src === 'steam' ? 'Steam Workshop' : src === 'curseforge' ? 'CurseForge' : src === 'nexus' ? 'Nexus Mods' : 'Modrinth'}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[9px] text-dark-500 italic">
+                  💡 Tip: You can search by name, paste a Mod ID, or paste the full URL (Nexus, Modrinth, Steam, CurseForge).
+                </span>
+              </div>
+            </div>
+
             {/* Discover Grid */}
             {searching ? (
               <div className="flex flex-col items-center justify-center py-10">
@@ -1323,129 +1497,143 @@ export const ModsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
               </div>
             ) : searchResults.length === 0 ? (
               <div className="text-center py-12 text-dark-500 text-xs">
-                {searchQuery ? 'No mods matching query. Press Search to query online APIs.' : 'Enter a query and press Search to look up mods from Nexus Mods and Modrinth.'}
+                {searchQuery ? 'No mods matching query. Press Search to query online APIs.' : 'Enter a query, Mod ID, or URL and press Search to look up mods from Nexus, Modrinth, Steam, and CurseForge.'}
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {searchResults.map((dmod) => {
-                  const alreadyInstalled = mods.some(m => {
-                    if (dmod.source === 'steam' && dmod.workshop_id) {
-                      return (m.is_workshop_mod && m.workshop_id === dmod.workshop_id) || m.name.includes(dmod.workshop_id);
-                    }
-                    return m.name === dmod.name;
-                  });
-                  return (
-                    <div key={dmod.url} className="glass-card p-4 flex gap-4 items-start justify-between hover:bg-dark-900/40 hover:border-dark-600/50 hover:shadow-lg hover:shadow-primary-500/5 hover:-translate-y-0.5 transition-all duration-300 group">
-                      {dmod.picture_url && (
-                        <div className="w-20 h-16 rounded-lg overflow-hidden border border-dark-700/30 flex-shrink-0 cursor-pointer group-hover:border-primary-500/30 transition-all duration-300">
-                          <img 
-                            src={dmod.picture_url} 
-                            alt={dmod.title} 
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            onClick={() => setSelectedModForDetails(dmod)}
-                          />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0 flex flex-col justify-between h-full min-h-[64px]">
-                        <div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span 
-                              className="text-xs font-bold text-dark-100 truncate cursor-pointer hover:text-primary-400 group-hover:text-primary-300 transition-colors duration-200"
-                              onClick={() => setSelectedModForDetails(dmod)}
-                            >
-                              {dmod.title}
-                            </span>
-                            <span className={`text-[7px] font-extrabold px-1.5 py-0.5 rounded tracking-wider uppercase flex-shrink-0 ${
-                              dmod.source === 'modrinth' 
-                                ? 'bg-success-500/10 text-success-400 border border-success-500/20' 
-                                : dmod.source === 'nexus'
-                                ? 'bg-info-500/10 text-info-400 border border-info-500/20'
-                                : dmod.source === 'steam'
-                                ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                                : 'bg-warning-500/10 text-warning-400 border border-warning-500/20'
-                            }`}>
-                              {dmod.source === 'steam' ? 'Steam' : dmod.source === 'curseforge' ? 'CurseForge' : dmod.source === 'nexus' ? 'Nexus' : dmod.source}
-                            </span>
-                          </div>
-                          <p 
-                            className="text-[10px] text-dark-400 mt-1 line-clamp-2 cursor-pointer group-hover:text-dark-300 transition-colors duration-200 leading-normal"
-                            onClick={() => setSelectedModForDetails(dmod)}
-                          >
-                            {dmod.summary}
-                          </p>
-                          <div className="flex items-center gap-3 mt-2 text-[9px] text-dark-500">
-                            <span className="flex items-center gap-1 font-medium group-hover:text-dark-400 transition-colors duration-200">
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-dark-500 flex-shrink-0">
-                                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                              </svg>
-                              {dmod.author}
-                            </span>
-                            <span className="flex items-center gap-1 font-medium group-hover:text-dark-400 transition-colors duration-200">
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-dark-500 flex-shrink-0">
-                                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                              </svg>
-                              {formatNumber(dmod.downloads)}
-                            </span>
-                          </div>
-                        </div>
+            ) : (() => {
+              const filteredResults = selectedSourceFilter === 'all'
+                ? searchResults
+                : searchResults.filter(r => r.source === selectedSourceFilter);
+              
+              if (filteredResults.length === 0) {
+                return (
+                  <div className="text-center py-12 text-dark-500 text-xs">
+                    No search results found matching the "{selectedSourceFilter === 'steam' ? 'Steam Workshop' : selectedSourceFilter === 'curseforge' ? 'CurseForge' : selectedSourceFilter === 'nexus' ? 'Nexus Mods' : selectedSourceFilter === 'modrinth' ? 'Modrinth' : selectedSourceFilter}" filter.
+                  </div>
+                );
+              }
 
-                        <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-dark-800/40">
-                          <div className="flex items-center gap-3.5">
-                            <a
-                              href={dmod.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[9px] font-semibold text-primary-400 hover:text-primary-300 flex items-center gap-0.5 transition-colors"
-                            >
-                              <span>View Site</span>
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
-                                <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
-                                <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
-                              </svg>
-                            </a>
-                            <button
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredResults.map((dmod) => {
+                    const alreadyInstalled = mods.some(m => {
+                      if (dmod.source === 'steam' && dmod.workshop_id) {
+                        return (m.is_workshop_mod && m.workshop_id === dmod.workshop_id) || m.name.includes(dmod.workshop_id);
+                      }
+                      return m.name === dmod.name;
+                    });
+                    return (
+                      <div key={dmod.url} className="glass-card p-4 flex gap-4 items-start justify-between hover:bg-dark-900/40 hover:border-dark-600/50 hover:shadow-lg hover:shadow-primary-500/5 hover:-translate-y-0.5 transition-all duration-300 group">
+                        {dmod.picture_url && (
+                          <div className="w-20 h-16 rounded-lg overflow-hidden border border-dark-700/30 flex-shrink-0 cursor-pointer group-hover:border-primary-500/30 transition-all duration-300">
+                            <img 
+                              src={dmod.picture_url} 
+                              alt={dmod.title} 
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                               onClick={() => setSelectedModForDetails(dmod)}
-                              className="text-[9px] font-semibold text-dark-400 hover:text-dark-200 flex items-center gap-0.5 transition-colors"
+                            />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0 flex flex-col justify-between h-full min-h-[64px]">
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span 
+                                className="text-xs font-bold text-dark-100 truncate cursor-pointer hover:text-primary-400 group-hover:text-primary-300 transition-colors duration-200"
+                                onClick={() => setSelectedModForDetails(dmod)}
+                              >
+                                {dmod.title}
+                              </span>
+                              <span className={`text-[7px] font-extrabold px-1.5 py-0.5 rounded tracking-wider uppercase flex-shrink-0 ${
+                                dmod.source === 'modrinth' 
+                                  ? 'bg-success-500/10 text-success-400 border border-success-500/20' 
+                                  : dmod.source === 'nexus'
+                                  ? 'bg-info-500/10 text-info-400 border border-info-500/20'
+                                  : dmod.source === 'steam'
+                                  ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                  : 'bg-warning-500/10 text-warning-400 border border-warning-500/20'
+                              }`}>
+                                {dmod.source === 'steam' ? 'Steam' : dmod.source === 'curseforge' ? 'CurseForge' : dmod.source === 'nexus' ? 'Nexus' : dmod.source}
+                              </span>
+                            </div>
+                            <p 
+                              className="text-[10px] text-dark-400 mt-1 line-clamp-2 cursor-pointer group-hover:text-dark-300 transition-colors duration-200 leading-normal"
+                              onClick={() => setSelectedModForDetails(dmod)}
                             >
-                              <span>Details</span>
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
-                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-                                <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
-                              </svg>
+                              {dmod.summary}
+                            </p>
+                            <div className="flex items-center gap-3 mt-2 text-[9px] text-dark-500">
+                              <span className="flex items-center gap-1 font-medium group-hover:text-dark-400 transition-colors duration-200">
+                                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-dark-500 flex-shrink-0">
+                                  <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                                </svg>
+                                {dmod.author}
+                              </span>
+                              <span className="flex items-center gap-1 font-medium group-hover:text-dark-400 transition-colors duration-200">
+                                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-dark-500 flex-shrink-0">
+                                  <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                                </svg>
+                                {formatNumber(dmod.downloads)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-dark-800/40">
+                            <div className="flex items-center gap-3.5">
+                              <a
+                                href={dmod.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[9px] font-semibold text-primary-400 hover:text-primary-300 flex items-center gap-0.5 transition-colors"
+                              >
+                                <span>View Site</span>
+                                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
+                                  <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                                  <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                                </svg>
+                              </a>
+                              <button
+                                onClick={() => setSelectedModForDetails(dmod)}
+                                className="text-[9px] font-semibold text-dark-400 hover:text-dark-200 flex items-center gap-0.5 transition-colors"
+                              >
+                                <span>Details</span>
+                                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
+                                  <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                                  <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                            </div>
+                            <button
+                              onClick={() => handleInstallDiscoverMod(dmod)}
+                              disabled={alreadyInstalled || (installing && installingModUrl !== dmod.url)}
+                              className={`text-[10px] py-1.5 px-4 rounded-lg font-bold transition-all duration-300 ${
+                                alreadyInstalled
+                                  ? 'bg-success-600/10 text-success-400 border border-success-500/20 cursor-default'
+                                  : (installing && installingModUrl !== dmod.url)
+                                  ? 'bg-primary-600/50 text-white/50 cursor-not-allowed'
+                                  : 'bg-primary-600 hover:bg-primary-500 text-white shadow-md shadow-primary-600/10 hover:shadow-primary-500/20 hover:scale-[1.02] active:scale-[0.98]'
+                              }`}
+                            >
+                              {alreadyInstalled ? (
+                                t('mods.installed')
+                              ) : installingModUrl === dmod.url ? (
+                                <div className="flex items-center gap-1.5">
+                                  <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  <span>{t('mods.installing')}</span>
+                                </div>
+                              ) : (
+                                t('mods.oneClickInstall')
+                              )}
                             </button>
                           </div>
-                          <button
-                            onClick={() => handleInstallDiscoverMod(dmod)}
-                            disabled={alreadyInstalled || (installing && installingModUrl !== dmod.url)}
-                            className={`text-[10px] py-1.5 px-4 rounded-lg font-bold transition-all duration-300 ${
-                              alreadyInstalled
-                                ? 'bg-success-600/10 text-success-400 border border-success-500/20 cursor-default'
-                                : (installing && installingModUrl !== dmod.url)
-                                ? 'bg-primary-600/50 text-white/50 cursor-not-allowed'
-                                : 'bg-primary-600 hover:bg-primary-500 text-white shadow-md shadow-primary-600/10 hover:shadow-primary-500/20 hover:scale-[1.02] active:scale-[0.98]'
-                            }`}
-                          >
-                            {alreadyInstalled ? (
-                              t('mods.installed')
-                            ) : installingModUrl === dmod.url ? (
-                              <div className="flex items-center gap-1.5">
-                                <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                <span>{t('mods.installing')}</span>
-                              </div>
-                            ) : (
-                              t('mods.oneClickInstall')
-                            )}
-                          </button>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 

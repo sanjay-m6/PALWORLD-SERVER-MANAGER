@@ -115,7 +115,7 @@ impl RconService {
         let auth_request_id = session.request_id;
 
         // Send AUTH packet
-        Self::write_packet(&mut session.stream, auth_request_id, SERVERDATA_AUTH, password).await?;
+        Self::write_packet(&mut session.stream, auth_request_id, SERVERDATA_AUTH, password, false).await?;
 
         // Per the Source RCON protocol specification, the server responds to
         // SERVERDATA_AUTH with TWO packets:
@@ -174,12 +174,23 @@ impl RconService {
         };
 
         let mut session = session.lock().await;
-        log::info!("[RCON] Server {} executing: {}", server_id, command);
+
+        // Palworld RCON Broadcast command doesn't support standard spaces as they truncate the message.
+        // We replace standard spaces in the message with a single-byte non-breaking space (0xA0) in RCON.
+        let mut final_command = command.to_string();
+        let mut replace_spaces_with_nbsp_byte = false;
+        if command.trim().to_lowercase().starts_with("broadcast ") {
+            let msg = &command[10..];
+            final_command = format!("Broadcast {}", msg);
+            replace_spaces_with_nbsp_byte = true;
+        }
+
+        log::info!("[RCON] Server {} executing: {}", server_id, final_command);
 
         session.request_id += 1;
         let request_id = session.request_id;
 
-        match Self::write_packet(&mut session.stream, request_id, SERVERDATA_EXECCOMMAND, command).await {
+        match Self::write_packet(&mut session.stream, request_id, SERVERDATA_EXECCOMMAND, &final_command, replace_spaces_with_nbsp_byte).await {
             Ok(_) => {}
             Err(e) => {
                 log::error!("[RCON] Failed to send command for server {}: {}", server_id, e);
@@ -284,16 +295,29 @@ impl RconService {
         request_id: i32,
         packet_type: i32,
         body: &str,
+        replace_spaces_with_nbsp: bool,
     ) -> Result<(), String> {
         // Build packet: Size(4) + ID(4) + Type(4) + Body(null) + Padding(null)
-        let body_bytes = body.as_bytes();
+        let mut body_bytes = body.as_bytes().to_vec();
+
+        if replace_spaces_with_nbsp {
+            // Find where "Broadcast " ends (10 bytes) and replace spaces in the rest with 0xA0
+            if body_bytes.len() > 10 {
+                for i in 10..body_bytes.len() {
+                    if body_bytes[i] == 0x20 {
+                        body_bytes[i] = 0xA0;
+                    }
+                }
+            }
+        }
+
         let size = 4 + 4 + body_bytes.len() as i32 + 2; // ID + Type + Body + 2 null terminators
 
         let mut packet = Vec::with_capacity(size as usize + 4);
         packet.extend_from_slice(&size.to_le_bytes());
         packet.extend_from_slice(&request_id.to_le_bytes());
         packet.extend_from_slice(&packet_type.to_le_bytes());
-        packet.extend_from_slice(body_bytes);
+        packet.extend_from_slice(&body_bytes);
         packet.push(0); // Body null terminator
         packet.push(0); // Packet null terminator
 
