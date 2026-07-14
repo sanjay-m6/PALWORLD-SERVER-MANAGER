@@ -160,6 +160,9 @@ pub async fn auto_start_servers(
             Ok(_) => {
                 started += 1;
                 log::info!("[STARTUP] Auto-started server ID {}", server_id);
+                if let Ok(db) = state.db.lock() {
+                    let _ = db.update_server_status(server_id, "running");
+                }
             }
             Err(e) => {
                 log::error!("[STARTUP] Failed to auto-start server ID {}: {}", server_id, e);

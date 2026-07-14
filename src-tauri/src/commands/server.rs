@@ -4,6 +4,7 @@ use crate::AppState;
 use crate::models::{CreateServerRequest, Server, PalworldConfig};
 use crate::services::config_generator::ConfigGenerator;
 use tauri::{State, Manager};
+use std::sync::Mutex;
 use crate::services::process_manager::StopReason;
 
 #[tauri::command]
@@ -209,14 +210,16 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     }
 
     // Check if another process for this server is already running on the OS from the same install directory
-    let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let install_path_lower = install_path.to_lowercase();
-    let is_already_running_on_system = sys.processes().values().any(|p| {
-        let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let name = p.name().to_string_lossy().to_lowercase();
-        (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower)
-    });
+    let is_already_running_on_system = {
+        let mut sys = state.sys.lock().map_err(|e| e.to_string())?;
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        sys.processes().values().any(|p| {
+            let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let name = p.name().to_string_lossy().to_lowercase();
+            (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower)
+        })
+    };
     if is_already_running_on_system {
         return Err("Another process for this server is already running on the system.".to_string());
     }
@@ -265,44 +268,66 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
             #[cfg(target_os = "windows")]
             {
                 let game_rule_name = format!("Palworld Game Server Port {}", game_port);
-                let mut cmd_game = std::process::Command::new("powershell");
-                cmd_game.args([
-                    "-Command",
-                    &format!(
-                        "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {}",
-                        game_rule_name, game_rule_name, game_port
-                    )
-                ])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-
+                
+                let mut del_game = std::process::Command::new("netsh");
+                del_game.args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", game_rule_name)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
                 #[cfg(target_os = "windows")]
                 {
                     use std::os::windows::process::CommandExt;
-                    cmd_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    del_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 }
+                let _ = del_game.status();
 
-                let _ = cmd_game.status();
+                let mut add_game = std::process::Command::new("netsh");
+                add_game.args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={}", game_rule_name),
+                    "dir=in",
+                    "action=allow",
+                    "protocol=UDP",
+                    &format!("localport={}", game_port)
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    add_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let _ = add_game.status();
 
                 let rcon_rule_name = format!("Palworld Server RCON {}", rcon_port);
-                let mut cmd_rcon = std::process::Command::new("powershell");
-                cmd_rcon.args([
-                    "-Command",
-                    &format!(
-                        "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {}",
-                        rcon_rule_name, rcon_rule_name, rcon_port
-                    )
-                ])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-
+                
+                let mut del_rcon = std::process::Command::new("netsh");
+                del_rcon.args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rcon_rule_name)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
                 #[cfg(target_os = "windows")]
                 {
                     use std::os::windows::process::CommandExt;
-                    cmd_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    del_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 }
+                let _ = del_rcon.status();
 
-                let _ = cmd_rcon.status();
+                let mut add_rcon = std::process::Command::new("netsh");
+                add_rcon.args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={}", rcon_rule_name),
+                    "dir=in",
+                    "action=allow",
+                    "protocol=TCP",
+                    &format!("localport={}", rcon_port)
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    add_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let _ = add_rcon.status();
             }
 
             let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -320,8 +345,11 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     }
 }
 
-fn kill_all_processes_for_install_path(install_path: &str) {
-    let mut sys = sysinfo::System::new();
+fn kill_all_processes_for_install_path(sys_mutex: &Mutex<sysinfo::System>, install_path: &str) {
+    let mut sys = match sys_mutex.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let install_path_lower = install_path.to_lowercase();
     
@@ -485,7 +513,7 @@ pub async fn stop_server(
     if !graceful_done {
         // Fallback to standard process manager stop (taskkill)
         let _ = state.process_manager.stop_server(server_id, StopReason::UserAction);
-        kill_all_processes_for_install_path(&install_path);
+        kill_all_processes_for_install_path(&state.sys, &install_path);
     } else {
         // Just make sure it is untracked in ProcessManager and database status updated
         state.process_manager.untrack_server(server_id, StopReason::UserAction);
@@ -518,7 +546,7 @@ pub async fn restart_server(state: State<'_, AppState>, server_id: i64) -> Resul
     }
 
     // Force-kill any remaining processes for this server path
-    kill_all_processes_for_install_path(&install_path);
+    kill_all_processes_for_install_path(&state.sys, &install_path);
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // Start
@@ -570,11 +598,65 @@ pub async fn get_server_status(
             "memoryMb": null,
         }))
     } else {
-        let is_running = state.process_manager.is_server_running(server_id);
+        let mut is_running = state.process_manager.is_server_running(server_id);
+        
+        // If not tracked by ProcessManager, check if it's running on the OS and adopt it
+        if !is_running {
+            if let Ok((install_path, admin_password)) = (|| -> Result<(String, String), String> {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let conn = db.get_connection()?;
+                conn.query_row(
+                    "SELECT install_path, admin_password FROM servers WHERE id = ?1",
+                    [server_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                ).map_err(|e| e.to_string())
+            })() {
+                let install_path_lower = install_path.to_lowercase();
+                let mut os_pid = None;
+                if let Ok(mut sys) = state.sys.lock() {
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                    for (pid, p) in sys.processes() {
+                        let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+                        let name = p.name().to_string_lossy().to_lowercase();
+                        if (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower) {
+                            os_pid = Some(pid.as_u32());
+                            break;
+                        }
+                    }
+                }
+                
+                if let Some(pid_val) = os_pid {
+                    log::info!("[PROCESS] Recovered orphaned server process on OS for server {} with PID {}. Adopting.", server_id, pid_val);
+                    state.process_manager.adopt_server_process(server_id, pid_val, &admin_password);
+                    state.log_watcher.start_watching(server_id, &install_path);
+                    is_running = true;
+                }
+            }
+        }
+        
+        // Sync database status if mismatch
+        if is_running {
+            if status == "starting" || status == "stopped" || status == "crashed" {
+                if let Ok(db) = state.db.lock() {
+                    let _ = db.update_server_status(server_id, "running");
+                }
+            }
+        } else {
+            if status == "running" || status == "online" {
+                if let Ok(db) = state.db.lock() {
+                    let _ = db.update_server_status(server_id, "stopped");
+                }
+            }
+        }
+
         let pid = state.process_manager.get_server_pid(server_id);
         let uptime = state.process_manager.get_server_uptime(server_id);
 
-        let stats = pid.and_then(crate::services::system_analyzer::SystemAnalyzer::get_process_stats);
+        let stats = if let Some(p) = pid {
+            if let Ok(mut sys) = state.sys.lock() {
+                crate::services::system_analyzer::SystemAnalyzer::get_process_stats(&mut sys, p)
+            } else { None }
+        } else { None };
 
         Ok(serde_json::json!({
             "isRunning": is_running,
@@ -618,12 +700,41 @@ pub async fn update_server_auto_start(
     Ok(())
 }
 
+fn remove_dir_all_force(path: &std::path::Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_file() {
+        let mut perms = std::fs::metadata(path)?.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            std::fs::set_permissions(path, perms)?;
+        }
+        std::fs::remove_file(path)?;
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        remove_dir_all_force(&entry_path)?;
+    }
+    let mut perms = std::fs::metadata(path)?.permissions();
+    if perms.readonly() {
+        perms.set_readonly(false);
+        std::fs::set_permissions(path, perms)?;
+    }
+    std::fs::remove_dir(path)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn wipe_server(
     state: State<'_, AppState>,
     server_id: i64,
     wipe_saves: bool,
     wipe_configs: bool,
+    wipe_players_only: bool,
+    wipe_map_only: bool,
 ) -> Result<(), String> {
     // 1. Ensure the server is not running
     if state.process_manager.is_server_running(server_id) {
@@ -643,13 +754,55 @@ pub async fn wipe_server(
 
     let install = std::path::PathBuf::from(&install_path);
 
+    // Helper function to find the world save folder
+    let get_world_save_dir = |install_path: &std::path::Path| -> Option<std::path::PathBuf> {
+        let save_games_0 = install_path.join("Pal").join("Saved").join("SaveGames").join("0");
+        if !save_games_0.exists() {
+            return None;
+        }
+        if let Ok(entries) = std::fs::read_dir(save_games_0) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                if entry.path().is_dir() {
+                    return Some(entry.path());
+                }
+            }
+        }
+        None
+    };
+
     // 3. Wipe Saves if requested
     if wipe_saves {
         let save_dir = install.join("Pal").join("Saved").join("SaveGames");
         if save_dir.exists() {
             log::info!("[SERVER] Wiping save games directory: {:?}", save_dir);
-            std::fs::remove_dir_all(&save_dir)
+            remove_dir_all_force(&save_dir)
                 .map_err(|e| format!("Failed to delete SaveGames folder: {}", e))?;
+        }
+    } else {
+        if wipe_players_only {
+            if let Some(world_dir) = get_world_save_dir(&install) {
+                let players_dir = world_dir.join("Players");
+                if players_dir.exists() {
+                    log::info!("[SERVER] Wiping player saves only: {:?}", players_dir);
+                    remove_dir_all_force(&players_dir)
+                        .map_err(|e| format!("Failed to delete Players folder: {}", e))?;
+                    std::fs::create_dir_all(&players_dir)
+                        .map_err(|e| format!("Failed to recreate Players folder: {}", e))?;
+                }
+            }
+        }
+        if wipe_map_only {
+            if let Some(world_dir) = get_world_save_dir(&install) {
+                let level_sav = world_dir.join("Level.sav");
+                let level_meta_sav = world_dir.join("LevelMeta.sav");
+                log::info!("[SERVER] Wiping map/world data only from {:?}", world_dir);
+                if level_sav.exists() {
+                    let _ = std::fs::remove_file(&level_sav);
+                }
+                if level_meta_sav.exists() {
+                    let _ = std::fs::remove_file(&level_meta_sav);
+                }
+            }
         }
     }
 
@@ -769,29 +922,50 @@ pub async fn clear_server_cache(
         db.get_server_install_path(server_id)?
     };
 
+    // Check if the server is running on the OS
+    let install_path_lower = install_path.to_lowercase();
+    let is_running_on_system = {
+        let mut sys = state.sys.lock().map_err(|e| e.to_string())?;
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        sys.processes().values().any(|p| {
+            let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let name = p.name().to_string_lossy().to_lowercase();
+            (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower)
+        })
+    };
+    if is_running_on_system {
+        return Err("Cannot clear cache while the server is running. Please stop the server first.".to_string());
+    }
+
     let base = std::path::PathBuf::from(&install_path);
+
 
     // 2. Clear Crashes folder
     let crashes_dir = base.join("Pal").join("Saved").join("Crashes");
     if crashes_dir.exists() {
         log::info!("[CACHE] Clearing Crashes directory: {:?}", crashes_dir);
-        let _ = std::fs::remove_dir_all(&crashes_dir);
-        let _ = std::fs::create_dir_all(&crashes_dir);
+        remove_dir_all_force(&crashes_dir)
+            .map_err(|e| format!("Failed to delete Crashes directory: {}", e))?;
+        std::fs::create_dir_all(&crashes_dir)
+            .map_err(|e| format!("Failed to recreate Crashes directory: {}", e))?;
     }
 
     // 3. Clear Logs folder
     let logs_dir = base.join("Pal").join("Saved").join("Logs");
     if logs_dir.exists() {
         log::info!("[CACHE] Clearing Logs directory: {:?}", logs_dir);
-        let _ = std::fs::remove_dir_all(&logs_dir);
-        let _ = std::fs::create_dir_all(&logs_dir);
+        remove_dir_all_force(&logs_dir)
+            .map_err(|e| format!("Failed to delete Logs directory: {}", e))?;
+        std::fs::create_dir_all(&logs_dir)
+            .map_err(|e| format!("Failed to recreate Logs directory: {}", e))?;
     }
 
     // 4. Clear SteamCMD appcache
     let steamcmd_appcache = state.steamcmd.get_steamcmd_dir().join("appcache");
     if steamcmd_appcache.exists() {
         log::info!("[CACHE] Clearing SteamCMD appcache: {:?}", steamcmd_appcache);
-        let _ = std::fs::remove_dir_all(&steamcmd_appcache);
+        remove_dir_all_force(&steamcmd_appcache)
+            .map_err(|e| format!("Failed to delete SteamCMD appcache: {}", e))?;
     }
 
     Ok(())

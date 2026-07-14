@@ -96,6 +96,7 @@ export const Dashboard: React.FC = () => {
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [serverToDelete, setServerToDelete] = useState<any | null>(null);
+  const [serverToStop, setServerToStop] = useState<any | null>(null);
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [backupFirst, setBackupFirst] = useState(true);
 
@@ -302,7 +303,7 @@ export const Dashboard: React.FC = () => {
   const refreshStats = async () => {
     const store = useAppStore.getState();
     const running = store.servers.filter(
-      (s) => s.status === 'running' || s.status === 'online'
+      (s) => s.status === 'running' || s.status === 'online' || s.status === 'starting' || s.status === 'restarting'
     );
     const stats: Record<number, any> = {};
     const newUptimes: Record<number, number> = {};
@@ -313,6 +314,13 @@ export const Dashboard: React.FC = () => {
         stats[server.id] = status;
         if (status.uptimeSeconds) {
           newUptimes[server.id] = status.uptimeSeconds;
+        }
+        
+        // Self-heal/update store status if mismatched
+        if (status.isRunning && (server.status === 'starting' || server.status === 'restarting')) {
+          store.updateServerStatus(server.id, 'running');
+        } else if (!status.isRunning && (server.status === 'running' || server.status === 'online')) {
+          store.updateServerStatus(server.id, 'stopped');
         }
       } catch (_) {}
     }
@@ -348,13 +356,13 @@ export const Dashboard: React.FC = () => {
 
   const handleStopAll = async () => {
     const running = servers.filter(
-      (s) => s.status === 'running' || s.status === 'online'
+      (s) => s.status === 'running' || s.status === 'online' || s.status === 'starting' || s.status === 'restarting'
     );
     if (running.length === 0) {
       showNotification('info', 'No servers are currently running.');
       return;
     }
-    if (!confirm(`Are you sure you want to stop all ${running.length} running server(s)?`)) return;
+    if (!confirm(`Are you sure you want to stop all ${running.length} running/starting server(s)?`)) return;
     showNotification('info', `Stopping ${running.length} server(s)...`);
     for (const s of running) {
       try {
@@ -402,9 +410,6 @@ export const Dashboard: React.FC = () => {
       try {
         await tauriCommands.startServer(serverId);
         showNotification('success', 'Server starting...');
-        setSelectedServerId(serverId);
-        setActiveServerTab('logs');
-        setCurrentView('server-detail');
         await loadServers();
       } catch (e: any) {
         showNotification('error', `Start failed: ${e}`);
@@ -412,7 +417,14 @@ export const Dashboard: React.FC = () => {
     });
   };
 
-  const handleStopServer = async (serverId: number) => {
+  const handleStopServer = (serverId: number) => {
+    const s = servers.find((srv) => srv.id === serverId);
+    if (s) {
+      setServerToStop(s);
+    }
+  };
+
+  const executeStopServer = async (serverId: number) => {
     try {
       await tauriCommands.stopServer(serverId, false);
       showNotification('success', 'Server stopped successfully.');
@@ -426,9 +438,6 @@ export const Dashboard: React.FC = () => {
     try {
       await tauriCommands.restartServer(serverId);
       showNotification('success', 'Restarting server...');
-      setSelectedServerId(serverId);
-      setActiveServerTab('logs');
-      setCurrentView('server-detail');
       await loadServers();
     } catch (e: any) {
       showNotification('error', `Restart failed: ${e}`);
@@ -1533,6 +1542,43 @@ export const Dashboard: React.FC = () => {
                 ) : (
                   'Clone Instance'
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Custom Stop Server Confirmation Modal */}
+      {serverToStop && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm" onClick={() => setServerToStop(null)} />
+          <div className="relative glass-card max-w-sm w-full border border-error-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-5 animate-scale-in">
+            <div className="flex items-center gap-3 text-error-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-error-500/10 border border-error-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Stop Server</h2>
+            </div>
+            <p className="text-xs text-dark-300 leading-relaxed">
+              Are you sure you want to stop the server <strong>{serverToStop.name}</strong>? Any active players will be disconnected.
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setServerToStop(null)}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200"
+              >
+                No, Keep Running
+              </button>
+              <button
+                onClick={() => {
+                  const targetId = serverToStop.id;
+                  setServerToStop(null);
+                  executeStopServer(targetId);
+                }}
+                className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:text-error-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200"
+              >
+                Yes, Stop Server
               </button>
             </div>
           </div>

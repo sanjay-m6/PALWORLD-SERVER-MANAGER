@@ -32,8 +32,11 @@ pub async fn get_process_stats(
     let pid = state.process_manager.get_server_pid(server_id)
         .ok_or_else(|| "Server is not running".to_string())?;
 
-    let stats = SystemAnalyzer::get_process_stats(pid)
-        .ok_or_else(|| "Process not found".to_string())?;
+    let stats = {
+        let mut sys = state.sys.lock().map_err(|e| e.to_string())?;
+        SystemAnalyzer::get_process_stats(&mut sys, pid)
+            .ok_or_else(|| "Process not found".to_string())?
+    };
 
     Ok(serde_json::to_value(stats).map_err(|e| e.to_string())?)
 }
@@ -214,25 +217,36 @@ pub async fn setup_firewall_rules(state: State<'_, AppState>, server_id: i64) ->
     {
         // Add UDP port for game server
         let game_rule_name = format!("Palworld Game Server Port {}", game_port);
-        let mut cmd_game = std::process::Command::new("powershell");
-        cmd_game.args([
-            "-Command",
-            &format!(
-                "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol UDP -LocalPort {}",
-                game_rule_name, game_rule_name, game_port
-            )
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
+        
+        let mut del_game = std::process::Command::new("netsh");
+        del_game.args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", game_rule_name)])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            cmd_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            del_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let _ = del_game.status();
+
+        let mut add_game = std::process::Command::new("netsh");
+        add_game.args([
+            "advfirewall", "firewall", "add", "rule",
+            &format!("name={}", game_rule_name),
+            "dir=in",
+            "action=allow",
+            "protocol=UDP",
+            &format!("localport={}", game_port)
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            add_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
 
-        let status_game = cmd_game.status();
-
+        let status_game = add_game.status();
         if let Ok(s) = status_game {
             if !s.success() {
                 return Err("Access Denied: Windows Firewall rules require Administrator privileges. Please run the manager as Administrator.".to_string());
@@ -242,25 +256,36 @@ pub async fn setup_firewall_rules(state: State<'_, AppState>, server_id: i64) ->
         // Add TCP port for RCON if enabled
         if rcon_enabled == 1 {
             let rcon_rule_name = format!("Palworld Server RCON {}", rcon_port);
-            let mut cmd_rcon = std::process::Command::new("powershell");
-            cmd_rcon.args([
-                "-Command",
-                &format!(
-                    "Remove-NetFirewallRule -DisplayName '{}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '{}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {}",
-                    rcon_rule_name, rcon_rule_name, rcon_port
-                )
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-
+            
+            let mut del_rcon = std::process::Command::new("netsh");
+            del_rcon.args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rcon_rule_name)])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
-                cmd_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                del_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            let _ = del_rcon.status();
+
+            let mut add_rcon = std::process::Command::new("netsh");
+            add_rcon.args([
+                "advfirewall", "firewall", "add", "rule",
+                &format!("name={}", rcon_rule_name),
+                "dir=in",
+                "action=allow",
+                "protocol=TCP",
+                &format!("localport={}", rcon_port)
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                add_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
             }
 
-            let status_rcon = cmd_rcon.status();
-
+            let status_rcon = add_rcon.status();
             if let Ok(s) = status_rcon {
                 if !s.success() {
                     return Err("Access Denied: Windows Firewall rules require Administrator privileges. Please run the manager as Administrator.".to_string());

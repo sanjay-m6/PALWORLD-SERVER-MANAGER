@@ -201,32 +201,36 @@ impl ProcessManager {
             .join("Saved")
             .join("Logs");
         let _ = std::fs::create_dir_all(&log_dir);
-        let console_log_path = log_dir.join("PalServer-console.log");
 
         #[cfg(target_os = "windows")]
-        let pid = if run_as_admin && !is_app_elevated() {
+        let pid = {
             let escaped_exe = server_exe.to_string_lossy().replace('\'', "''");
-            let escaped_log_path = console_log_path.to_string_lossy().replace('\'', "''");
             let escaped_args = args.iter()
-                .map(|a| format!("''{}''", a.replace('\'', "''")))
+                .map(|a| format!("'{}'", a.replace('\'', "''")))
                 .collect::<Vec<_>>()
-                .join(" ");
+                .join(", ");
+
+            let verb_part = if run_as_admin && !is_app_elevated() {
+                "-Verb RunAs"
+            } else {
+                ""
+            };
 
             let ps_cmd = format!(
-                "Start-Process -FilePath \"powershell.exe\" -ArgumentList \"-NoProfile -Command & {{ & ''{}'' {} > ''{}'' 2>&1 }}\" -WorkingDirectory \"{}\" -WindowStyle Hidden -Verb RunAs -PassThru | Select-Object -ExpandProperty Id",
+                "Start-Process -FilePath \"{}\" -ArgumentList {} -WorkingDirectory \"{}\" -WindowStyle Normal {} -PassThru | Select-Object -ExpandProperty Id",
                 escaped_exe,
                 escaped_args,
-                escaped_log_path,
                 install_path.replace('\"', "\\\""),
+                verb_part,
             );
 
-            log::info!("[PROCESS] Spawning elevated PalServer on Windows via: {}", ps_cmd);
+            log::info!("[PROCESS] Spawning PalServer on Windows via: {}", ps_cmd);
 
             let mut cmd = Command::new("powershell");
             cmd.args(["-NoProfile", "-Command", &ps_cmd]);
             cmd.creation_flags(CREATE_NO_WINDOW);
 
-            let output = cmd.output().context("Failed to spawn elevated PalServer via PowerShell")?;
+            let output = cmd.output().context("Failed to spawn PalServer via PowerShell")?;
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if let Ok(p) = stdout.parse::<u32>() {
@@ -236,23 +240,8 @@ impl ProcessManager {
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("PowerShell failed to spawn elevated process: {}", stderr);
+                anyhow::bail!("PowerShell failed to spawn process: {}", stderr);
             }
-        } else {
-            let mut cmd = Command::new(&server_exe);
-            cmd.args(&args)
-                .current_dir(&install_path);
-
-            if let Ok(f) = std::fs::File::create(&console_log_path) {
-                if let Ok(f_err) = f.try_clone() {
-                    cmd.stdout(std::process::Stdio::from(f));
-                    cmd.stderr(std::process::Stdio::from(f_err));
-                }
-            }
-
-            cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
-            let child = cmd.spawn().context("Failed to spawn PalServer executable")?;
-            child.id()
         };
 
         #[cfg(not(target_os = "windows"))]
@@ -452,8 +441,13 @@ impl ProcessManager {
         });
     }
 
-    /// Check if a specific PID is still alive
     pub fn is_process_alive(&self, pid: u32) -> bool {
+        if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
+            if let Ok(mut sys) = state.sys.lock() {
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
+                return sys.process(sysinfo::Pid::from_u32(pid)).is_some();
+            }
+        }
         let mut sys = sysinfo::System::new();
         sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
         sys.process(sysinfo::Pid::from_u32(pid)).is_some()
@@ -487,6 +481,27 @@ impl ProcessManager {
         processes.get(&server_id).map(|p| p.start_time.elapsed().as_secs())
     }
 
+    /// Adopt an existing running process on the OS
+    pub fn adopt_server_process(&self, server_id: i64, pid: u32, admin_password: &str) {
+        let mut processes = self.processes.lock().unwrap();
+        if processes.contains_key(&server_id) {
+            return; // Already tracked
+        }
+
+        log::info!("[PROCESS] Adopting running server process for server {} with PID {}", server_id, pid);
+        
+        processes.insert(server_id, TrackedProcess {
+            pid,
+            server_id,
+            start_time: std::time::Instant::now(),
+            stopping: Arc::new(AtomicBool::new(false)),
+            launched_admin_password: admin_password.to_string(),
+        });
+
+        // Spawn the crash/lifecycle monitor for the adopted process
+        self.spawn_crash_monitor(server_id, pid);
+    }
+
     /// Spawn a background task to monitor for crashes
     fn spawn_crash_monitor(&self, server_id: i64, pid: u32) {
         let processes = self.processes.clone();
@@ -510,10 +525,18 @@ impl ProcessManager {
                 }
 
                 // Check if process is still alive (querying only our specific PID)
-                let mut sys = sysinfo::System::new();
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
+                let is_alive = if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                    if let Ok(mut sys) = state.sys.lock() {
+                        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
+                        sys.process(sysinfo::Pid::from_u32(pid)).is_some()
+                    } else { false }
+                } else {
+                    let mut sys = sysinfo::System::new();
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
+                    sys.process(sysinfo::Pid::from_u32(pid)).is_some()
+                };
 
-                if sys.process(sysinfo::Pid::from_u32(pid)).is_none() {
+                if !is_alive {
                     log::error!("[PROCESS] Server {} (PID {}) has crashed!", server_id, pid);
 
                     // Remove from tracking

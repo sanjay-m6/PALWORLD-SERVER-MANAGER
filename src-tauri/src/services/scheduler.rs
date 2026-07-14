@@ -239,14 +239,26 @@ impl SchedulerService {
                                                                     let _ = db.update_server_last_started(server_id);
                                                                 }
                                                                 
-                                                                let _ = s.process_manager.start_server(
+                                                                match s.process_manager.start_server(
                                                                     server_id,
                                                                     &install_path,
                                                                     &startup_args,
                                                                     game_port,
                                                                     rcon_port,
                                                                     &admin_password,
-                                                                );
+                                                                ) {
+                                                                    Ok(_) => {
+                                                                        if let Ok(db) = s.db.lock() {
+                                                                            let _ = db.update_server_status(server_id, "running");
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        log::error!("[SCHEDULER] Failed to restart server ID {} after update: {}", server_id, e);
+                                                                        if let Ok(db) = s.db.lock() {
+                                                                            let _ = db.update_server_status(server_id, "crashed");
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -543,14 +555,26 @@ async fn execute_scheduled_task(app_handle: AppHandle, server_id: i64, task_id: 
                         let _ = db.update_server_status(server_id, "starting");
                         let _ = db.update_server_last_started(server_id);
                     }
-                    let _ = state.process_manager.start_server(
+                    match state.process_manager.start_server(
                         server_id,
                         &params.0,
                         &params.1,
                         params.2,
                         params.3,
                         &params.4,
-                    );
+                    ) {
+                        Ok(_) => {
+                            if let Ok(db) = state.db.lock() {
+                                let _ = db.update_server_status(server_id, "running");
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("[SCHEDULER] Failed to restart server ID {}: {}", server_id, e);
+                            if let Ok(db) = state.db.lock() {
+                                let _ = db.update_server_status(server_id, "crashed");
+                            }
+                        }
+                    }
                 }
             }
             "backup" => {
@@ -611,14 +635,26 @@ async fn execute_scheduled_task(app_handle: AppHandle, server_id: i64, task_id: 
                                 let _ = db.update_server_status(server_id, "starting");
                                 let _ = db.update_server_last_started(server_id);
                             }
-                            let _ = state.process_manager.start_server(
+                            match state.process_manager.start_server(
                                 server_id,
                                 &params.0,
                                 &params.1,
                                 params.2,
                                 params.3,
                                 &params.4,
-                            );
+                            ) {
+                                Ok(_) => {
+                                    if let Ok(db) = state.db.lock() {
+                                        let _ = db.update_server_status(server_id, "running");
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("[SCHEDULER] Failed to start server ID {} after update: {}", server_id, e);
+                                    if let Ok(db) = state.db.lock() {
+                                        let _ = db.update_server_status(server_id, "crashed");
+                                    }
+                                }
+                            }
                         }
                     }
                 }

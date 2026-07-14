@@ -118,6 +118,7 @@ export const ServerDetail: React.FC = () => {
   const [liveStats, setLiveStats] = useState<any>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
+  const [isStopModalOpen, setIsStopModalOpen] = useState(false);
   const [cloneName, setCloneName] = useState('');
   const [cloneInstallPath, setCloneInstallPath] = useState('');
   const [isCloning, setIsCloning] = useState(false);
@@ -136,11 +137,18 @@ export const ServerDetail: React.FC = () => {
     try {
       const stats = await tauriCommands.getServerStatus(server.id);
       setLiveStats(stats);
+
+      // Self-heal/update status if it was in starting/restarting but is now running
+      if (stats.isRunning && (server.status === 'starting' || server.status === 'restarting')) {
+        useAppStore.getState().updateServerStatus(server.id, 'running');
+      } else if (!stats.isRunning && (server.status === 'running' || server.status === 'online')) {
+        useAppStore.getState().updateServerStatus(server.id, 'stopped');
+      }
     } catch (_) {}
-  }, [server?.id]);
+  }, [server?.id, server?.status]);
 
   useEffect(() => {
-    if (server && (server.status === 'running' || server.status === 'online')) {
+    if (server && (server.status === 'running' || server.status === 'online' || server.status === 'starting' || server.status === 'restarting')) {
       refreshStats();
       const interval = setInterval(refreshStats, 5000);
       return () => clearInterval(interval);
@@ -190,7 +198,6 @@ export const ServerDetail: React.FC = () => {
       try {
         await tauriCommands.startServer(server.id);
         showNotification('success', 'Server starting...');
-        setActiveServerTab('logs');
         const updated = await tauriCommands.getServers();
         setServers(updated);
       } catch (e: any) {
@@ -199,7 +206,11 @@ export const ServerDetail: React.FC = () => {
     });
   };
 
-  const handleStop = async () => {
+  const handleStop = () => {
+    setIsStopModalOpen(true);
+  };
+
+  const executeStop = async () => {
     try {
       await tauriCommands.stopServer(server.id, false);
       showNotification('success', 'Server stopped');
@@ -215,7 +226,6 @@ export const ServerDetail: React.FC = () => {
       try {
         await tauriCommands.restartServer(server.id);
         showNotification('success', 'Server restarting...');
-        setActiveServerTab('logs');
         const updated = await tauriCommands.getServers();
         setServers(updated);
       } catch (e: any) {
@@ -464,6 +474,7 @@ export const ServerDetail: React.FC = () => {
 
       {/* Tab Content */}
       <div className="flex-1 overflow-hidden relative">
+
         {(server.status === 'starting' || server.status === 'stopping' || server.status === 'restarting' || server.status === 'updating') && (
           <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-dark-950/85 backdrop-blur-md animate-fade-in">
             <RunningPal
@@ -483,6 +494,46 @@ export const ServerDetail: React.FC = () => {
             <p className="text-[9px] tracking-widest text-dark-500 uppercase font-bold mt-2.5 font-mono">
               Please stand by. Spawning desktop console.
             </p>
+            <div className="flex gap-4 mt-6 z-50">
+              <button
+                onClick={async () => {
+                  try {
+                    const stats = await tauriCommands.getServerStatus(server.id);
+                    if (stats.isRunning) {
+                      useAppStore.getState().updateServerStatus(server.id, 'running');
+                      showNotification('success', 'Server is running! Updated status.');
+                    } else {
+                      useAppStore.getState().updateServerStatus(server.id, 'stopped');
+                      showNotification('warning', 'Server is not running. Reset status to stopped.');
+                    }
+                    const updated = await tauriCommands.getServers();
+                    setServers(updated);
+                  } catch (err: any) {
+                    showNotification('error', `Failed to refresh status: ${err}`);
+                  }
+                }}
+                className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-primary-400 hover:text-primary-300 hover:bg-primary-500/10 border border-primary-500/25 hover:border-primary-500/40 rounded-lg transition-all duration-200"
+              >
+                Refresh Status
+              </button>
+              <button
+                onClick={async () => {
+                  if (confirm('Are you sure you want to force stop this server and reset its status?')) {
+                    try {
+                      await tauriCommands.stopServer(server.id, true);
+                      showNotification('success', 'Server force stopped and status reset.');
+                      const updated = await tauriCommands.getServers();
+                      setServers(updated);
+                    } catch (err: any) {
+                      showNotification('error', `Failed to force stop: ${err}`);
+                    }
+                  }
+                }}
+                className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-error-400 hover:text-error-300 hover:bg-error-500/10 border border-error-500/25 hover:border-error-500/40 rounded-lg transition-all duration-200"
+              >
+                Force Stop & Reset
+              </button>
+            </div>
           </div>
         )}
 
@@ -767,6 +818,43 @@ export const ServerDetail: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Stop Server Confirmation Modal */}
+      {isStopModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm" onClick={() => setIsStopModalOpen(false)} />
+          <div className="relative glass-card max-w-sm w-full border border-error-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-5 animate-scale-in">
+            <div className="flex items-center gap-3 text-error-400">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-error-500/10 border border-error-500/20">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Stop Server</h2>
+            </div>
+            <p className="text-xs text-dark-300 leading-relaxed">
+              Are you sure you want to stop the server <strong>{server.name}</strong>? Any active players will be disconnected.
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setIsStopModalOpen(false)}
+                className="btn-ghost px-4 py-2 text-xs font-semibold rounded-lg text-dark-400 hover:text-dark-200"
+              >
+                No, Keep Running
+              </button>
+              <button
+                onClick={() => {
+                  setIsStopModalOpen(false);
+                  executeStop();
+                }}
+                className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:text-error-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200"
+              >
+                Yes, Stop Server
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -808,6 +896,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
   const [isWipeModalOpen, setIsWipeModalOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [wipeConfirmText, setWipeConfirmText] = useState('');
+  const [wipeType, setWipeType] = useState<'all' | 'players' | 'map'>('all');
   const [isWiping, setIsWiping] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
 
@@ -984,8 +1073,16 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
     if (wipeConfirmText !== 'WIPE') return;
     setIsWiping(true);
     try {
-      await tauriCommands.wipeServer(server.id, true, false);
-      showNotification('success', 'Server save games wiped successfully!');
+      if (wipeType === 'all') {
+        await tauriCommands.wipeServer(server.id, true, false, false, false);
+        showNotification('success', 'Server save games wiped successfully!');
+      } else if (wipeType === 'players') {
+        await tauriCommands.wipeServer(server.id, false, false, true, false);
+        showNotification('success', 'Player progress wiped successfully! Structures are preserved.');
+      } else if (wipeType === 'map') {
+        await tauriCommands.wipeServer(server.id, false, false, false, true);
+        showNotification('success', 'World and map structures wiped successfully! Player characters are preserved.');
+      }
       setIsWipeModalOpen(false);
       setWipeConfirmText('');
       fetchDetails();
@@ -1000,7 +1097,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
     if (resetConfirmText !== 'RESET') return;
     setIsWiping(true);
     try {
-      await tauriCommands.wipeServer(server.id, false, true);
+      await tauriCommands.wipeServer(server.id, false, true, false, false);
       showNotification('success', 'Server configurations reset to default successfully!');
       setIsResetModalOpen(false);
       setResetConfirmText('');
@@ -2060,21 +2157,57 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
             </button>
           </div>
 
-          {/* Wipe Saves */}
-          <div className="flex items-center justify-between py-3 last:pb-0">
+          {/* Wipe Saves (Full Reset) */}
+          <div className="flex items-center justify-between py-3 border-t border-dark-800">
             <div className="pr-4">
-              <div className="text-xs font-bold text-error-400">Wipe World & Save Games</div>
+              <div className="text-xs font-bold text-error-400">Wipe World & Save Games (Full Reset)</div>
               <div className="text-[10px] text-dark-450 mt-1 max-w-lg leading-normal">
                 Permanently deletes the entire world state, player progress, structures, and character files.
                 All game settings are retained, but player progress begins from scratch.
               </div>
             </div>
             <button
-              onClick={() => setIsWipeModalOpen(true)}
+              onClick={() => { setWipeType('all'); setIsWipeModalOpen(true); }}
               disabled={isActive || server.status === 'starting' || server.status === 'stopping' || server.status === 'updating'}
               className="bg-error-500/10 hover:bg-error-500/20 text-error-400 hover:text-error-300 border border-error-500/20 hover:border-error-500/40 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none shrink-0"
             >
               Wipe Save Data
+            </button>
+          </div>
+
+          {/* Wipe Player Data Only */}
+          <div className="flex items-center justify-between py-3 border-t border-dark-800">
+            <div className="pr-4">
+              <div className="text-xs font-bold text-error-400">Wipe Player Data Only</div>
+              <div className="text-[10px] text-dark-450 mt-1 max-w-lg leading-normal">
+                Permanently deletes all player character files, resetting everyone to Level 1.
+                The world state, map, building structures, and guild bases are preserved.
+              </div>
+            </div>
+            <button
+              onClick={() => { setWipeType('players'); setIsWipeModalOpen(true); }}
+              disabled={isActive || server.status === 'starting' || server.status === 'stopping' || server.status === 'updating'}
+              className="bg-error-500/10 hover:bg-error-500/20 text-error-400 hover:text-error-300 border border-error-500/20 hover:border-error-500/40 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            >
+              Wipe Player Data
+            </button>
+          </div>
+
+          {/* Wipe Map Data Only */}
+          <div className="flex items-center justify-between py-3 border-t border-dark-800 last:pb-0">
+            <div className="pr-4">
+              <div className="text-xs font-bold text-error-400">Wipe Map/World Data Only</div>
+              <div className="text-[10px] text-dark-450 mt-1 max-w-lg leading-normal">
+                Permanently deletes all structures, bases, and world progress.
+                Player levels, character progress, and stats are preserved.
+              </div>
+            </div>
+            <button
+              onClick={() => { setWipeType('map'); setIsWipeModalOpen(true); }}
+              disabled={isActive || server.status === 'starting' || server.status === 'stopping' || server.status === 'updating'}
+              className="bg-error-500/10 hover:bg-error-500/20 text-error-400 hover:text-error-300 border border-error-500/20 hover:border-error-500/40 font-bold px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            >
+              Wipe Map Data
             </button>
           </div>
         </div>
@@ -2139,10 +2272,17 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
               </div>
-              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Wipe World & Save Games</h2>
+              <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">
+                {wipeType === 'all' && 'Wipe World & Save Games'}
+                {wipeType === 'players' && 'Wipe Player Data Only'}
+                {wipeType === 'map' && 'Wipe Map/World Data Only'}
+              </h2>
             </div>
             <p className="text-xs text-dark-300 leading-relaxed">
-              This will permanently delete all player data, level progress, bases, and guilds on this server. 
+              {wipeType === 'all' && 'This will permanently delete all player data, level progress, bases, and guilds on this server.'}
+              {wipeType === 'players' && 'This will permanently delete all player data, character progress, levels, items, and inventories on this server. Map structures and world buildings will be preserved.'}
+              {wipeType === 'map' && 'This will permanently delete all base structures, built items, and world map progress on this server. Player characters, levels, and levels will be preserved.'}
+              <br />
               <strong>This action cannot be undone.</strong>
             </p>
             <div className="space-y-2">
@@ -2169,7 +2309,13 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                 disabled={wipeConfirmText !== 'WIPE' || isWiping}
                 className="bg-error-500/10 border border-error-500/20 hover:bg-error-500/20 text-error-400 hover:text-error-300 font-bold px-4 py-2 rounded-lg text-xs uppercase tracking-wider transition-all duration-200 disabled:opacity-40"
               >
-                {isWiping ? 'Wiping...' : 'Wipe Saves'}
+                {isWiping ? 'Wiping...' : (
+                  <>
+                    {wipeType === 'all' && 'Wipe Saves'}
+                    {wipeType === 'players' && 'Wipe Player Data'}
+                    {wipeType === 'map' && 'Wipe Map Data'}
+                  </>
+                )}
               </button>
             </div>
           </div>

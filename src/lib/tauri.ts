@@ -31,8 +31,8 @@ export const tauriCommands = {
     invoke<void>('update_server_optimize_ram', { serverId, optimizeRam }),
   clearServerCache: (serverId: number) =>
     invoke<void>('clear_server_cache', { serverId }),
-  wipeServer: (serverId: number, wipeSaves: boolean, wipeConfigs: boolean) =>
-    invoke<void>('wipe_server', { serverId, wipeSaves, wipeConfigs }),
+  wipeServer: (serverId: number, wipeSaves: boolean, wipeConfigs: boolean, wipePlayersOnly: boolean, wipeMapOnly: boolean) =>
+    invoke<void>('wipe_server', { serverId, wipeSaves, wipeConfigs, wipePlayersOnly, wipeMapOnly }),
 
   // Config commands
   getServerConfig: (serverId: number) => invoke<any>('get_server_config', { serverId }),
