@@ -229,18 +229,40 @@ impl ProcessManager {
             let mut cmd = Command::new("powershell");
             cmd.args(["-NoProfile", "-Command", &ps_cmd]);
             cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
 
-            let output = cmd.output().context("Failed to spawn PalServer via PowerShell")?;
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if let Ok(p) = stdout.parse::<u32>() {
+            let mut child = cmd.spawn().context("Failed to spawn PalServer via PowerShell")?;
+            
+            // Read stdout to get the PID. We only read a small buffer and do not read to EOF
+            // because the spawned process might inherit the stdout/stderr handles, causing cmd.output() to block forever.
+            let mut stdout_str = String::new();
+            if let Some(mut stdout) = child.stdout.take() {
+                use std::io::Read;
+                let mut buf = [0u8; 64];
+                if let Ok(n) = stdout.read(&mut buf) {
+                    stdout_str = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+                }
+            }
+
+            // Wait for the powershell wrapper process to exit (which it should do immediately)
+            let status = child.wait().context("Failed to wait for PowerShell process")?;
+            if status.success() {
+                if let Ok(p) = stdout_str.parse::<u32>() {
                     p
                 } else {
-                    anyhow::bail!("Failed to parse PID from PowerShell output: '{}'", stdout);
+                    anyhow::bail!("Failed to parse PID from PowerShell output: '{}'", stdout_str);
                 }
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("PowerShell failed to spawn process: {}", stderr);
+                let mut stderr_str = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    use std::io::Read;
+                    let mut buf = [0u8; 1024];
+                    if let Ok(n) = stderr.read(&mut buf) {
+                        stderr_str = String::from_utf8_lossy(&buf[..n]).to_string();
+                    }
+                }
+                anyhow::bail!("PowerShell failed to spawn process: {}", stderr_str);
             }
         };
 
@@ -442,15 +464,41 @@ impl ProcessManager {
     }
 
     pub fn is_process_alive(&self, pid: u32) -> bool {
-        if let Some(state) = self.app_handle.try_state::<crate::AppState>() {
-            if let Ok(mut sys) = state.sys.lock() {
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
-                return sys.process(sysinfo::Pid::from_u32(pid)).is_some();
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, GetExitCodeProcess};
+            use windows_sys::Win32::Foundation::{CloseHandle, FALSE};
+            const STILL_ACTIVE: u32 = 259;
+
+            unsafe {
+                let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                if handle == std::ptr::null_mut() {
+                    return false;
+                }
+                let mut exit_code: u32 = 0;
+                let success = GetExitCodeProcess(handle, &mut exit_code);
+                CloseHandle(handle);
+                
+                if success == FALSE {
+                    false
+                } else {
+                    exit_code == STILL_ACTIVE
+                }
             }
         }
-        let mut sys = sysinfo::System::new();
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
-        sys.process(sysinfo::Pid::from_u32(pid)).is_some()
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            unsafe {
+                let res = libc::kill(pid as i32, 0);
+                if res == 0 {
+                    true
+                } else {
+                    let err = std::io::Error::last_os_error().raw_os_error();
+                    err == Some(libc::EPERM)
+                }
+            }
+        }
     }
 
     /// Check if a server is being tracked
@@ -524,16 +572,11 @@ impl ProcessManager {
                     return;
                 }
 
-                // Check if process is still alive (querying only our specific PID)
+                // Check if process is still alive using the robust, native check
                 let is_alive = if let Some(state) = app_handle.try_state::<crate::AppState>() {
-                    if let Ok(mut sys) = state.sys.lock() {
-                        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
-                        sys.process(sysinfo::Pid::from_u32(pid)).is_some()
-                    } else { false }
+                    state.process_manager.is_process_alive(pid)
                 } else {
-                    let mut sys = sysinfo::System::new();
-                    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
-                    sys.process(sysinfo::Pid::from_u32(pid)).is_some()
+                    false
                 };
 
                 if !is_alive {
@@ -696,19 +739,6 @@ impl ProcessManager {
             let name = p.name().to_string_lossy().to_lowercase();
             name.contains("palserver")
         })
-    }
-}
-
-fn detect_log_level(line: &str) -> String {
-    let lower = line.to_lowercase();
-    if lower.contains("error") || lower.contains("fatal") {
-        "error".to_string()
-    } else if lower.contains("warning") || lower.contains("warn") {
-        "warning".to_string()
-    } else if lower.contains("chat") {
-        "chat".to_string()
-    } else {
-        "info".to_string()
     }
 }
 

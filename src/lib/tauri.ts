@@ -94,6 +94,10 @@ export const tauriCommands = {
     invoke<string>('install_palworld_server', { installPath, branch }),
   updatePalworldServer: (installPath: string, branch?: string) =>
     invoke<string>('update_palworld_server', { installPath, branch }),
+  runServerUpdate: (serverId: number) =>
+    invoke<void>('run_server_update', { serverId }),
+  checkForServerUpdates: (serverId: number) =>
+    invoke<any>('check_for_server_updates', { serverId }),
   openFolder: (path: string) =>
     invoke<void>('open_folder', { path }),
   getServerExtendedDetails: (serverId: number) =>
@@ -201,18 +205,36 @@ export const tauriCommands = {
     invoke<{ success: boolean; message: string; modName: string | null }>('download_workshop_mod', { serverId, workshopId, modTitle, isLogicMod }),
   checkUe4ssInstalled: (serverId: number) => invoke<boolean>('check_ue4ss_installed', { serverId }),
   installUe4ss: (serverId: number) => invoke<string>('install_ue4ss', { serverId }),
+  
+  // Discord Bot commands
+  getDiscordBotStatus: () => invoke<string>('get_discord_bot_status'),
+  toggleDiscordBot: (active: boolean) => invoke<void>('toggle_discord_bot', { active }),
+  getServerDiscordConfig: (serverId: number) => invoke<any>('get_server_discord_config', { serverId }),
+  saveServerDiscordConfig: (config: any) => invoke<void>('save_server_discord_config', { config }),
+  forceRefreshDiscordDashboard: (serverId: number) => invoke<void>('force_refresh_discord_dashboard', { serverId }),
+  testDiscordBotConnection: (serverId: number) => invoke<string>('test_discord_bot_connection', { serverId }),
 };
 
 // ─── Event Listeners ────────────────────────────────────────────────────────
 
 let listenersSetup = false;
+let unlistenFns: Array<() => void> = [];
+
+async function registerListener<T>(eventName: string, handler: (event: { payload: T }) => void) {
+  try {
+    const unlisten = await listen<T>(eventName, handler);
+    unlistenFns.push(unlisten);
+  } catch (e) {
+    console.error(`[tauri] Failed to register listener for '${eventName}':`, e);
+  }
+}
 
 export function setupEventListeners() {
   if (listenersSetup) return;
   listenersSetup = true;
 
   // Server lifecycle events
-  listen<{
+  registerListener<{
     server_id: number;
     event: string;
     reason?: string;
@@ -243,7 +265,7 @@ export function setupEventListeners() {
   });
 
   // Server log events
-  listen<{
+  registerListener<{
     server_id: number;
     timestamp: string;
     level: string;
@@ -259,92 +281,92 @@ export function setupEventListeners() {
 
   // Install progress events
 
-// Install tick events
-listen<{
-  serverId: number;
-  isInstalling: boolean;
-  stage: string;
-  progress: number;
-  status: string;
-  bytesDownloaded: number;
-  bytesTotal: number;
-  speedBps: number;
-  avgSpeedBps: number;
-  peakSpeedBps: number;
-  diskWriteSpeedBps: number;
-  diskReadSpeedBps: number;
-  etaSeconds: number | null;
-  cdnServer: string;
-  elapsedSeconds: number;
-}>('install-tick', (event) => {
-  const data = event.payload;
-  const store = useAppStore.getState();
-  store.setInstallState(data.serverId, {
-    isInstalling: data.isInstalling,
-    stage: data.stage,
-    progress: data.progress,
-    status: data.status,
-    bytesDownloaded: data.bytesDownloaded,
-    bytesTotal: data.bytesTotal,
-    speed: data.speedBps,
-    speedBps: data.speedBps,
-    avgSpeedBps: data.avgSpeedBps,
-    peakSpeedBps: data.peakSpeedBps,
-    diskWriteSpeedBps: data.diskWriteSpeedBps,
-    diskReadSpeedBps: data.diskReadSpeedBps,
-    eta: data.etaSeconds,
-    cdnServer: data.cdnServer,
-    elapsedSeconds: data.elapsedSeconds,
+  // Install tick events
+  registerListener<{
+    serverId: number;
+    isInstalling: boolean;
+    stage: string;
+    progress: number;
+    status: string;
+    bytesDownloaded: number;
+    bytesTotal: number;
+    speedBps: number;
+    avgSpeedBps: number;
+    peakSpeedBps: number;
+    diskWriteSpeedBps: number;
+    diskReadSpeedBps: number;
+    etaSeconds: number | null;
+    cdnServer: string;
+    elapsedSeconds: number;
+  }>('install-tick', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+    store.setInstallState(data.serverId, {
+      isInstalling: data.isInstalling,
+      stage: data.stage,
+      progress: data.progress,
+      status: data.status,
+      bytesDownloaded: data.bytesDownloaded,
+      bytesTotal: data.bytesTotal,
+      speed: data.speedBps,
+      speedBps: data.speedBps,
+      avgSpeedBps: data.avgSpeedBps,
+      peakSpeedBps: data.peakSpeedBps,
+      diskWriteSpeedBps: data.diskWriteSpeedBps,
+      diskReadSpeedBps: data.diskReadSpeedBps,
+      eta: data.etaSeconds,
+      cdnServer: data.cdnServer,
+      elapsedSeconds: data.elapsedSeconds,
+    });
+
+    if (data.stage === 'completed' || data.stage === 'failed') {
+      // Refetch full list to update installed status reactively
+      tauriCommands.getServers().then(store.setServers).catch(console.error);
+    }
   });
 
-  if (data.stage === 'completed' || data.stage === 'failed') {
-    // Refetch full list to update installed status reactively
-    tauriCommands.getServers().then(store.setServers).catch(console.error);
-  }
-});
+  // Install log events
+  registerListener<{
+    serverId: number;
+    line: string;
+  }>('install-log', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+    store.setInstallState(data.serverId, (prev) => {
+      let currentLog = prev.log || '';
+      const incomingLine = data.line;
 
-// Install log events
-listen<{
-  serverId: number;
-  line: string;
-}>('install-log', (event) => {
-  const data = event.payload;
-  const store = useAppStore.getState();
-  store.setInstallState(data.serverId, (prev) => {
-    let currentLog = prev.log || '';
-    const incomingLine = data.line;
+      // Optimize progress line replacement to prevent log bloat and UI lag
+      const isProgressLine = incomingLine.includes("Update state") && incomingLine.includes("progress:");
 
-    // Optimize progress line replacement to prevent log bloat and UI lag
-    const isProgressLine = incomingLine.includes("Update state") && incomingLine.includes("progress:");
-
-    if (isProgressLine) {
-      const lines = currentLog.split('\n');
-      let replaced = false;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i].trim();
-        if (line === '') continue;
-        if (line.includes("Update state") && line.includes("progress:")) {
-          lines[i] = incomingLine.replace(/\r?\n$/, '');
-          currentLog = lines.join('\n') + '\n';
-          replaced = true;
-          break;
-        } else {
-          break;
+      if (isProgressLine) {
+        const lines = currentLog.split('\n');
+        let replaced = false;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i].trim();
+          if (line === '') continue;
+          if (line.includes("Update state") && line.includes("progress:")) {
+            lines[i] = incomingLine.replace(/\r?\n$/, '');
+            currentLog = lines.join('\n') + '\n';
+            replaced = true;
+            break;
+          } else {
+            break;
+          }
         }
-      }
-      if (!replaced) {
+        if (!replaced) {
+          currentLog = currentLog + incomingLine;
+        }
+      } else {
         currentLog = currentLog + incomingLine;
       }
-    } else {
-      currentLog = currentLog + incomingLine;
-    }
 
-    return { log: currentLog };
+      return { log: currentLog };
+    });
   });
-});
 
   // Server auto-update notification events
-  listen<{
+  registerListener<{
     serverId: number;
     serverName: string;
     eventType: string;
@@ -362,13 +384,47 @@ listen<{
   });
 
   // RCON status events
-  listen<{
+  registerListener<{
     server_id: number;
     connected: boolean;
   }>('rcon-status', (event) => {
     const data = event.payload;
     useAppStore.getState().setRconConnected(data.server_id, data.connected);
   });
+
+  // Desktop notifications
+  registerListener<{
+    title: string;
+    body: string;
+  }>('desktop-notification', (event) => {
+    const { title, body } = event.payload;
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body });
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((permission) => {
+        if (permission === 'granted') {
+          new Notification(title, { body });
+        }
+      });
+    }
+  });
+
+  // In-app notifications
+  registerListener<{
+    type: 'success' | 'error' | 'warning' | 'info';
+    message: string;
+  }>('in-app-notification', (event) => {
+    const { type, message } = event.payload;
+    useAppStore.getState().showNotification(type, message);
+  });
+}
+
+export function cleanupEventListeners() {
+  for (const unlisten of unlistenFns) {
+    unlisten();
+  }
+  unlistenFns = [];
+  listenersSetup = false;
 }
 
 // ─── Utility: Format Uptime ─────────────────────────────────────────────────

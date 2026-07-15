@@ -11,6 +11,7 @@ import { PlayersTab } from '../tabs/PlayersTab';
 import { SchedulerTab } from '../tabs/SchedulerTab';
 import { ModsTab } from '../tabs/ModsTab';
 import { FirewallTab } from '../tabs/FirewallTab';
+import { DiscordTab } from '../tabs/DiscordTab';
 import { CustomSelect } from '../ui/CustomSelect';
 import { RunningPal } from '../ui/RunningPal';
 
@@ -83,6 +84,11 @@ const tabIcons: Record<ServerTab, React.ComponentType> = {
   logs: LogsIcon,
   scheduler: SchedulerIcon,
   firewall: FirewallIcon,
+  discord: () => (
+    <svg viewBox="0 0 127.14 96.36" fill="currentColor" className="w-3.5 h-3.5">
+      <path d="M107.7,8.07A105.15,105.15,0,0,0,77.26,0a77.19,77.19,0,0,0-3.3,6.83A96.67,96.67,0,0,0,53.22,6.83,77.19,77.19,0,0,0,49.88,0,105.15,105.15,0,0,0,19.44,8.07C3.66,31.58-1.86,54.65,1,77.53A105.73,105.73,0,0,0,32,96.36a77.7,77.7,0,0,0,6.63-10.85,68.43,68.43,0,0,1-10.5-5c.88-.65,1.72-1.34,2.51-2a75.58,75.58,0,0,0,73,0c.79.71,1.63,1.4,2.52,2a68.43,68.43,0,0,1-10.5,5,77.7,77.7,0,0,0,6.63,10.85,105.73,105.73,0,0,0,31-18.83C129.07,54.65,123.56,31.58,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53S36.18,40.36,42.45,40.36,53.83,46,53.83,53,48.72,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.24,60,73.24,53S78.41,40.36,84.69,40.36,96.07,46,96.07,53,91,65.69,84.69,65.69Z" />
+    </svg>
+  ),
 };
 
 const tabs: { id: ServerTab; labelKey: string; defaultLabel: string }[] = [
@@ -95,6 +101,7 @@ const tabs: { id: ServerTab; labelKey: string; defaultLabel: string }[] = [
   { id: 'logs', labelKey: 'nav.logs', defaultLabel: 'Logs' },
   { id: 'scheduler', labelKey: 'nav.scheduler', defaultLabel: 'Scheduler' },
   { id: 'firewall', labelKey: 'nav.firewall', defaultLabel: 'Firewall' },
+  { id: 'discord', labelKey: 'Discord', defaultLabel: 'Discord Bot' },
 ];
 
 const formatStageName = (stage?: string) => {
@@ -141,10 +148,19 @@ export const ServerDetail: React.FC = () => {
       // Self-heal/update status if it was in starting/restarting but is now running
       if (stats.isRunning && (server.status === 'starting' || server.status === 'restarting')) {
         useAppStore.getState().updateServerStatus(server.id, 'running');
-      } else if (!stats.isRunning && (server.status === 'running' || server.status === 'online')) {
-        useAppStore.getState().updateServerStatus(server.id, 'stopped');
+      } else if (!stats.isRunning) {
+        if (server.status === 'running' || server.status === 'online') {
+          useAppStore.getState().updateServerStatus(server.id, 'stopped');
+        } else if (server.status === 'starting' || server.status === 'restarting') {
+          // Self-heal stuck starting/restarting states after 20 seconds
+          const lastStartedTime = server.lastStarted ? new Date(server.lastStarted).getTime() : 0;
+          const timeSinceStart = Date.now() - lastStartedTime;
+          if (timeSinceStart > 20000) {
+            useAppStore.getState().updateServerStatus(server.id, 'stopped');
+          }
+        }
       }
-    } catch (_) {}
+    } catch (_) { }
   }, [server?.id, server?.status]);
 
   useEffect(() => {
@@ -276,11 +292,11 @@ export const ServerDetail: React.FC = () => {
       showNotification('info', `Cloning server "${server.name}" to "${cloneName}"...`);
       const newServer = await tauriCommands.cloneServer(server.id, cloneName.trim(), cloneInstallPath.trim());
       showNotification('success', `Successfully cloned server to "${newServer.name}"!`);
-      
+
       // Refresh servers in the store
       const updated = await tauriCommands.getServers();
       setServers(updated);
-      
+
       // Close the modal and redirect to dashboard
       setIsCloneModalOpen(false);
       setCurrentView('dashboard');
@@ -351,15 +367,14 @@ export const ServerDetail: React.FC = () => {
             <div className="flex items-center gap-2.5">
               <span className={`status-dot ${getStatusColor(server.status)} ${getGlowColor(server.status)}`} />
               <h1 className="text-lg font-bold text-dark-50">{server.name}</h1>
-              <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider border ${
-                server.status === 'running' || server.status === 'online'
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
-                  : server.status === 'starting'
+              <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider border ${server.status === 'running' || server.status === 'online'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+                : server.status === 'starting'
                   ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25 shadow-[0_0_8px_rgba(6,182,212,0.2)] animate-pulse'
                   : server.status === 'stopping' || server.status === 'updating'
-                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/25 shadow-[0_0_8px_rgba(245,158,11,0.2)] animate-pulse'
-                  : 'bg-error-500/10 text-error-400 border-error-500/25 shadow-[0_0_8px_rgba(239,68,68,0.15)]'
-              }`}>
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/25 shadow-[0_0_8px_rgba(245,158,11,0.2)] animate-pulse'
+                    : 'bg-error-500/10 text-error-400 border-error-500/25 shadow-[0_0_8px_rgba(239,68,68,0.15)]'
+                }`}>
                 {server.status === 'running' || server.status === 'online' ? 'Online' : server.status}
               </span>
               <span className="text-[9px] font-black tracking-widest text-primary-400 px-2 py-0.5 rounded border border-primary-500/25 bg-primary-500/10 uppercase">
@@ -459,11 +474,10 @@ export const ServerDetail: React.FC = () => {
               key={tab.id}
               id={`tab-${tab.id}`}
               onClick={() => setActiveServerTab(tab.id)}
-              className={`flex items-center gap-2 px-3.5 py-3 text-xs font-semibold transition-all border-b-2 ${
-                activeServerTab === tab.id
-                  ? 'text-primary-400 border-primary-500 bg-primary-500/5'
-                  : 'text-dark-400 border-transparent hover:text-dark-200 hover:border-dark-700/60 hover:bg-dark-900/10'
-              }`}
+              className={`flex items-center gap-2 px-3.5 py-3 text-xs font-semibold transition-all border-b-2 ${activeServerTab === tab.id
+                ? 'text-primary-400 border-primary-500 bg-primary-500/5'
+                : 'text-dark-400 border-transparent hover:text-dark-200 hover:border-dark-700/60 hover:bg-dark-900/10'
+                }`}
             >
               {Icon && <Icon />}
               <span>{t(tab.labelKey)}</span>
@@ -481,14 +495,14 @@ export const ServerDetail: React.FC = () => {
               size={96}
               variant={
                 server.status === 'stopping' ? 'stopping' :
-                server.status === 'restarting' ? 'restarting' :
-                'running'
+                  server.status === 'restarting' ? 'restarting' :
+                    'running'
               }
               label={
                 server.status === 'starting' ? 'Booting server nodes...' :
-                server.status === 'stopping' ? 'Terminating server process...' :
-                server.status === 'restarting' ? 'Rebooting system service...' :
-                'Downloading server updates...'
+                  server.status === 'stopping' ? 'Terminating server process...' :
+                    server.status === 'restarting' ? 'Rebooting system service...' :
+                      'Downloading server updates...'
               }
             />
             <p className="text-[9px] tracking-widest text-dark-500 uppercase font-bold mt-2.5 font-mono">
@@ -564,17 +578,20 @@ export const ServerDetail: React.FC = () => {
         <div className={activeServerTab === 'firewall' ? 'h-full block' : 'hidden'}>
           <FirewallTab key={server.id} serverId={server.id} />
         </div>
+        <div className={activeServerTab === 'discord' ? 'h-full block' : 'hidden'}>
+          <DiscordTab key={server.id} serverId={server.id} />
+        </div>
       </div>
 
       {/* Custom Delete Confirmation Modal */}
       {isDeleteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity" 
-            onClick={() => setIsDeleteModalOpen(false)} 
+          <div
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsDeleteModalOpen(false)}
           />
-          
+
           {/* Modal Content */}
           <div className="relative glass-card max-w-sm w-full border border-error-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-6 animate-scale-in">
             {/* Warning Icon & Title */}
@@ -588,7 +605,7 @@ export const ServerDetail: React.FC = () => {
                 {server.isRemote ? 'Remove Connection' : 'Confirm Server Deletion'}
               </h2>
             </div>
-            
+
             {/* Body text */}
             <p className="text-xs text-dark-300 leading-relaxed">
               {server.isRemote ? (
@@ -650,11 +667,11 @@ export const ServerDetail: React.FC = () => {
       {showModWarningModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md" 
-            onClick={() => setShowModWarningModal(false)} 
+          <div
+            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md"
+            onClick={() => setShowModWarningModal(false)}
           />
-          
+
           {/* Content Card */}
           <div className="relative glass-card border border-error-500/30 bg-dark-900/80 p-8 rounded-2xl shadow-2xl max-w-md w-full space-y-6 text-center animate-scale-in">
             {/* Warning Icon */}
@@ -663,7 +680,7 @@ export const ServerDetail: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
-            
+
             {/* Title */}
             <div className="space-y-2">
               <h2 className="text-md font-black uppercase text-error-400 tracking-wider">
@@ -733,11 +750,11 @@ export const ServerDetail: React.FC = () => {
       {isCloneModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity" 
-            onClick={() => setIsCloneModalOpen(false)} 
+          <div
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsCloneModalOpen(false)}
           />
-          
+
           {/* Modal Content */}
           <div className="relative glass-card max-w-md w-full border border-cyan-500/20 bg-dark-900/60 p-6 shadow-2xl rounded-xl space-y-6 animate-scale-in">
             {/* Title */}
@@ -751,7 +768,7 @@ export const ServerDetail: React.FC = () => {
                 Clone Server Instance
               </h2>
             </div>
-            
+
             {/* Body */}
             <div className="space-y-4 pt-1">
               <div>
@@ -869,13 +886,23 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
 
   const [publicIp, setPublicIp] = useState('Fetching...');
   const [localIp, setLocalIp] = useState('Fetching...');
-  
+
   const [isInstalled, setIsInstalled] = useState<boolean | null>(null);
   const [extendedInfo, setExtendedInfo] = useState<any>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(true);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState(server.branch || 'public');
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
+  const [autoUpdateCountdown, setAutoUpdateCountdown] = useState(10);
+  const [autoUpdateBackup, setAutoUpdateBackup] = useState(true);
+  const [autoUpdateRestart, setAutoUpdateRestart] = useState(true);
+  const [autoUpdateSkipPlayers, setAutoUpdateSkipPlayers] = useState(false);
+  const [autoUpdateMaintenance, setAutoUpdateMaintenance] = useState(false);
+  const [autoUpdateMaintenanceStart, setAutoUpdateMaintenanceStart] = useState(2);
+  const [autoUpdateMaintenanceEnd, setAutoUpdateMaintenanceEnd] = useState(5);
+  const [autoUpdateNotifyDesktop, setAutoUpdateNotifyDesktop] = useState(true);
+  const [autoUpdateNotifyInApp, setAutoUpdateNotifyInApp] = useState(true);
+  const [autoUpdateNotifyDiscord, setAutoUpdateNotifyDiscord] = useState(true);
   const [autoStartEnabled, setAutoStartEnabled] = useState(server.autoStart ?? false);
   const [autoRestartEnabled, setAutoRestartEnabled] = useState(server.autoRestart ?? true);
   const [runAsAdminEnabled, setRunAsAdminEnabled] = useState(server.runAsAdmin ?? false);
@@ -894,6 +921,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
 
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [isWipeModalOpen, setIsWipeModalOpen] = useState(false);
+  const [isNoUpdateModalOpen, setIsNoUpdateModalOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [wipeConfirmText, setWipeConfirmText] = useState('');
   const [wipeType, setWipeType] = useState<'all' | 'players' | 'map'>('all');
@@ -943,13 +971,43 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
     try {
       const installed = await tauriCommands.checkServerInstalled(server.installPath);
       setIsInstalled(installed);
-      
+
       const details = await tauriCommands.getServerExtendedDetails(server.id);
       setExtendedInfo(details);
       setSelectedBranch(details.branch);
-      
+
       const autoUpdateVal = await tauriCommands.getSetting(`auto_update_enabled_${server.id}`);
       setAutoUpdateEnabled(autoUpdateVal === 'true');
+
+      const countdownVal = await tauriCommands.getSetting(`auto_update_countdown_${server.id}`);
+      setAutoUpdateCountdown(parseInt(countdownVal || '10', 10));
+
+      const backupVal = await tauriCommands.getSetting(`auto_update_backup_${server.id}`);
+      setAutoUpdateBackup(backupVal !== 'false');
+
+      const restartVal = await tauriCommands.getSetting(`auto_update_restart_${server.id}`);
+      setAutoUpdateRestart(restartVal !== 'false');
+
+      const skipPlayersVal = await tauriCommands.getSetting(`auto_update_skip_players_${server.id}`);
+      setAutoUpdateSkipPlayers(skipPlayersVal === 'true');
+
+      const maintenanceVal = await tauriCommands.getSetting(`auto_update_maintenance_${server.id}`);
+      setAutoUpdateMaintenance(maintenanceVal === 'true');
+
+      const maintStartVal = await tauriCommands.getSetting(`auto_update_maintenance_start_${server.id}`);
+      setAutoUpdateMaintenanceStart(parseInt(maintStartVal || '2', 10));
+
+      const maintEndVal = await tauriCommands.getSetting(`auto_update_maintenance_end_${server.id}`);
+      setAutoUpdateMaintenanceEnd(parseInt(maintEndVal || '5', 10));
+
+      const notifyDesktopVal = await tauriCommands.getSetting(`auto_update_notify_desktop_${server.id}`);
+      setAutoUpdateNotifyDesktop(notifyDesktopVal !== 'false');
+
+      const notifyInAppVal = await tauriCommands.getSetting(`auto_update_notify_in_app_${server.id}`);
+      setAutoUpdateNotifyInApp(notifyInAppVal !== 'false');
+
+      const notifyDiscordVal = await tauriCommands.getSetting(`auto_update_notify_discord_${server.id}`);
+      setAutoUpdateNotifyDiscord(notifyDiscordVal !== 'false');
 
       const activeState = await tauriCommands.getActiveInstallationState(server.id);
       if (activeState) {
@@ -1157,7 +1215,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
       isInstalling: true,
       progress: 0,
       status: 'Preparing',
-      log: `Starting server update (Branch: ${selectedBranch})...\n`,
+      log: `Starting graceful server update...\n`,
       speed: 0,
       eta: null,
       stage: 'Preparing',
@@ -1170,11 +1228,33 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
       elapsedSeconds: 0,
     });
     try {
-      showNotification('info', 'Starting Palworld server update...');
-      await tauriCommands.startServerInstallation(server.id, selectedBranch);
+      showNotification('info', 'Starting graceful server update...');
+      await tauriCommands.runServerUpdate(server.id);
     } catch (e: any) {
       setInstallState(server.id, { isInstalling: false });
       showNotification('error', `Failed to start update: ${e}`);
+    }
+  };
+
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+
+  const handleCheckForUpdates = async () => {
+    if (isCheckingUpdates) return; // Prevent duplicate requests
+    setIsCheckingUpdates(true);
+    showNotification('info', 'Checking SteamCMD for updates...');
+    try {
+      const res = await tauriCommands.checkForServerUpdates(server.id);
+      if (res && res.updateAvailable) {
+        showNotification('info', '⬇ New Palworld update detected.');
+      } else {
+        showNotification('success', '✔ Server is already running the latest version.');
+        setIsNoUpdateModalOpen(true);
+      }
+    } catch (e: any) {
+      console.error('[Update Check Error]', e);
+      showNotification('error', 'Unable to check for updates. Please try again later.');
+    } finally {
+      setIsCheckingUpdates(false);
     }
   };
 
@@ -1221,7 +1301,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
       setSelectedBranch(newBranch);
       await tauriCommands.updateServerBranch(server.id, newBranch);
       showNotification('info', `Branch updated to ${newBranch}. Validating files...`);
-      
+
       setInstallState(server.id, {
         isInstalling: true,
         progress: 0,
@@ -1312,14 +1392,14 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                 size={88}
                 variant={
                   server.status === 'stopping' ? 'stopping' :
-                  server.status === 'restarting' ? 'restarting' :
-                  'running'
+                    server.status === 'restarting' ? 'restarting' :
+                      'running'
                 }
                 label={
                   server.status === 'starting' ? 'Starting Server...' :
-                  server.status === 'stopping' ? 'Stopping Server...' :
-                  server.status === 'restarting' ? 'Restarting Server...' :
-                  'Updating Server...'
+                    server.status === 'stopping' ? 'Stopping Server...' :
+                      server.status === 'restarting' ? 'Restarting Server...' :
+                        'Updating Server...'
                 }
               />
             ) : (
@@ -1391,7 +1471,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                   </p>
                 </div>
               </div>
-              
+
               {/* Warning Banner */}
               <div className="bg-error-500/5 border border-error-500/10 rounded-xl p-5 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="space-y-1.5 text-center md:text-left">
@@ -1437,7 +1517,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                     Download, update, and validate server files using high-speed SteamCMD streaming.
                   </p>
                 </div>
-                
+
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-dark-400 font-medium">SteamCMD Status:</span>
                   <span className="text-xs text-success-400 font-bold bg-success-500/10 px-3 py-1 rounded-full border border-success-500/20">
@@ -1583,9 +1663,16 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                         <button
                           onClick={handleUpdateServer}
                           disabled={installState.isInstalling}
-                          className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-4 py-2 text-xs font-bold shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
+                          className="bg-gradient-to-r from-primary-600 to-cyan-500 hover:from-primary-500 hover:to-cyan-400 text-white rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-wider shadow-lg shadow-primary-950/20 active:scale-95 transition-all"
                         >
-                          Update Server
+                          UPDATE SERVER
+                        </button>
+                        <button
+                          onClick={handleCheckForUpdates}
+                          disabled={isCheckingUpdates || installState.isInstalling}
+                          className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-primary-400 hover:text-primary-300 hover:bg-primary-500/10 border border-primary-500/25 hover:border-primary-500/40 rounded-lg transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+                        >
+                          {isCheckingUpdates ? 'CHECKING...' : 'CHECK FOR UPDATES'}
                         </button>
                         <button
                           onClick={handleValidateFiles}
@@ -1628,316 +1715,502 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                       Open Install Folder
                     </button>
                   </div>
-                </div>
-              )}
 
-          {/* Active Installation Dashboard */}
-          {installState.isInstalling && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-4 border-t border-dark-800/40">
-              
-              {/* Left Column: Progress circle, Timeline, Performance stats */}
-              <div className="lg:col-span-5 space-y-6">
-                
-                {/* Circular Progress Panel */}
-                <div className="glass-card p-5 flex items-center gap-5 border border-dark-800/60 bg-dark-950/30">
-                  <div className="relative flex items-center justify-center h-24 w-24">
-                    <svg className="w-full h-full transform -rotate-90">
-                      <circle
-                        cx="48"
-                        cy="48"
-                        r="40"
-                        stroke="#11131a"
-                        strokeWidth="6"
-                        fill="transparent"
-                      />
-                      <circle
-                        cx="48"
-                        cy="48"
-                        r="40"
-                        stroke="url(#progress-gradient)"
-                        strokeWidth="6"
-                        fill="transparent"
-                        strokeDasharray={`${2 * Math.PI * 40}`}
-                        strokeDashoffset={`${2 * Math.PI * 40 - ((installState.progress || 0) / 100) * 2 * Math.PI * 40}`}
-                        className="transition-all duration-300 ease-out"
-                      />
-                      <defs>
-                        <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#3b82f6" />
-                          <stop offset="100%" stopColor="#22d3ee" />
-                        </linearGradient>
-                      </defs>
-                    </svg>
-                    <div className="absolute flex flex-col items-center">
-                      <span className="text-lg font-black text-dark-100 font-mono">
-                        {installState.progress !== null ? `${installState.progress.toFixed(0)}%` : '—'}
-                      </span>
-                      <span className="text-[8px] text-dark-500 font-bold uppercase tracking-wider">
-                        {formatStageName(installState.stage)}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex-1 space-y-1">
-                    <div className="text-xs font-bold text-dark-200">
-                      {installState.status || 'Processing installation...'}
-                    </div>
-                    <div className="text-[10px] text-dark-400 font-mono flex flex-col gap-0.5">
-                      {installState.bytesTotal > 0 && (
-                        <span>
-                          {formatBytes(installState.bytesDownloaded)} / {formatBytes(installState.bytesTotal)}
-                        </span>
-                      )}
-                      {installState.eta !== null && installState.eta > 0 && (
-                        <span>
-                          Time Remaining: <strong className="text-cyan-400">{formatUptime(installState.eta)}</strong>
-                        </span>
-                      )}
-                      <span>
-                        Elapsed Time: <strong className="text-dark-300">{formatUptime(elapsedTime)}</strong>
-                      </span>
-                    </div>
-                    <button
-                      onClick={handleCancelInstallation}
-                      className="mt-2 text-[10px] font-bold text-error-400 hover:text-error-300 bg-error-500/5 hover:bg-error-500/10 border border-error-500/20 rounded px-2.5 py-1 uppercase tracking-wider active:scale-95 transition-all"
-                    >
-                      Cancel Installation
-                    </button>
-                  </div>
-                </div>
-
-                {/* Timeline Panel */}
-                <div className="glass-card p-5 border border-dark-800/60 space-y-4 hover:border-dark-700/80 transition-all duration-300">
-                  <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
-                    Pipeline Stages
-                  </h4>
-                  
-                  <div className="relative pl-8 space-y-6 border-l border-l-dark-800/60 ml-3">
-                    {[
-                      { key: 'preparing', label: 'Preparing Environment', desc: 'Resolving paths and binaries', match: ['preparing', 'checkingUpdates', 'initializingRuntime'] },
-                      { key: 'connecting', label: 'Connecting to Steam', desc: 'Logging in anonymously', match: ['connecting', 'authenticating'] },
-                      { key: 'manifest', label: 'Fetching Build Manifest', desc: 'Reading app branch configuration', match: ['fetchingManifest'] },
-                      { key: 'allocating', label: 'Allocating Disk Space', desc: 'Reserving target folder space', match: ['allocatingDiskSpace'] },
-                      { key: 'downloading', label: 'Downloading', desc: 'Transferring app files', match: ['downloading'] },
-                      { key: 'verifying', label: 'Verifying Integrity', desc: 'Checking block checksums', match: ['verifying'] },
-                      { key: 'finalizing', label: 'Finalizing Installation', desc: 'Validating build completion', match: ['installing', 'finalizing', 'completed'] },
-                    ].map((step, idx) => {
-                      const currentStage = (installState.stage || 'preparing').toLowerCase();
-                      const curIdx = [
-                        ['preparing', 'checkingupdates', 'initializingruntime'],
-                        ['connecting', 'authenticating'],
-                        ['fetchingmanifest'],
-                        ['allocatingdiskspace'],
-                        ['downloading'],
-                        ['verifying'],
-                        ['installing', 'finalizing', 'completed'],
-                      ].findIndex(stages => stages.includes(currentStage));
-                      
-                      const isCompleted = idx < curIdx || currentStage === 'completed';
-                      const isActive = idx === curIdx && currentStage !== 'completed';
-                      
-                      return (
-                        <div key={step.key} className="relative flex items-start gap-1">
-                          <span 
-                            className={`absolute -left-[44px] top-0 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${
-                              isCompleted
-                                ? 'bg-success-950 border-success-500 text-success-400'
-                                : isActive
-                                ? 'bg-primary-950 border-primary-500 text-primary-400 shadow-md shadow-primary-500/20'
-                                : 'bg-dark-900 border-dark-800 text-dark-500'
-                            } transition-all duration-300`}
-                          >
-                            {isCompleted ? (
-                              <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            ) : isActive ? (
-                              <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500"></span>
-                              </span>
-                            ) : (
-                              <span className="font-mono text-[9px]">{idx + 1}</span>
-                            )}
-                          </span>
-                          
-                          <div className="space-y-0.5">
-                            <div className={`text-xs font-bold transition-colors ${isActive ? 'text-primary-400' : isCompleted ? 'text-dark-300' : 'text-dark-500'}`}>
-                              {step.label}
-                            </div>
-                            <div className="text-[10px] text-dark-500 leading-normal">{step.desc}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Performance Stats Mini-Dashboard */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="glass-card p-3 border border-dark-800/60 bg-dark-950/20 border-l-2 border-l-cyan-500 pl-3">
-                    <span className="text-[9px] font-bold text-dark-500 uppercase tracking-wider">Network Speed</span>
-                    <div className="text-sm font-black text-cyan-400 font-mono mt-1">
-                      {formatBytes(installState.speedBps || 0)}/s
-                    </div>
-                    <div className="text-[9px] text-dark-500 mt-0.5 font-mono">
-                      Peak: {formatBytes(installState.peakSpeedBps || 0)}/s
-                    </div>
-                  </div>
-                  
-                  <div className="glass-card p-3 border border-dark-800/60 bg-dark-950/20 border-l-2 border-l-warning-500 pl-3">
-                    <span className="text-[9px] font-bold text-dark-500 uppercase tracking-wider">Disk IO</span>
-                    <div className="text-sm font-black text-warning-400 font-mono mt-1">
-                      W: {formatBytes(installState.diskWriteSpeedBps || 0)}/s
-                    </div>
-                    <div className="text-[9px] text-dark-500 mt-0.5 font-mono">
-                      R: {formatBytes(installState.diskReadSpeedBps || 0)}/s
-                    </div>
-                  </div>
-
-                  <div className="col-span-2 glass-card p-3 border border-dark-800/60 bg-dark-950/20 flex justify-between items-center text-xs">
-                    <span className="text-dark-500">Steam CDN node</span>
-                    <span className="font-bold text-dark-300 font-mono text-[10px] truncate max-w-[200px]" title={installState.cdnServer}>
-                      {installState.cdnServer || 'Detecting CDN node...'}
-                    </span>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Right Column: Live Logs console, Diagnostics panel, History list */}
-              <div className="lg:col-span-7 space-y-6">
-                
-                {/* Virtualized Console Logs */}
-                <div className="glass-card border border-dark-800 bg-dark-950 overflow-hidden flex flex-col h-[320px]">
-                  <div className="flex justify-between items-center px-4 py-2 border-b border-dark-800 bg-dark-900/60 text-xs">
-                    <span className="text-dark-400 font-bold uppercase tracking-wider font-mono">Terminal Output</span>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          if (installState.log) {
-                            navigator.clipboard.writeText(installState.log);
-                            showNotification('success', 'Console log copied to clipboard');
-                          }
-                        }}
-                        className="text-[10px] text-dark-400 hover:text-dark-200 uppercase tracking-wider font-bold"
-                      >
-                        Copy
-                      </button>
-                      <button
-                        onClick={() => {
-                          setInstallState(server.id, { log: '' });
-                        }}
-                        className="text-[10px] text-error-400 hover:text-error-300 uppercase tracking-wider font-bold"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed text-dark-300 bg-dark-950/80">
-                    <pre className="whitespace-pre-wrap word-break-all font-mono">
-                      {installState.log}
-                      <div ref={logEndRef} />
-                    </pre>
-                  </div>
-                </div>
-
-                {/* Diagnostics Panel */}
-                <div className="glass-card p-5 border border-dark-800/80 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
-                      SteamCMD Pre-Flight Diagnostics
-                    </h4>
-                    <button
-                      onClick={runDiag}
-                      disabled={isRunningDiag}
-                      className="text-[10px] font-bold text-primary-400 hover:text-primary-300 uppercase tracking-wider"
-                    >
-                      {isRunningDiag ? 'Running...' : 'Run Diag'}
-                    </button>
-                  </div>
-
-                  {diagnostics ? (
-                    <div className="space-y-2.5 text-xs">
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.steamStatus)}`}>
-                          <span>Steam Servers</span>
-                          <span className="font-bold uppercase text-[10px]">{diagnostics.steamStatus}</span>
-                        </div>
-                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.internetPing)}`}>
-                          <span>Network Speed</span>
-                          <span className="font-bold uppercase text-[10px]">{diagnostics.internetPing}</span>
-                        </div>
-                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.diskSpace)}`}>
-                          <span>Disk Capacity</span>
-                          <span className="font-bold uppercase text-[10px]">{diagnostics.diskSpace}</span>
-                        </div>
-                        <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.writePermissions)}`}>
-                          <span>Folder Locks</span>
-                          <span className="font-bold uppercase text-[10px]">{diagnostics.writePermissions}</span>
-                        </div>
+                  {autoUpdateEnabled && (
+                    <div className="w-full mt-4 p-4 rounded-xl border border-dark-800/80 bg-dark-950/40 backdrop-blur-sm space-y-4">
+                      <div className="flex items-center justify-between border-b border-dark-800/80 pb-2">
+                        <h4 className="text-xs font-extrabold uppercase tracking-wider text-primary-400">
+                          Auto-Update Parameters
+                        </h4>
+                        <span className="text-[10px] text-dark-500 font-medium">Configure update behavior</span>
                       </div>
 
-                      {diagnostics.issues && diagnostics.issues.length > 0 && (
-                        <div className="bg-error-500/5 border border-error-500/20 rounded-xl p-3.5 space-y-2">
-                          <span className="text-[10px] font-extrabold text-error-400 uppercase tracking-wider">Detected Issues</span>
-                          {diagnostics.issues.map((issue: any, i: number) => (
-                            <div key={i} className="text-xs space-y-1 border-t border-error-500/10 pt-2 first:border-0 first:pt-0">
-                              <div className="font-bold text-error-300">{issue.category}: {issue.cause}</div>
-                              <div className="text-dark-400 text-[11px] leading-relaxed">{issue.description}</div>
-                              <div className="text-success-400 text-[10px] font-semibold">Recommended: {issue.recommendedFix}</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Left column: Behaviors */}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between p-2 rounded bg-dark-900/30 border border-dark-800/30">
+                            <div>
+                              <span className="block text-xs font-bold text-dark-200">Countdown Duration</span>
+                              <span className="block text-[10px] text-dark-400">Minutes warning broadcast before shutdown</span>
                             </div>
-                          ))}
+                            <input
+                              type="number"
+                              min="1"
+                              max="60"
+                              value={autoUpdateCountdown}
+                              onChange={async (e) => {
+                                const val = parseInt(e.target.value, 10) || 10;
+                                setAutoUpdateCountdown(val);
+                                await tauriCommands.setSetting(`auto_update_countdown_${server.id}`, val.toString());
+                              }}
+                              className="w-16 px-2 py-1 text-xs text-center rounded bg-dark-950 border border-dark-800 focus:border-primary-500 text-white font-bold outline-none"
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between p-2 rounded bg-dark-900/30 border border-dark-800/30">
+                            <div>
+                              <span className="block text-xs font-bold text-dark-200">Skip if Players Online</span>
+                              <span className="block text-[10px] text-dark-400">Postpone update if users are currently connected</span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={autoUpdateSkipPlayers}
+                              onChange={async (e) => {
+                                const checked = e.target.checked;
+                                setAutoUpdateSkipPlayers(checked);
+                                await tauriCommands.setSetting(`auto_update_skip_players_${server.id}`, checked ? 'true' : 'false');
+                              }}
+                              className="w-4 h-4 accent-primary-500 rounded bg-dark-950 border-dark-800 cursor-pointer"
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between p-2 rounded bg-dark-900/30 border border-dark-800/30">
+                            <div>
+                              <span className="block text-xs font-bold text-dark-200">Pre-Update Backup</span>
+                              <span className="block text-[10px] text-dark-400">Take backup of saves + config before updating</span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={autoUpdateBackup}
+                              onChange={async (e) => {
+                                const checked = e.target.checked;
+                                setAutoUpdateBackup(checked);
+                                await tauriCommands.setSetting(`auto_update_backup_${server.id}`, checked ? 'true' : 'false');
+                              }}
+                              className="w-4 h-4 accent-primary-500 rounded bg-dark-950 border-dark-800 cursor-pointer"
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between p-2 rounded bg-dark-900/30 border border-dark-800/30">
+                            <div>
+                              <span className="block text-xs font-bold text-dark-200">Auto-Restart Post Update</span>
+                              <span className="block text-[10px] text-dark-400">Bring server back online after completion</span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={autoUpdateRestart}
+                              onChange={async (e) => {
+                                const checked = e.target.checked;
+                                setAutoUpdateRestart(checked);
+                                await tauriCommands.setSetting(`auto_update_restart_${server.id}`, checked ? 'true' : 'false');
+                              }}
+                              className="w-4 h-4 accent-primary-500 rounded bg-dark-950 border-dark-800 cursor-pointer"
+                            />
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-dark-500 animate-pulse text-center py-2">
-                      Loading diagnostics indices...
+
+                        {/* Right column: Maintenance & Notifications */}
+                        <div className="space-y-3">
+                          <div className="p-2 rounded bg-dark-900/30 border border-dark-800/30 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="block text-xs font-bold text-dark-200">Maintenance Window</span>
+                                <span className="block text-[10px] text-dark-400">Only auto-update during specific hours</span>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={autoUpdateMaintenance}
+                                onChange={async (e) => {
+                                  const checked = e.target.checked;
+                                  setAutoUpdateMaintenance(checked);
+                                  await tauriCommands.setSetting(`auto_update_maintenance_${server.id}`, checked ? 'true' : 'false');
+                                }}
+                                className="w-4 h-4 accent-primary-500 rounded bg-dark-950 border-dark-800 cursor-pointer"
+                              />
+                            </div>
+                            {autoUpdateMaintenance && (
+                              <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dark-800/40">
+                                <span className="text-[10px] text-dark-400 font-medium">Window Start:</span>
+                                <select
+                                  value={autoUpdateMaintenanceStart}
+                                  onChange={async (e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    setAutoUpdateMaintenanceStart(val);
+                                    await tauriCommands.setSetting(`auto_update_maintenance_start_${server.id}`, val.toString());
+                                  }}
+                                  className="px-2 py-0.5 text-xs rounded bg-dark-950 border border-dark-850 text-white outline-none bg-dark-900"
+                                >
+                                  {Array.from({ length: 24 }).map((_, h) => (
+                                    <option key={h} value={h}>{h.toString().padStart(2, '0')}:00</option>
+                                  ))}
+                                </select>
+                                <span className="text-[10px] text-dark-400 font-medium">End:</span>
+                                <select
+                                  value={autoUpdateMaintenanceEnd}
+                                  onChange={async (e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    setAutoUpdateMaintenanceEnd(val);
+                                    await tauriCommands.setSetting(`auto_update_maintenance_end_${server.id}`, val.toString());
+                                  }}
+                                  className="px-2 py-0.5 text-xs rounded bg-dark-950 border border-dark-850 text-white outline-none bg-dark-900"
+                                >
+                                  {Array.from({ length: 24 }).map((_, h) => (
+                                    <option key={h} value={h}>{h.toString().padStart(2, '0')}:00</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="p-2 rounded bg-dark-900/30 border border-dark-800/30 space-y-2">
+                            <span className="block text-xs font-bold text-dark-200">Notification Channels</span>
+                            <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1">
+                              <label className="flex items-center gap-1.5 text-[10px] text-dark-300 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={autoUpdateNotifyDesktop}
+                                  onChange={async (e) => {
+                                    const checked = e.target.checked;
+                                    setAutoUpdateNotifyDesktop(checked);
+                                    await tauriCommands.setSetting(`auto_update_notify_desktop_${server.id}`, checked ? 'true' : 'false');
+                                  }}
+                                  className="accent-primary-500 rounded bg-dark-950 cursor-pointer"
+                                />
+                                Desktop
+                              </label>
+
+                              <label className="flex items-center gap-1.5 text-[10px] text-dark-300 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={autoUpdateNotifyInApp}
+                                  onChange={async (e) => {
+                                    const checked = e.target.checked;
+                                    setAutoUpdateNotifyInApp(checked);
+                                    await tauriCommands.setSetting(`auto_update_notify_in_app_${server.id}`, checked ? 'true' : 'false');
+                                  }}
+                                  className="accent-primary-500 rounded bg-dark-950 cursor-pointer"
+                                />
+                                In-App
+                              </label>
+
+                              <label className="flex items-center gap-1.5 text-[10px] text-dark-300 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={autoUpdateNotifyDiscord}
+                                  onChange={async (e) => {
+                                    const checked = e.target.checked;
+                                    setAutoUpdateNotifyDiscord(checked);
+                                    await tauriCommands.setSetting(`auto_update_notify_discord_${server.id}`, checked ? 'true' : 'false');
+                                  }}
+                                  className="accent-primary-500 rounded bg-dark-950 cursor-pointer"
+                                />
+                                Discord
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
+              )}
 
-                {/* History list */}
-                {history && history.length > 0 && (
-                  <div className="glass-card p-5 border border-dark-850 space-y-3">
-                    <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
-                      Installation History Logs
-                    </h4>
-                    
-                    <div className="space-y-3 max-h-[140px] overflow-y-auto pr-1">
-                      {history.slice(0, 5).map((entry) => (
-                        <div key={entry.id} className="flex justify-between items-start text-xs border-b border-dark-800/40 pb-2.5 last:border-0 last:pb-0 gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-bold text-dark-300">
-                              {entry.status === 'completed' ? `Build ${entry.version || 'unknown'}` : 'Installation Failed'}
-                            </div>
-                            {entry.status !== 'completed' && entry.notes && (
-                              <div className="text-[10px] text-error-400/80 mt-1 leading-relaxed break-words max-w-sm">
-                                {entry.notes}
-                              </div>
-                            )}
-                            <div className="text-[10px] text-dark-500 mt-1">{new Date(entry.createdAt).toLocaleString()}</div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${entry.status === 'completed' ? 'bg-success-500/10 text-success-400 border border-success-500/20' : 'bg-error-500/10 text-error-400 border border-error-500/20'}`}>
-                              {entry.status}
-                            </span>
-                            <div className="text-[9px] text-dark-400 font-mono mt-1">
-                              {formatBytes(entry.downloadedSize)} in {formatUptime(entry.durationSeconds)}
-                            </div>
-                          </div>
+              {/* Active Installation Dashboard */}
+              {installState.isInstalling && (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-4 border-t border-dark-800/40">
+
+                  {/* Left Column: Progress circle, Timeline, Performance stats */}
+                  <div className="lg:col-span-5 space-y-6">
+
+                    {/* Circular Progress Panel */}
+                    <div className="glass-card p-5 flex items-center gap-5 border border-dark-800/60 bg-dark-950/30">
+                      <div className="relative flex items-center justify-center h-24 w-24">
+                        <svg className="w-full h-full transform -rotate-90">
+                          <circle
+                            cx="48"
+                            cy="48"
+                            r="40"
+                            stroke="#11131a"
+                            strokeWidth="6"
+                            fill="transparent"
+                          />
+                          <circle
+                            cx="48"
+                            cy="48"
+                            r="40"
+                            stroke="url(#progress-gradient)"
+                            strokeWidth="6"
+                            fill="transparent"
+                            strokeDasharray={`${2 * Math.PI * 40}`}
+                            strokeDashoffset={`${2 * Math.PI * 40 - ((installState.progress || 0) / 100) * 2 * Math.PI * 40}`}
+                            className="transition-all duration-300 ease-out"
+                          />
+                          <defs>
+                            <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#3b82f6" />
+                              <stop offset="100%" stopColor="#22d3ee" />
+                            </linearGradient>
+                          </defs>
+                        </svg>
+                        <div className="absolute flex flex-col items-center">
+                          <span className="text-lg font-black text-dark-100 font-mono">
+                            {installState.progress !== null ? `${installState.progress.toFixed(0)}%` : '—'}
+                          </span>
+                          <span className="text-[8px] text-dark-500 font-bold uppercase tracking-wider">
+                            {formatStageName(installState.stage)}
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                      </div>
 
-              </div>
+                      <div className="flex-1 space-y-1">
+                        <div className="text-xs font-bold text-dark-200">
+                          {installState.status || 'Processing installation...'}
+                        </div>
+                        <div className="text-[10px] text-dark-400 font-mono flex flex-col gap-0.5">
+                          {installState.bytesTotal > 0 && (
+                            <span>
+                              {formatBytes(installState.bytesDownloaded)} / {formatBytes(installState.bytesTotal)}
+                            </span>
+                          )}
+                          {installState.eta !== null && installState.eta > 0 && (
+                            <span>
+                              Time Remaining: <strong className="text-cyan-400">{formatUptime(installState.eta)}</strong>
+                            </span>
+                          )}
+                          <span>
+                            Elapsed Time: <strong className="text-dark-300">{formatUptime(elapsedTime)}</strong>
+                          </span>
+                        </div>
+                        <button
+                          onClick={handleCancelInstallation}
+                          className="mt-2 text-[10px] font-bold text-error-400 hover:text-error-300 bg-error-500/5 hover:bg-error-500/10 border border-error-500/20 rounded px-2.5 py-1 uppercase tracking-wider active:scale-95 transition-all"
+                        >
+                          Cancel Installation
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Timeline Panel */}
+                    <div className="glass-card p-5 border border-dark-800/60 space-y-4 hover:border-dark-700/80 transition-all duration-300">
+                      <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
+                        Pipeline Stages
+                      </h4>
+
+                      <div className="relative pl-8 space-y-6 border-l border-l-dark-800/60 ml-3">
+                        {[
+                          { key: 'preparing', label: 'Preparing Environment', desc: 'Resolving paths and binaries', match: ['preparing', 'checkingUpdates', 'initializingRuntime'] },
+                          { key: 'connecting', label: 'Connecting to Steam', desc: 'Logging in anonymously', match: ['connecting', 'authenticating'] },
+                          { key: 'manifest', label: 'Fetching Build Manifest', desc: 'Reading app branch configuration', match: ['fetchingManifest'] },
+                          { key: 'allocating', label: 'Allocating Disk Space', desc: 'Reserving target folder space', match: ['allocatingDiskSpace'] },
+                          { key: 'downloading', label: 'Downloading', desc: 'Transferring app files', match: ['downloading'] },
+                          { key: 'verifying', label: 'Verifying Integrity', desc: 'Checking block checksums', match: ['verifying'] },
+                          { key: 'finalizing', label: 'Finalizing Installation', desc: 'Validating build completion', match: ['installing', 'finalizing', 'completed'] },
+                        ].map((step, idx) => {
+                          const currentStage = (installState.stage || 'preparing').toLowerCase();
+                          const curIdx = [
+                            ['preparing', 'checkingupdates', 'initializingruntime'],
+                            ['connecting', 'authenticating'],
+                            ['fetchingmanifest'],
+                            ['allocatingdiskspace'],
+                            ['downloading'],
+                            ['verifying'],
+                            ['installing', 'finalizing', 'completed'],
+                          ].findIndex(stages => stages.includes(currentStage));
+
+                          const isCompleted = idx < curIdx || currentStage === 'completed';
+                          const isActive = idx === curIdx && currentStage !== 'completed';
+
+                          return (
+                            <div key={step.key} className="relative flex items-start gap-1">
+                              <span
+                                className={`absolute -left-[44px] top-0 flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${isCompleted
+                                  ? 'bg-success-950 border-success-500 text-success-400'
+                                  : isActive
+                                    ? 'bg-primary-950 border-primary-500 text-primary-400 shadow-md shadow-primary-500/20'
+                                    : 'bg-dark-900 border-dark-800 text-dark-500'
+                                  } transition-all duration-300`}
+                              >
+                                {isCompleted ? (
+                                  <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                  </svg>
+                                ) : isActive ? (
+                                  <span className="relative flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-500"></span>
+                                  </span>
+                                ) : (
+                                  <span className="font-mono text-[9px]">{idx + 1}</span>
+                                )}
+                              </span>
+
+                              <div className="space-y-0.5">
+                                <div className={`text-xs font-bold transition-colors ${isActive ? 'text-primary-400' : isCompleted ? 'text-dark-300' : 'text-dark-500'}`}>
+                                  {step.label}
+                                </div>
+                                <div className="text-[10px] text-dark-500 leading-normal">{step.desc}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Performance Stats Mini-Dashboard */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="glass-card p-3 border border-dark-800/60 bg-dark-950/20 border-l-2 border-l-cyan-500 pl-3">
+                        <span className="text-[9px] font-bold text-dark-500 uppercase tracking-wider">Network Speed</span>
+                        <div className="text-sm font-black text-cyan-400 font-mono mt-1">
+                          {formatBytes(installState.speedBps || 0)}/s
+                        </div>
+                        <div className="text-[9px] text-dark-500 mt-0.5 font-mono">
+                          Peak: {formatBytes(installState.peakSpeedBps || 0)}/s
+                        </div>
+                      </div>
+
+                      <div className="glass-card p-3 border border-dark-800/60 bg-dark-950/20 border-l-2 border-l-warning-500 pl-3">
+                        <span className="text-[9px] font-bold text-dark-500 uppercase tracking-wider">Disk IO</span>
+                        <div className="text-sm font-black text-warning-400 font-mono mt-1">
+                          W: {formatBytes(installState.diskWriteSpeedBps || 0)}/s
+                        </div>
+                        <div className="text-[9px] text-dark-500 mt-0.5 font-mono">
+                          R: {formatBytes(installState.diskReadSpeedBps || 0)}/s
+                        </div>
+                      </div>
+
+                      <div className="col-span-2 glass-card p-3 border border-dark-800/60 bg-dark-950/20 flex justify-between items-center text-xs">
+                        <span className="text-dark-500">Steam CDN node</span>
+                        <span className="font-bold text-dark-300 font-mono text-[10px] truncate max-w-[200px]" title={installState.cdnServer}>
+                          {installState.cdnServer || 'Detecting CDN node...'}
+                        </span>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Right Column: Live Logs console, Diagnostics panel, History list */}
+                  <div className="lg:col-span-7 space-y-6">
+
+                    {/* Virtualized Console Logs */}
+                    <div className="glass-card border border-dark-800 bg-dark-950 overflow-hidden flex flex-col h-[320px]">
+                      <div className="flex justify-between items-center px-4 py-2 border-b border-dark-800 bg-dark-900/60 text-xs">
+                        <span className="text-dark-400 font-bold uppercase tracking-wider font-mono">Terminal Output</span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              if (installState.log) {
+                                navigator.clipboard.writeText(installState.log);
+                                showNotification('success', 'Console log copied to clipboard');
+                              }
+                            }}
+                            className="text-[10px] text-dark-400 hover:text-dark-200 uppercase tracking-wider font-bold"
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => {
+                              setInstallState(server.id, { log: '' });
+                            }}
+                            className="text-[10px] text-error-400 hover:text-error-300 uppercase tracking-wider font-bold"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed text-dark-300 bg-dark-950/80">
+                        <pre className="whitespace-pre-wrap word-break-all font-mono">
+                          {installState.log}
+                          <div ref={logEndRef} />
+                        </pre>
+                      </div>
+                    </div>
+
+                    {/* Diagnostics Panel */}
+                    <div className="glass-card p-5 border border-dark-800/80 space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
+                          SteamCMD Pre-Flight Diagnostics
+                        </h4>
+                        <button
+                          onClick={runDiag}
+                          disabled={isRunningDiag}
+                          className="text-[10px] font-bold text-primary-400 hover:text-primary-300 uppercase tracking-wider"
+                        >
+                          {isRunningDiag ? 'Running...' : 'Run Diag'}
+                        </button>
+                      </div>
+
+                      {diagnostics ? (
+                        <div className="space-y-2.5 text-xs">
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.steamStatus)}`}>
+                              <span>Steam Servers</span>
+                              <span className="font-bold uppercase text-[10px]">{diagnostics.steamStatus}</span>
+                            </div>
+                            <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.internetPing)}`}>
+                              <span>Network Speed</span>
+                              <span className="font-bold uppercase text-[10px]">{diagnostics.internetPing}</span>
+                            </div>
+                            <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.diskSpace)}`}>
+                              <span>Disk Capacity</span>
+                              <span className="font-bold uppercase text-[10px]">{diagnostics.diskSpace}</span>
+                            </div>
+                            <div className={`p-2.5 rounded-lg border flex justify-between items-center ${getDiagStatusColor(diagnostics.writePermissions)}`}>
+                              <span>Folder Locks</span>
+                              <span className="font-bold uppercase text-[10px]">{diagnostics.writePermissions}</span>
+                            </div>
+                          </div>
+
+                          {diagnostics.issues && diagnostics.issues.length > 0 && (
+                            <div className="bg-error-500/5 border border-error-500/20 rounded-xl p-3.5 space-y-2">
+                              <span className="text-[10px] font-extrabold text-error-400 uppercase tracking-wider">Detected Issues</span>
+                              {diagnostics.issues.map((issue: any, i: number) => (
+                                <div key={i} className="text-xs space-y-1 border-t border-error-500/10 pt-2 first:border-0 first:pt-0">
+                                  <div className="font-bold text-error-300">{issue.category}: {issue.cause}</div>
+                                  <div className="text-dark-400 text-[11px] leading-relaxed">{issue.description}</div>
+                                  <div className="text-success-400 text-[10px] font-semibold">Recommended: {issue.recommendedFix}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-dark-500 animate-pulse text-center py-2">
+                          Loading diagnostics indices...
+                        </div>
+                      )}
+                    </div>
+
+                    {/* History list */}
+                    {history && history.length > 0 && (
+                      <div className="glass-card p-5 border border-dark-850 space-y-3">
+                        <h4 className="text-[10px] font-extrabold text-dark-400 uppercase tracking-wider">
+                          Installation History Logs
+                        </h4>
+
+                        <div className="space-y-3 max-h-[140px] overflow-y-auto pr-1">
+                          {history.slice(0, 5).map((entry) => (
+                            <div key={entry.id} className="flex justify-between items-start text-xs border-b border-dark-800/40 pb-2.5 last:border-0 last:pb-0 gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-dark-300">
+                                  {entry.status === 'completed' ? `Build ${entry.version || 'unknown'}` : 'Installation Failed'}
+                                </div>
+                                {entry.status !== 'completed' && entry.notes && (
+                                  <div className="text-[10px] text-error-400/80 mt-1 leading-relaxed break-words max-w-sm">
+                                    {entry.notes}
+                                  </div>
+                                )}
+                                <div className="text-[10px] text-dark-500 mt-1">{new Date(entry.createdAt).toLocaleString()}</div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${entry.status === 'completed' ? 'bg-success-500/10 text-success-400 border border-success-500/20' : 'bg-error-500/10 text-error-400 border border-error-500/20'}`}>
+                                  {entry.status}
+                                </span>
+                                <div className="text-[9px] text-dark-400 font-mono mt-1">
+                                  {formatBytes(entry.downloadedSize)} in {formatUptime(entry.durationSeconds)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-          </div>
           )}
         </div>
       )}
@@ -1949,7 +2222,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
           <h3 className="text-xs font-semibold text-dark-400 uppercase tracking-wider">
             Server Information
           </h3>
-          
+
           {isLoadingDetails ? (
             <div className="space-y-4 py-2 animate-pulse">
               <div className="h-4 bg-dark-800/60 rounded w-2/3"></div>
@@ -1982,6 +2255,14 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
               <div className="flex justify-between items-center">
                 <span className="text-xs text-dark-500">Build Number</span>
                 <span className="text-xs text-dark-200 font-mono">{extendedInfo?.buildId || '—'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-dark-500">Game Version</span>
+                <span className="text-xs text-dark-200 font-mono">{extendedInfo?.gameVersion || '—'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-dark-500">Server Version</span>
+                <span className="text-xs text-dark-200 font-mono">{extendedInfo?.serverVersion || '—'}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-dark-500">Steam App ID</span>
@@ -2036,7 +2317,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
           <h3 className="text-xs font-semibold text-dark-400 uppercase tracking-wider">
             Network & Status Configuration
           </h3>
-          
+
           <div className="space-y-3">
             <div className="flex justify-between items-center h-7">
               <span className="text-xs text-dark-500">Local Address</span>
@@ -2098,7 +2379,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
               <span className="text-xs text-dark-500">Public visibility</span>
               <span className="text-xs text-dark-200 font-mono">{server.isPublic ? 'Yes' : 'No'}</span>
             </div>
-            
+
             <div className="flex justify-between items-center">
               <span className="text-xs text-dark-500">RCON Status</span>
               {isLoadingDetails ? (
@@ -2227,7 +2508,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
               <h2 className="text-sm font-bold text-dark-100 uppercase tracking-wider">Reset Server Configuration</h2>
             </div>
             <p className="text-xs text-dark-300 leading-relaxed">
-              This will restore all rule and gameplay configurations to their defaults. 
+              This will restore all rule and gameplay configurations to their defaults.
               Ports, server passwords, and the server name will be preserved.
             </p>
             <div className="space-y-2">
@@ -2322,15 +2603,72 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
         </div>
       )}
 
+      {/* No Update Available Modal */}
+      {isNoUpdateModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-fade-in">
+          <div className="absolute inset-0 bg-dark-950/80 backdrop-blur-sm" onClick={() => setIsNoUpdateModalOpen(false)} />
+          <div className="relative glass-card max-w-sm w-full border border-emerald-500/30 bg-dark-900/95 p-6 shadow-[0_0_50px_-12px_rgba(16,185,129,0.3)] rounded-xl space-y-5 animate-scale-in text-center">
+            {/* Top accent gradient line */}
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-emerald-500/80 via-emerald-400/60 to-cyan-500/40 rounded-t-xl" />
+
+            {/* Success Icon with Glow */}
+            <div className="relative w-16 h-16 mx-auto">
+              <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-md animate-pulse" />
+              <div className="relative w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/10">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-8 h-8">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+            </div>
+
+            {/* Title */}
+            <div className="space-y-1.5">
+              <h2 className="text-sm font-black uppercase text-gradient-green tracking-wider">
+                Server Up To Date
+              </h2>
+              <p className="text-[11px] text-dark-300 leading-relaxed px-2">
+                This server is already running the latest available release from Steam. No action is required.
+              </p>
+            </div>
+
+            {/* Version Details */}
+            <div className="bg-dark-950/40 border border-dark-800/70 rounded-lg p-3 text-[10px] space-y-2 font-mono">
+              <div className="flex justify-between items-center">
+                <span className="text-dark-500">Steam Build ID</span>
+                <span className="text-emerald-400 font-semibold">{extendedInfo?.buildId || '—'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-dark-500">Game Version</span>
+                <span className="text-dark-300 font-semibold">{extendedInfo?.gameVersion || '—'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-dark-500">Server Version</span>
+                <span className="text-dark-300 font-semibold">{extendedInfo?.serverVersion || '—'}</span>
+              </div>
+            </div>
+
+            {/* Close Button */}
+            <div className="pt-1.5">
+              <button
+                onClick={() => setIsNoUpdateModalOpen(false)}
+                className="w-full bg-gradient-to-r from-emerald-600/20 to-cyan-600/10 text-emerald-400 border border-emerald-500/25 hover:from-emerald-600/40 hover:to-cyan-600/20 hover:border-emerald-400/45 hover:text-emerald-300 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 shadow-md shadow-emerald-950/20"
+              >
+                DISMISS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Completion Dialog Success Modal */}
       {showCompletionModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md" 
-            onClick={dismissCompletionModal} 
+          <div
+            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md"
+            onClick={dismissCompletionModal}
           />
-          
+
           {/* Content Card */}
           <div className="relative glass-card border border-success-500/30 bg-dark-900/80 p-8 rounded-2xl shadow-2xl max-w-md w-full space-y-6 text-center animate-scale-in">
             {/* Checked Icon */}
@@ -2339,7 +2677,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
-            
+
             {/* Title */}
             <div>
               <h2 className="text-md font-black uppercase text-gradient-cyan tracking-wider">
@@ -2394,7 +2732,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                 Start Server
               </button>
             </div>
-            
+
             <button
               onClick={dismissCompletionModal}
               className="text-xs text-dark-500 hover:text-dark-300 transition-colors uppercase tracking-wider font-bold"
@@ -2409,11 +2747,11 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
       {showSteamcmdModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
           {/* Backdrop */}
-          <div 
-            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md" 
-            onClick={() => setShowSteamcmdModal(false)} 
+          <div
+            className="absolute inset-0 bg-dark-950/85 backdrop-blur-md"
+            onClick={() => setShowSteamcmdModal(false)}
           />
-          
+
           {/* Content Card */}
           <div className="relative glass-card border border-success-500/30 bg-dark-900/80 p-8 rounded-2xl shadow-2xl max-w-sm w-full space-y-6 text-center animate-scale-in">
             {/* Checked Icon */}
@@ -2422,7 +2760,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
-            
+
             {/* Title */}
             <div className="space-y-2">
               <h2 className="text-md font-black uppercase text-gradient-cyan tracking-wider">

@@ -13,6 +13,7 @@ use services::rcon::RconService;
 use services::scheduler::SchedulerService;
 use services::steamcmd::SteamCmdService;
 use services::installation_manager::InstallationManager;
+use services::update_manager::UpdateManager;
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
 use tauri::Manager;
@@ -26,6 +27,8 @@ pub struct AppState {
     pub scheduler: Arc<SchedulerService>,
     pub steamcmd: SteamCmdService,
     pub installation_manager: Arc<InstallationManager>,
+    pub update_manager: Arc<UpdateManager>,
+    pub discord_bot: Arc<crate::services::discord_bot::DiscordBotService>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -175,6 +178,28 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             let steamcmd = SteamCmdService::new(app_dir.clone());
             let db_for_installer = Database::new(db_path.clone()).expect("Failed to open DB for installer");
             let installation_manager = Arc::new(InstallationManager::new(db_for_installer));
+            let update_manager = Arc::new(UpdateManager::new(app_handle.clone()));
+            let discord_bot = Arc::new(crate::services::discord_bot::DiscordBotService::new(app_handle.clone()));
+
+            // Start bot automatically if enabled
+            let bot_enabled = {
+                if let Ok(conn) = db.get_connection() {
+                    let val: Option<String> = conn.query_row(
+                        "SELECT value FROM settings WHERE key = 'discord_bot_enabled'",
+                        [],
+                        |row| row.get(0),
+                    ).ok();
+                    val.map(|v| v == "true").unwrap_or(false)
+                } else {
+                    false
+                }
+            };
+            if bot_enabled && !safe_mode {
+                let bot_clone = discord_bot.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = bot_clone.start().await;
+                });
+            }
 
             // Manage AppState
             app.manage(AppState {
@@ -186,6 +211,8 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
                 scheduler: scheduler.clone(),
                 steamcmd,
                 installation_manager,
+                update_manager,
+                discord_bot,
             });
 
             app.manage(RconState(rcon_service));
@@ -222,6 +249,8 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
         .invoke_handler(tauri::generate_handler![
             // Server commands
             commands::server::get_servers,
+            commands::server::run_server_update,
+            commands::server::check_for_server_updates,
             commands::server::create_server,
             commands::server::delete_server,
             commands::server::start_server,
@@ -323,6 +352,13 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             // Discord commands
             commands::discord::test_discord_webhook,
             commands::discord::send_discord_notification,
+            // Discord Bot commands
+            commands::discord_bot::get_discord_bot_status,
+            commands::discord_bot::toggle_discord_bot,
+            commands::discord_bot::get_server_discord_config,
+            commands::discord_bot::save_server_discord_config,
+            commands::discord_bot::force_refresh_discord_dashboard,
+            commands::discord_bot::test_discord_bot_connection,
             // Startup commands
             commands::startup::get_startup_enabled,
             commands::startup::set_startup_enabled,

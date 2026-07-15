@@ -319,8 +319,17 @@ export const Dashboard: React.FC = () => {
         // Self-heal/update store status if mismatched
         if (status.isRunning && (server.status === 'starting' || server.status === 'restarting')) {
           store.updateServerStatus(server.id, 'running');
-        } else if (!status.isRunning && (server.status === 'running' || server.status === 'online')) {
-          store.updateServerStatus(server.id, 'stopped');
+        } else if (!status.isRunning) {
+          if (server.status === 'running' || server.status === 'online') {
+            store.updateServerStatus(server.id, 'stopped');
+          } else if (server.status === 'starting' || server.status === 'restarting') {
+            // Self-heal stuck starting/restarting states after 20 seconds
+            const lastStartedTime = server.lastStarted ? new Date(server.lastStarted).getTime() : 0;
+            const timeSinceStart = Date.now() - lastStartedTime;
+            if (timeSinceStart > 20000) {
+              store.updateServerStatus(server.id, 'stopped');
+            }
+          }
         }
       } catch (_) {}
     }

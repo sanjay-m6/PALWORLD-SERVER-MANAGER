@@ -601,4 +601,77 @@ impl Database {
         }
         Ok(events)
     }
+
+    // ─── Discord Remote Admin Config CRUD ──────────────────────────────────────────
+
+    pub fn get_server_discord_config(&self, server_id: i64) -> Result<crate::models::ServerDiscordConfig, String> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT server_id, enabled, dashboard_channel_id, dashboard_message_id, 
+                    console_channel_id, chat_channel_id, notifications_channel_id,
+                    role_owner_id, role_admin_id, role_moderator_id, role_developer_id
+             FROM server_discord_configs
+             WHERE server_id = ?1"
+        ).map_err(|e| e.to_string())?;
+
+        match stmt.query_row([server_id], |row| {
+            Ok(crate::models::ServerDiscordConfig {
+                server_id: row.get(0)?,
+                enabled: row.get::<_, i32>(1)? != 0,
+                dashboard_channel_id: row.get(2)?,
+                dashboard_message_id: row.get(3)?,
+                console_channel_id: row.get(4)?,
+                chat_channel_id: row.get(5)?,
+                notifications_channel_id: row.get(6)?,
+                role_owner_id: row.get(7)?,
+                role_admin_id: row.get(8)?,
+                role_moderator_id: row.get(9)?,
+                role_developer_id: row.get(10)?,
+            })
+        }) {
+            Ok(config) => Ok(config),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // Return default empty config
+                Ok(crate::models::ServerDiscordConfig {
+                    server_id,
+                    enabled: false,
+                    dashboard_channel_id: String::new(),
+                    dashboard_message_id: String::new(),
+                    console_channel_id: String::new(),
+                    chat_channel_id: String::new(),
+                    notifications_channel_id: String::new(),
+                    role_owner_id: String::new(),
+                    role_admin_id: String::new(),
+                    role_moderator_id: String::new(),
+                    role_developer_id: String::new(),
+                })
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub fn save_server_discord_config(&self, config: &crate::models::ServerDiscordConfig) -> Result<(), String> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO server_discord_configs (
+                server_id, enabled, dashboard_channel_id, dashboard_message_id,
+                console_channel_id, chat_channel_id, notifications_channel_id,
+                role_owner_id, role_admin_id, role_moderator_id, role_developer_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                config.server_id,
+                config.enabled as i32,
+                config.dashboard_channel_id,
+                config.dashboard_message_id,
+                config.console_channel_id,
+                config.chat_channel_id,
+                config.notifications_channel_id,
+                config.role_owner_id,
+                config.role_admin_id,
+                config.role_moderator_id,
+                config.role_developer_id,
+            ],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }

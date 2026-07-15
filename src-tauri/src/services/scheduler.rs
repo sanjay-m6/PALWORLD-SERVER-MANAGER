@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Manager};
 use serde::Serialize;
 use cron::Schedule;
 use std::str::FromStr;
@@ -101,195 +101,12 @@ impl SchedulerService {
                                 last_update_checks.insert(server_id, now);
                                 log::info!("[SCHEDULER] Checking for official Steam update for server ID {}", server_id);
                                 
-                                let branch = server.branch.clone();
-                                let install_path = server.install_path.clone();
-                                
-                                let client = reqwest::blocking::Client::builder()
-                                    .timeout(std::time::Duration::from_secs(10))
-                                    .build()
-                                    .unwrap_or_default();
-                                
-                                let mut remote_build_id = None;
-                                if let Ok(resp) = client.get("https://api.steamcmd.net/v1/info/2394010").send() {
-                                    if let Ok(json) = resp.json::<serde_json::Value>() {
-                                        let branch_to_check = if branch.trim().is_empty() { "public" } else { branch.trim() };
-                                        if let Some(buildid_val) = json.pointer(&format!("/data/2394010/depots/branches/{}/buildid", branch_to_check)) {
-                                            if let Some(b_id) = buildid_val.as_str() {
-                                                remote_build_id = Some(b_id.to_string());
-                                            } else if let Some(b_num) = buildid_val.as_u64() {
-                                                remote_build_id = Some(b_num.to_string());
-                                            }
-                                        }
+                                let app_handle_clone = app_handle.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    if let Some(s) = app_handle_clone.try_state::<crate::AppState>() {
+                                        let _ = s.update_manager.check_and_run_update(server_id).await;
                                     }
-                                }
-
-                                if let Some(remote_id) = remote_build_id {
-                                    let mut local_id = String::new();
-                                    let manifest_path = install_path.join("steamapps").join("appmanifest_2394010.acf");
-                                    if manifest_path.exists() {
-                                        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                                            let re = regex::Regex::new(r#""buildid"\s+"(\d+)""#).unwrap();
-                                            if let Some(caps) = re.captures(&content) {
-                                                if let Some(m) = caps.get(1) {
-                                                    local_id = m.as_str().to_string();
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if !local_id.is_empty() && local_id != remote_id {
-                                        log::info!("[SCHEDULER] Official update detected for server ID {} (Local: {}, Remote: {}). Applying auto-update...", server_id, local_id, remote_id);
-                                        
-                                        let app_handle_clone = app_handle.clone();
-                                        let install_path_str = install_path.to_string_lossy().to_string();
-                                        let branch_str = branch.clone();
-                                        let server_name_clone = server.name.clone();
-                                        
-                                        // Emit update start event & Send Discord notification
-                                        let _ = app_handle_clone.emit("server-update-notification", ServerUpdateNotification {
-                                            server_id,
-                                            server_name: server_name_clone.clone(),
-                                            event_type: "start".to_string(),
-                                            message: format!("Server '{}' has an official update available on Steam. Starting automatic update...", server_name_clone),
-                                        });
-
-                                        let app_handle_d = app_handle.clone();
-                                        let server_name_clone_d = server_name_clone.clone();
-                                        tauri::async_runtime::spawn(async move {
-                                            if let Some(s) = app_handle_d.try_state::<crate::AppState>() {
-                                                let _ = crate::commands::discord::send_discord_notification(
-                                                    s,
-                                                    "update_start".to_string(),
-                                                    server_name_clone_d,
-                                                    format!("Palworld update detected on Steam. Stopping server to update..."),
-                                                ).await;
-                                            }
-                                        });
-
-                                        tauri::async_runtime::spawn(async move {
-                                            if let Some(s) = app_handle_clone.try_state::<crate::AppState>() {
-                                                let was_running = s.process_manager.is_server_running(server_id);
-
-                                                if was_running {
-                                                    log::info!("[SCHEDULER] Stopping running server ID {} to perform update", server_id);
-                                                    let _ = s.process_manager.stop_server(server_id, crate::services::process_manager::StopReason::UpdateRequired);
-                                                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                                                }
-
-                                                log::info!("[SCHEDULER] Auto-updating server ID {} files...", server_id);
-                                                let update_res = s.steamcmd.update_server(
-                                                    app_handle_clone.clone(),
-                                                    &install_path_str,
-                                                    Some(&branch_str)
-                                                ).await;
-
-                                                match update_res {
-                                                    Ok(_) => {
-                                                        log::info!("[SCHEDULER] Auto-update successfully completed for server ID {}", server_id);
-
-                                                        let _ = app_handle_clone.emit("server-update-notification", ServerUpdateNotification {
-                                                            server_id,
-                                                            server_name: server_name_clone.clone(),
-                                                            event_type: "success".to_string(),
-                                                            message: format!("Server '{}' auto-update has completed successfully!", server_name_clone),
-                                                        });
-
-                                                        let app_handle_success_d = app_handle_clone.clone();
-                                                        let server_name_clone_d = server_name_clone.clone();
-                                                        tauri::async_runtime::spawn(async move {
-                                                            if let Some(s_app) = app_handle_success_d.try_state::<crate::AppState>() {
-                                                                let _ = crate::commands::discord::send_discord_notification(
-                                                                    s_app,
-                                                                    "update_success".to_string(),
-                                                                    server_name_clone_d,
-                                                                    format!("Server auto-update finished successfully!"),
-                                                                ).await;
-                                                            }
-                                                        });
-
-                                                        if was_running {
-                                                            log::info!("[SCHEDULER] Restarting server ID {} after update", server_id);
-                                                            
-                                                            // Query start params
-                                                            let start_params = {
-                                                                if let Ok(db) = s.db.lock() {
-                                                                    if let Ok(conn) = db.get_connection() {
-                                                                        conn.query_row(
-                                                                            "SELECT install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE id = ?1",
-                                                                            [server_id],
-                                                                            |row| Ok((
-                                                                                row.get::<_, String>(0)?,
-                                                                                row.get::<_, String>(1).unwrap_or_default(),
-                                                                                row.get::<_, u16>(2).unwrap_or(8211),
-                                                                                row.get::<_, u16>(3).unwrap_or(25575),
-                                                                                row.get::<_, String>(4).unwrap_or_default(),
-                                                                            )),
-                                                                        ).ok()
-                                                                    } else {
-                                                                        None
-                                                                    }
-                                                                } else {
-                                                                    None
-                                                                }
-                                                            };
-
-                                                            if let Some((install_path, startup_args, game_port, rcon_port, admin_password)) = start_params {
-                                                                if let Ok(db) = s.db.lock() {
-                                                                    let _ = db.update_server_status(server_id, "starting");
-                                                                    let _ = db.update_server_last_started(server_id);
-                                                                }
-                                                                
-                                                                match s.process_manager.start_server(
-                                                                    server_id,
-                                                                    &install_path,
-                                                                    &startup_args,
-                                                                    game_port,
-                                                                    rcon_port,
-                                                                    &admin_password,
-                                                                ) {
-                                                                    Ok(_) => {
-                                                                        if let Ok(db) = s.db.lock() {
-                                                                            let _ = db.update_server_status(server_id, "running");
-                                                                        }
-                                                                    }
-                                                                    Err(e) => {
-                                                                        log::error!("[SCHEDULER] Failed to restart server ID {} after update: {}", server_id, e);
-                                                                        if let Ok(db) = s.db.lock() {
-                                                                            let _ = db.update_server_status(server_id, "crashed");
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        log::error!("[SCHEDULER] Auto-update failed for server ID {}: {}", server_id, e);
-                                                        
-                                                        let _ = app_handle_clone.emit("server-update-notification", ServerUpdateNotification {
-                                                            server_id,
-                                                            server_name: server_name_clone.clone(),
-                                                            event_type: "failed".to_string(),
-                                                            message: format!("Server '{}' auto-update failed: {}", server_name_clone, e),
-                                                        });
-
-                                                        let app_handle_fail_d = app_handle_clone.clone();
-                                                        let server_name_clone_d = server_name_clone.clone();
-                                                        tauri::async_runtime::spawn(async move {
-                                                            if let Some(s_app) = app_handle_fail_d.try_state::<crate::AppState>() {
-                                                                let _ = crate::commands::discord::send_discord_notification(
-                                                                    s_app,
-                                                                    "update_failed".to_string(),
-                                                                    server_name_clone_d,
-                                                                    format!("Server auto-update failed: {}", e),
-                                                                ).await;
-                                                            }
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    }
-                                }
+                                });
                             }
                         }
 

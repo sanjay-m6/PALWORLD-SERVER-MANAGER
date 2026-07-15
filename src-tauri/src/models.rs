@@ -741,6 +741,8 @@ pub struct ExtendedServerDetails {
     pub rest_api_status: String,  // "active" | "disabled"
     pub disk_free_bytes: u64,
     pub disk_total_bytes: u64,
+    pub game_version: String,
+    pub server_version: String,
 }
 
 // ─── Installation History ───────────────────────────────────────────────────
@@ -790,3 +792,22 @@ pub struct ServerEvent {
     pub details: String,
     pub created_at: String,
 }
+
+// ─── Discord Remote Admin Config ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerDiscordConfig {
+    pub server_id: i64,
+    pub enabled: bool,
+    pub dashboard_channel_id: String,
+    pub dashboard_message_id: String,
+    pub console_channel_id: String,
+    pub chat_channel_id: String,
+    pub notifications_channel_id: String,
+    pub role_owner_id: String,
+    pub role_admin_id: String,
+    pub role_moderator_id: String,
+    pub role_developer_id: String,
+}
+

@@ -86,20 +86,20 @@ jobs:
           releaseBody: |
             ## Palworld Server Manager v__VERSION__
 
-            This major release introduces multi-server instance cloning, graceful countdown restarts, direct server migration packages, logs terminal upgrades, and advanced game configuration options.
+            This release introduces major updates to the Discord Integration, including real-time connection status tracking, intents fallback logic, and a fallback plain-text command parser.
 
             ### 🚀 New Features & Improvements
-            - **Multi-Server Instance Cloning:** Instantly replicate any existing server's configuration, SQLite entries, non-conflicting port allocations, and world save files to a new directory from the Dashboard or Server Detail view.
-            - **Graceful Restarts & Countdown Warnings:** Restarts and stops now broadcast countdown messages in-game over REST API/RCON (e.g. 30s/15s warnings) if players are online, trigger a save, and perform a clean shutdown. Suppresses false-positive crash-monitor alerts.
-            - **Direct Server Migration Packages:** Export a server's complete world save data (`Pal/Saved`) and installed mods (`Mods`) into a single ZIP migration package with a `server_metadata.json` manifest, then import it on any machine to set up the server instantly.
-            - **Upgraded Logs Terminal:** Complete terminal emulator in the Logs tab supporting direct RCON command execution, clean console logs streaming (hides headers/timestamps), auto-scroll toggle, command history, and log exports.
-            - **Garbage Collection (Engine) Optimizations:** Automatically configures garbage collection tuning settings inside `Engine.ini` (`[/Script/Engine.GarbageCollectionSettings]`) when "Optimize RAM" is active to mitigate server process memory leaks.
-            - **Steam Workshop Authenticated Downloads:** Supports authenticated logins (`steam_username` setting) instead of anonymous downloads, fixing SteamCMD download restrictions for paid games, with helpful error messages for Steam Guard caching.
-            - **CurseForge Integration & Autocleanup:** Integrated CurseForge API searches for Palworld mods, and auto-cleans up older version files of the same mod in the destination folder to prevent startup conflicts.
+            - **Real-time Status Tracking**: Shows the precise connection state (`offline`, `connecting`, `online`) of your Discord Bot directly in the Tauri Manager dashboard.
+            - **Intents Fallback Logic**: Automatically detects and recovers from missing Privileged Intents (like Message Content Intent). If disabled in the Developer Portal, the bot falls back gracefully to keep Dashboard and Event Alert updates fully functional.
+            - **Instant Slash Commands**: Automatically registers all commands for the guilds the bot is currently in upon connection, making them instantly available to users without the standard 1-hour global Discord command cache delay.
+            - **Text Command Parser**: Added prefix/text command parsing (`/status`, `!status <id>`, `!players`, `!start <id>`, etc.) as a fallback option when slash commands are slow or if you prefer typing.
+            - **Live Dashboard Setup Command**: Run `/dashboard <server_id>` or `!dashboard <server_id>` in any Discord channel to automatically set it as the live dashboard channel and post the server dashboard embed.
+            - **Tauri App UI Command Reference**: Updated the Discord tab guide to display the new `/dashboard` command reference.
 
             ### 🐛 Bug Fixes
-            - **Ban List Formatting Fixes:** Standardizes Steam ID bans with or without `steam_` prefixes, preventing entry duplication and formatting bugs.
-            - **Donation Options Clean-Up:** Removed credit card validation scripts and layouts to focus entirely on direct links for Ko-fi, PayPal, and GitHub sponsorships.
+            - **Auto-Update Success Alerts**: Resolved the race condition and sorting mismatch where the update manager queried the oldest database history record to verify success, causing false-positive `Update Failed` notifications to Discord.
+            - **Background Thread Safety**: Prevented database locking issues during async `.await` execution in command interactions.
+            - **Tauri Command Safety**: Prevented triggering dashboard refreshes while the bot is offline or still connecting.
 
             ---
             _Developed by Sanjay._

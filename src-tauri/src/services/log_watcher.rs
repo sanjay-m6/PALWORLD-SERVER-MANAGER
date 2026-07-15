@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -222,20 +222,28 @@ impl LogWatcherService {
                             let line = leftover[..newline_pos].trim_end().to_string();
                             leftover = leftover[newline_pos + 1..].to_string();
 
-                            if !line.is_empty() {
-                                let level = Self::detect_log_level(&line);
-                                let _ = app_handle.emit(
-                                    "server-log",
-                                    LogEvent {
-                                        server_id,
-                                        timestamp: chrono::Local::now()
-                                            .format("%H:%M:%S")
-                                            .to_string(),
-                                        level,
-                                        message: line,
-                                    },
-                                );
-                            }
+                             if !line.is_empty() {
+                                 let level = Self::detect_log_level(&line);
+                                 let _ = app_handle.emit(
+                                     "server-log",
+                                     LogEvent {
+                                         server_id,
+                                         timestamp: chrono::Local::now()
+                                             .format("%H:%M:%S")
+                                             .to_string(),
+                                         level,
+                                         message: line.clone(),
+                                     },
+                                 );
+
+                                 if let Some(state) = app_handle.try_state::<crate::AppState>() {
+                                     let bot = state.discord_bot.clone();
+                                     let line_clone = line.clone();
+                                     tauri::async_runtime::spawn(async move {
+                                         bot.queue_log(server_id, line_clone).await;
+                                     });
+                                 }
+                             }
                         }
                     }
                     Err(e) => {
@@ -259,20 +267,51 @@ impl LogWatcherService {
 
     /// Read the last N lines from a file (for initial display)
     fn read_last_n_lines(path: &PathBuf, n: usize) -> Vec<String> {
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => {
-                // Try reading as lossy UTF-8 (UE5 logs can have non-UTF8 bytes)
-                match std::fs::read(path) {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-                    Err(_) => {
-                        log::warn!("[LOG_WATCHER] Could not read log file: {}", e);
-                        return vec![];
+        let mut file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(_) => return vec![],
+        };
+
+        let file_len = match file.metadata() {
+            Ok(m) => m.len(),
+            Err(_) => return vec![],
+        };
+
+        let chunk_size = 4096;
+        let mut pos = file_len;
+        let mut buffer = Vec::new();
+        let mut newlines_found = 0;
+
+        while pos > 0 && newlines_found <= n {
+            let read_size = std::cmp::min(pos, chunk_size);
+            pos -= read_size;
+
+            if file.seek(SeekFrom::Start(pos)).is_err() {
+                break;
+            }
+
+            let mut chunk = vec![0u8; read_size as usize];
+            if file.read_exact(&mut chunk).is_err() {
+                break;
+            }
+
+            // Count newlines in the chunk backwards
+            for &byte in chunk.iter().rev() {
+                if byte == b'\n' {
+                    newlines_found += 1;
+                    if newlines_found > n {
+                        break;
                     }
                 }
             }
-        };
 
+            // Prepend chunk to our buffer
+            let mut new_buffer = chunk;
+            new_buffer.extend_from_slice(&buffer);
+            buffer = new_buffer;
+        }
+
+        let content = String::from_utf8_lossy(&buffer);
         content
             .lines()
             .rev()

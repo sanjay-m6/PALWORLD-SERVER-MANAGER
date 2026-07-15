@@ -146,3 +146,22 @@ CREATE INDEX IF NOT EXISTS idx_installed_mods_server_id ON installed_mods(server
 CREATE INDEX IF NOT EXISTS idx_ban_list_server_id ON ban_list(server_id);
 CREATE INDEX IF NOT EXISTS idx_server_events_server_id ON server_events(server_id);
 CREATE INDEX IF NOT EXISTS idx_backup_schedules_server_id ON backup_schedules(server_id);
+
+-- ─── Discord Remote Admin Config ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS server_discord_configs (
+    server_id INTEGER PRIMARY KEY,
+    enabled INTEGER DEFAULT 0,
+    dashboard_channel_id TEXT DEFAULT '',
+    dashboard_message_id TEXT DEFAULT '',
+    console_channel_id TEXT DEFAULT '',
+    chat_channel_id TEXT DEFAULT '',
+    notifications_channel_id TEXT DEFAULT '',
+    role_owner_id TEXT DEFAULT '',
+    role_admin_id TEXT DEFAULT '',
+    role_moderator_id TEXT DEFAULT '',
+    role_developer_id TEXT DEFAULT '',
+    FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_server_discord_configs_server_id ON server_discord_configs(server_id);
+

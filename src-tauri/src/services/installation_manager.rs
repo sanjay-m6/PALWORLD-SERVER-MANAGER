@@ -312,10 +312,6 @@ impl InstallationManager {
                 cancel_rx,
             ).await;
 
-            // Remove from active list
-            let mut active = self_clone.active_installs.lock().unwrap();
-            active.remove(&server_id);
-
             // Notify finished/failed
             if let Err(e) = res {
                 log::error!("[INSTALL] Server {} installation error: {}", server_id, e);
@@ -369,6 +365,10 @@ impl InstallationManager {
                     "Success",
                 );
             }
+
+            // Remove from active list at the very end
+            let mut active = self_clone.active_installs.lock().unwrap();
+            active.remove(&server_id);
         });
 
         Ok(())

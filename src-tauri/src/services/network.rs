@@ -1,13 +1,15 @@
 /// Network Utilities — Port checking, public IP detection
 
-use std::net::TcpListener;
+use std::net::{TcpListener, UdpSocket};
 
 pub struct NetworkUtils;
 
 impl NetworkUtils {
-    /// Check if a port is available
+    /// Check if a port is available (both TCP and UDP)
     pub fn is_port_available(port: u16) -> bool {
-        TcpListener::bind(format!("0.0.0.0:{}", port)).is_ok()
+        let tcp_ok = TcpListener::bind(format!("0.0.0.0:{}", port)).is_ok();
+        let udp_ok = UdpSocket::bind(format!("0.0.0.0:{}", port)).is_ok();
+        tcp_ok && udp_ok
     }
 
     /// Get the public IP address

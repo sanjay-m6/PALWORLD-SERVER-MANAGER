@@ -10,3 +10,6 @@ pub mod scheduler;
 pub mod log_watcher;
 pub mod network;
 pub mod installation_manager;
+pub mod update_manager;
+pub mod discord_bot;
+

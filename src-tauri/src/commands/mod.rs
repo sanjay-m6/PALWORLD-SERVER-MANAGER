@@ -10,5 +10,6 @@ pub mod startup;
 pub mod workshop;
 pub mod compatibility;
 pub mod installation;
+pub mod discord_bot;
 
 

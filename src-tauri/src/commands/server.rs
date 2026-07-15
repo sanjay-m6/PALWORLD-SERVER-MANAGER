@@ -14,6 +14,32 @@ pub async fn get_servers(state: State<'_, AppState>) -> Result<Vec<Server>, Stri
 }
 
 #[tauri::command]
+pub async fn run_server_update(
+    state: State<'_, AppState>,
+    server_id: i64,
+) -> Result<(), String> {
+    let branch = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = db.get_connection().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT branch FROM servers WHERE id = ?1",
+            [server_id],
+            |row| row.get::<_, String>(0)
+        ).ok()
+    };
+    state.update_manager.run_update(server_id, branch).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_for_server_updates(
+    state: State<'_, AppState>,
+    server_id: i64,
+) -> Result<crate::services::update_manager::UpdateCheckResult, String> {
+    state.update_manager.perform_update_check(server_id).await.map_err(|e| e.to_string())
+}
+
+
+#[tauri::command]
 pub async fn create_server(
     state: State<'_, AppState>,
     request: CreateServerRequest,
@@ -22,35 +48,33 @@ pub async fn create_server(
     {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
-        
-        // Check game_port
-        let conflict_game: Option<String> = conn.query_row(
-            "SELECT name FROM servers WHERE game_port = ?1",
-            [request.game_port as i64],
-            |row| row.get(0),
-        ).ok();
-        if let Some(other_name) = conflict_game {
-            return Err(format!("Game Port {} is already configured for server '{}'. Each server must have a unique Game Port.", request.game_port, other_name));
+
+        // First: ensure the three new ports are mutually distinct
+        if request.game_port == request.rcon_port {
+            return Err(format!("Game Port and RCON Port cannot be the same ({}). Each port must be unique.", request.game_port));
+        }
+        if request.game_port == request.rest_api_port {
+            return Err(format!("Game Port and REST API Port cannot be the same ({}). Each port must be unique.", request.game_port));
+        }
+        if request.rcon_port == request.rest_api_port {
+            return Err(format!("RCON Port and REST API Port cannot be the same ({}). Each port must be unique.", request.rcon_port));
         }
 
-        // Check rcon_port
-        let conflict_rcon: Option<String> = conn.query_row(
-            "SELECT name FROM servers WHERE rcon_port = ?1",
-            [request.rcon_port as i64],
-            |row| row.get(0),
-        ).ok();
-        if let Some(other_name) = conflict_rcon {
-            return Err(format!("RCON Port {} is already configured for server '{}'. Each server must have a unique RCON Port.", request.rcon_port, other_name));
-        }
-
-        // Check rest_api_port
-        let conflict_rest: Option<String> = conn.query_row(
-            "SELECT name FROM servers WHERE rest_api_port = ?1",
-            [request.rest_api_port as i64],
-            |row| row.get(0),
-        ).ok();
-        if let Some(other_name) = conflict_rest {
-            return Err(format!("REST API Port {} is already configured for server '{}'. Each server must have a unique REST API Port.", request.rest_api_port, other_name));
+        // Cross-column check: each new port must not collide with ANY port on ANY existing server
+        let new_ports = [
+            (request.game_port, "Game Port"),
+            (request.rcon_port, "RCON Port"),
+            (request.rest_api_port, "REST API Port"),
+        ];
+        for (port, label) in &new_ports {
+            let conflict: Option<(String, String)> = conn.query_row(
+                "SELECT name, CASE WHEN game_port = ?1 THEN 'Game Port' WHEN rcon_port = ?1 THEN 'RCON Port' WHEN rest_api_port = ?1 THEN 'REST API Port' END FROM servers WHERE game_port = ?1 OR rcon_port = ?1 OR rest_api_port = ?1",
+                [*port as i64],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            ).ok();
+            if let Some((other_name, other_label)) = conflict {
+                return Err(format!("{} {} conflicts with {} on server '{}'. Each server must have unique ports.", label, port, other_label, other_name));
+            }
         }
     }
 
@@ -132,8 +156,10 @@ pub async fn delete_server(
     // Stop server if running to release file handles
     if state.process_manager.get_server_pid(server_id).is_some() {
         let _ = state.process_manager.stop_server(server_id, StopReason::UserAction);
-        std::thread::sleep(std::time::Duration::from_secs(2));
     }
+    // Also force-kill any remaining/orphaned processes for this server path to release file handles
+    kill_all_processes_for_install_path(&state.sys, &install_path);
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     // Optionally backup before deletion
     if backup_first {
@@ -188,18 +214,19 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     }
 
     // Get server info
-    let (install_path, startup_args, game_port, rcon_port, admin_password) = {
+    let (install_path, startup_args, game_port, rcon_port, rest_api_port, admin_password) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
         conn.query_row(
-            "SELECT install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE id = ?1",
+            "SELECT install_path, startup_args, game_port, rcon_port, rest_api_port, admin_password FROM servers WHERE id = ?1",
             [server_id],
             |row| Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1).unwrap_or_default(),
                 row.get::<_, u16>(2).unwrap_or(8211),
                 row.get::<_, u16>(3).unwrap_or(25575),
-                row.get::<_, String>(4).unwrap_or_default(),
+                row.get::<_, u16>(4).unwrap_or(8212),
+                row.get::<_, String>(5).unwrap_or_default(),
             )),
         ).map_err(|e| format!("Server not found: {}", e))?
     };
@@ -328,6 +355,37 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
                     add_rcon.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 }
                 let _ = add_rcon.status();
+
+                let rest_rule_name = format!("Palworld Server REST API {}", rest_api_port);
+                
+                let mut del_rest = std::process::Command::new("netsh");
+                del_rest.args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", rest_rule_name)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    del_rest.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let _ = del_rest.status();
+
+                let mut add_rest = std::process::Command::new("netsh");
+                add_rest.args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={}", rest_rule_name),
+                    "dir=in",
+                    "action=allow",
+                    "protocol=TCP",
+                    &format!("localport={}", rest_api_port)
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    add_rest.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let _ = add_rest.status();
             }
 
             let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -503,10 +561,12 @@ pub async fn stop_server(
     // Stop log watcher
     state.log_watcher.stop_watching(server_id);
 
+    // Mark as stopping in the process manager to prevent crash monitor interference
+    state.process_manager.set_server_stopping(server_id, true);
+
     // Try graceful RCON/REST API shutdown first if force is false
     let mut graceful_done = false;
     if !force {
-        state.process_manager.set_server_stopping(server_id, true);
         graceful_done = execute_graceful_shutdown_sequence(&state.app_handle, &state, server_id).await;
     }
 
@@ -515,8 +575,9 @@ pub async fn stop_server(
         let _ = state.process_manager.stop_server(server_id, StopReason::UserAction);
         kill_all_processes_for_install_path(&state.sys, &install_path);
     } else {
-        // Just make sure it is untracked in ProcessManager and database status updated
+        // Graceful shutdown succeeded — untrack and force-kill any stragglers
         state.process_manager.untrack_server(server_id, StopReason::UserAction);
+        kill_all_processes_for_install_path(&state.sys, &install_path);
     }
 
     {
@@ -539,10 +600,16 @@ pub async fn restart_server(state: State<'_, AppState>, server_id: i64) -> Resul
         db.get_server_install_path(server_id)?
     };
 
-    // Stop
+    // Stop inline (without calling stop_server which would overwrite the "restarting" status)
     state.log_watcher.stop_watching(server_id);
     if state.process_manager.is_server_running(server_id) {
-        let _ = stop_server(state.clone(), server_id, false).await;
+        state.process_manager.set_server_stopping(server_id, true);
+        let graceful_done = execute_graceful_shutdown_sequence(&state.app_handle, &state, server_id).await;
+        if !graceful_done {
+            let _ = state.process_manager.stop_server(server_id, StopReason::ScheduledRestart);
+        } else {
+            state.process_manager.untrack_server(server_id, StopReason::ScheduledRestart);
+        }
     }
 
     // Force-kill any remaining processes for this server path
@@ -559,17 +626,18 @@ pub async fn get_server_status(
     state: State<'_, AppState>,
     server_id: i64,
 ) -> Result<serde_json::Value, String> {
-    let (is_remote, host, rcon_port, status) = {
+    let (is_remote, host, rcon_port, status, last_started) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
         conn.query_row(
-            "SELECT is_remote, host, rcon_port, status FROM servers WHERE id = ?1",
+            "SELECT is_remote, host, rcon_port, status, last_started FROM servers WHERE id = ?1",
             [server_id],
             |row| Ok((
                 row.get::<_, i32>(0).unwrap_or(0) != 0,
                 row.get::<_, String>(1).unwrap_or_else(|_| "127.0.0.1".to_string()),
                 row.get::<_, u16>(2).unwrap_or(25575),
                 row.get::<_, String>(3).unwrap_or_else(|_| "stopped".to_string()),
+                row.get::<_, Option<String>>(4).unwrap_or(None),
             )),
         ).map_err(|e| e.to_string())?
     };
@@ -642,7 +710,23 @@ pub async fn get_server_status(
                 }
             }
         } else {
-            if status == "running" || status == "online" {
+            let mut should_stop = status == "running" || status == "online";
+            if !should_stop && (status == "starting" || status == "restarting") {
+                if let Some(ref ls_str) = last_started {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ls_str) {
+                        let elapsed = chrono::Utc::now().signed_duration_since(dt.with_timezone(&chrono::Utc));
+                        if elapsed.num_seconds() > 20 {
+                            should_stop = true;
+                        }
+                    } else {
+                        should_stop = true;
+                    }
+                } else {
+                    should_stop = true;
+                }
+            }
+
+            if should_stop {
                 if let Ok(db) = state.db.lock() {
                     let _ = db.update_server_status(server_id, "stopped");
                 }
@@ -1000,15 +1084,14 @@ pub async fn clone_server(
             Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
         }).map_err(|e| e.to_string())?;
 
-        let mut reserved_game = std::collections::HashSet::new();
-        let mut reserved_rcon = std::collections::HashSet::new();
-        let mut reserved_rest = std::collections::HashSet::new();
+        // Unified set: every port from every column across all servers
+        let mut all_reserved = std::collections::HashSet::new();
 
         for row in port_rows {
             if let Ok((game, rcon, rest)) = row {
-                reserved_game.insert(game as u16);
-                reserved_rcon.insert(rcon as u16);
-                reserved_rest.insert(rest as u16);
+                all_reserved.insert(game as u16);
+                all_reserved.insert(rcon as u16);
+                all_reserved.insert(rest as u16);
             }
         }
 
@@ -1018,20 +1101,24 @@ pub async fn clone_server(
             tcp_ok && udp_ok
         }
 
-        let mut game_port = source_server.ports.game_port;
-        while reserved_game.contains(&game_port) || !is_port_free(game_port) {
-            game_port += 1;
+        fn find_next_free(start: u16, reserved: &std::collections::HashSet<u16>) -> Result<u16, String> {
+            let mut port = start;
+            while reserved.contains(&port) || !is_port_free(port) {
+                if port >= 65534 {
+                    return Err(format!("No available port found starting from {}. All ports up to 65534 are in use.", start));
+                }
+                port += 1;
+            }
+            Ok(port)
         }
 
-        let mut rcon_port = source_server.ports.rcon_port;
-        while reserved_rcon.contains(&rcon_port) || !is_port_free(rcon_port) {
-            rcon_port += 1;
-        }
+        let game_port = find_next_free(source_server.ports.game_port, &all_reserved)?;
+        all_reserved.insert(game_port); // Reserve it so rcon_port won't collide
 
-        let mut rest_api_port = source_server.ports.rest_api_port;
-        while reserved_rest.contains(&rest_api_port) || rest_api_port == game_port || !is_port_free(rest_api_port) {
-            rest_api_port += 1;
-        }
+        let rcon_port = find_next_free(source_server.ports.rcon_port, &all_reserved)?;
+        all_reserved.insert(rcon_port); // Reserve it so rest_api_port won't collide
+
+        let rest_api_port = find_next_free(source_server.ports.rest_api_port, &all_reserved)?;
 
         crate::models::ServerPorts {
             game_port,

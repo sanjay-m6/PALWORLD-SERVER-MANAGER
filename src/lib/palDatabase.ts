@@ -1,7 +1,7 @@
 // Real Palworld Pals Database
 // Organizing 40+ key representative Pals by type and behavior with official game statistics.
 
-export type PalElement = 'Neutral' | 'Fire' | 'Water' | 'Grass' | 'Electric' | 'Ice' | 'Ground' | 'Dark' | 'Dragon' | 'Earth';
+export type PalElement = 'Neutral' | 'Fire' | 'Water' | 'Grass' | 'Electric' | 'Ice' | 'Ground' | 'Dark' | 'Dragon';
 export type PalBehavior = 'peaceful' | 'curious' | 'skittish' | 'helpful' | 'warm' | 'nocturnal' | 'aggressive' | 'boss' | 'legendary';
 export type PalSize = 'Small' | 'Medium' | 'Large' | 'Massive';
 

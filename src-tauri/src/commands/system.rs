@@ -2384,6 +2384,24 @@ pub async fn open_popout_window(
     Ok(())
 }
 
+pub fn map_build_id_to_version(build_id: &str) -> Option<String> {
+    match build_id {
+        "13317769" => Some("0.1.2.0".to_string()),
+        "13327618" => Some("0.1.3.0".to_string()),
+        "13333333" => Some("0.1.4.0".to_string()),
+        "13426210" => Some("0.1.4.1".to_string()),
+        "13601550" => Some("0.1.5.0".to_string()),
+        "13601662" => Some("0.1.5.1".to_string()),
+        "13745050" => Some("0.2.0.6".to_string()),
+        "13876030" => Some("0.2.1.0".to_string()),
+        "13904945" => Some("0.2.2.0".to_string()),
+        "14349051" => Some("0.2.4.0".to_string()),
+        "14867909" => Some("0.3.1.0".to_string()),
+        "24181105" => Some("0.3.2.0".to_string()),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn get_server_extended_details(
     state: State<'_, AppState>,
@@ -2523,6 +2541,57 @@ pub async fn get_server_extended_details(
         }
     }
 
+    // 8. Get Game Version and Server Version
+    let mut server_version = "—".to_string();
+    let mut game_version = "—".to_string();
+
+    // Load last known version from DB first (sync)
+    {
+        if let Ok(db) = state.db.lock() {
+            if let Ok(Some(last_ver)) = db.get_setting(&format!("last_known_version_{}", server_id)) {
+                server_version = last_ver.clone();
+                game_version = if last_ver.starts_with('v') {
+                    last_ver.clone()
+                } else {
+                    format!("v{}", last_ver)
+                };
+            }
+        }
+    }
+
+    // Fall back to mapping the Build ID if version is still unknown
+    if server_version == "—" && build_id != "—" && !build_id.is_empty() {
+        if let Some(mapped) = map_build_id_to_version(&build_id) {
+            server_version = mapped.clone();
+            game_version = format!("v{}", mapped);
+        } else {
+            server_version = format!("Build {}", build_id);
+            game_version = format!("Build {}", build_id);
+        }
+    }
+
+    // Fetch dynamically via REST API if running (async)
+    if is_running {
+        let client = crate::services::palworld_rest_api::PalworldRestApiClient::new(
+            host,
+            server.ports.rest_api_port,
+            &server.admin_password,
+        );
+        if let Ok(info) = client.get_server_info().await {
+            server_version = info.version.clone();
+            game_version = if info.version.starts_with('v') {
+                info.version.clone()
+            } else {
+                format!("v{}", info.version)
+            };
+            
+            // Save back to DB (sync)
+            if let Ok(db) = state.db.lock() {
+                let _ = db.set_setting(&format!("last_known_version_{}", server_id), &info.version);
+            }
+        }
+    }
+
     Ok(crate::models::ExtendedServerDetails {
         server_id,
         is_installed,
@@ -2535,6 +2604,8 @@ pub async fn get_server_extended_details(
         rest_api_status,
         disk_free_bytes,
         disk_total_bytes,
+        game_version,
+        server_version,
     })
 }
 

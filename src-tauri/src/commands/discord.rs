@@ -106,8 +106,8 @@ pub async fn send_discord_notification(
             .unwrap_or_default()
     };
 
-    if webhook_url.is_empty() {
-        return Ok(()); // No webhook configured, silently skip
+    if webhook_url.is_empty() && !state.discord_bot.is_running().await {
+        return Ok(()); // No destination configured, silently skip
     }
 
     // Check if this event type is enabled
@@ -124,6 +124,19 @@ pub async fn send_discord_notification(
         return Ok(());
     }
 
+    // Find server ID
+    let server_id = {
+        if let Ok(db) = state.db.lock() {
+            db.get_all_servers().unwrap_or_default()
+                .into_iter()
+                .find(|s| s.name == server_name)
+                .map(|s| s.id)
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    };
+
     let (title, color) = match event_type.as_str() {
         "start" => ("🟢 Server Started", 0x10b981u32),
         "stop" => ("🔴 Server Stopped", 0xef4444),
@@ -137,33 +150,43 @@ pub async fn send_discord_notification(
         _ => ("📢 Server Event", 0x6b7280),
     };
 
-    let payload = DiscordWebhookPayload {
-        username: "Palworld Server Manager".to_string(),
-        avatar_url: "https://cdn-icons-png.flaticon.com/512/5968/5968520.png".to_string(),
-        embeds: vec![DiscordEmbed {
-            title: title.to_string(),
-            description: message,
-            color,
-            fields: vec![
-                DiscordEmbedField {
-                    name: "Server".to_string(),
-                    value: server_name,
-                    inline: true,
-                },
-            ],
-            footer: DiscordEmbedFooter {
-                text: "Palworld Server Manager".to_string(),
-            },
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        }],
-    };
+    // Forward to Discord Bot Service if running
+    if server_id != 0 && state.discord_bot.is_running().await {
+        let _ = state.discord_bot.send_notification(server_id, &event_type, title, &message, color).await;
+        // Also force refresh dashboard
+        let _ = state.discord_bot.force_refresh_dashboard(server_id).await;
+    }
 
-    let client = reqwest::Client::new();
-    let _ = client
-        .post(&webhook_url)
-        .json(&payload)
-        .send()
-        .await;
+    // Fallback to webhook if configured
+    if !webhook_url.is_empty() {
+        let payload = DiscordWebhookPayload {
+            username: "Palworld Server Manager".to_string(),
+            avatar_url: "https://cdn-icons-png.flaticon.com/512/5968/5968520.png".to_string(),
+            embeds: vec![DiscordEmbed {
+                title: title.to_string(),
+                description: message,
+                color,
+                fields: vec![
+                    DiscordEmbedField {
+                        name: "Server".to_string(),
+                        value: server_name,
+                        inline: true,
+                    },
+                ],
+                footer: DiscordEmbedFooter {
+                    text: "Palworld Server Manager".to_string(),
+                },
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            }],
+        };
+
+        let client = reqwest::Client::new();
+        let _ = client
+            .post(&webhook_url)
+            .json(&payload)
+            .send()
+            .await;
+    }
 
     Ok(())
 }

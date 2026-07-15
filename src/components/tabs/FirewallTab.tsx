@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands } from '../../lib/tauri';
 
@@ -22,7 +22,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     restApiPortAllowed: false,
   });
 
-  const checkPorts = async () => {
+  const checkPorts = useCallback(async () => {
     if (!server) return;
     try {
       const gameAvailable = await tauriCommands.checkPortAvailable(server.ports.gamePort);
@@ -40,13 +40,13 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     } catch (e) {
       console.error('Failed to check port availability or firewall rules:', e);
     }
-  };
+  }, [server?.ports.gamePort, server?.ports.rconPort, server?.ports.restApiPort, server?.name]);
 
   useEffect(() => {
     checkPorts();
     const interval = setInterval(checkPorts, 10000);
     return () => clearInterval(interval);
-  }, [server?.ports.gamePort, server?.ports.rconPort, server?.ports.restApiPort]);
+  }, [checkPorts]);
 
   if (!server) return null;
 
@@ -83,12 +83,9 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
         );
       }
 
-      // Prompt to restart server if running
+      // Notify if restart is needed
       if (isServerRunning) {
-        if (confirm('Ports modified. The server must be restarted to apply the changes. Restart now?')) {
-          await tauriCommands.restartServer(serverId);
-          showNotification('success', 'Server is restarting...');
-        }
+        showNotification('warning', 'Ports modified. Please restart the server to apply the changes.');
       }
 
       // Update store state
@@ -124,10 +121,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       showNotification('success', `Assigned new ${key === 'gamePort' ? 'Game Port' : key === 'rconPort' ? 'RCON Port' : 'REST API Port'}: ${allocatedVal}`);
 
       if (isServerRunning) {
-        if (confirm('Port modified. The server must be restarted to apply changes. Restart now?')) {
-          await tauriCommands.restartServer(serverId);
-          showNotification('success', 'Server is restarting...');
-        }
+        showNotification('warning', 'Port modified. Please restart the server to apply changes.');
       }
 
       const updatedServers = await tauriCommands.getServers();
