@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useImperativeHandle } from 'react';
 import { tauriCommands } from '../../lib/tauri';
 import { useAppStore } from '../../stores/useAppStore';
 import { CustomSelect } from '../ui/CustomSelect';
@@ -151,8 +151,17 @@ const configFields: ConfigField[] = [
   { key: 'buildingNameDisplayCacheTtlSeconds', label: 'Creator UID Cache TTL (sec)', type: 'number', category: 'Performance', min: 5, max: 3600, step: 5, description: 'Building creator name display cache time-to-live.' },
 ];
 
-export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
-  const { showNotification } = useAppStore();
+export interface ConfigEditorHandle {
+  save: () => Promise<void>;
+}
+
+export const ConfigEditor = React.forwardRef<ConfigEditorHandle, { serverId: number }>(
+  ({ serverId }, ref) => {
+    const { showNotification } = useAppStore();
+
+    useImperativeHandle(ref, () => ({
+      save: handleSave,
+    }));
   const [config, setConfig] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState('Gameplay');
   const [viewMode, setViewMode] = useState<'visual' | 'raw'>('visual');
@@ -514,4 +523,5 @@ export const ConfigEditor: React.FC<{ serverId: number }> = ({ serverId }) => {
       )}
     </div>
   );
-};
+});
+ConfigEditor.displayName = 'ConfigEditor';

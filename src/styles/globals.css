@@ -28,10 +28,6 @@ html, body, #root {
   width: 100%;
   overflow: hidden;
   background-color: var(--bg-dark);
-  background-image: linear-gradient(rgba(13, 17, 23, 0.75), rgba(13, 17, 23, 0.75)), url('../Asset/Back.jpg');
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
   color: #e2e8f0;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -123,44 +119,96 @@ html, body, #root {
 @layer components {
   .btn-primary {
     @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
-    @apply bg-gradient-to-r from-primary-600/30 to-cyan-500/20 text-primary-400 border border-primary-500/40;
-    box-shadow: 0 2px 10px rgba(0, 217, 255, 0.05);
-    @apply hover:from-primary-600/45 hover:to-cyan-500/35 hover:border-primary-400 hover:text-white;
-    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+    background: rgba(0, 217, 255, 0.05);
+    border: 1px solid rgba(0, 217, 255, 0.35);
+    color: var(--primary);
+    text-shadow: 0 0 8px rgba(0, 217, 255, 0.3);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05), 0 0 12px rgba(0, 217, 255, 0.05);
+    @apply hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none;
 
     &:hover {
-      box-shadow: 0 4px 20px rgba(0, 217, 255, 0.2);
+      background: rgba(0, 217, 255, 0.18);
+      border-color: rgba(0, 217, 255, 0.8);
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(0, 217, 255, 0.6);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.15), 0 0 20px rgba(0, 217, 255, 0.25);
     }
   }
 
   .btn-success {
     @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
-    @apply bg-gradient-to-r from-success-600/30 to-emerald-500/20 text-success-400 border border-success-500/40;
-    box-shadow: 0 2px 10px rgba(0, 200, 83, 0.05);
-    @apply hover:from-success-600/45 hover:to-emerald-500/35 hover:border-success-400 hover:text-white;
-    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+    background: rgba(0, 200, 83, 0.05);
+    border: 1px solid rgba(0, 200, 83, 0.35);
+    color: var(--success);
+    text-shadow: 0 0 8px rgba(0, 200, 83, 0.3);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05), 0 0 12px rgba(0, 200, 83, 0.05);
+    @apply hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none;
 
     &:hover {
-      box-shadow: 0 4px 20px rgba(0, 200, 83, 0.2);
+      background: rgba(0, 200, 83, 0.18);
+      border-color: rgba(0, 200, 83, 0.8);
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(0, 200, 83, 0.6);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.15), 0 0 20px rgba(0, 200, 83, 0.25);
     }
   }
 
   .btn-danger {
     @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
-    @apply bg-gradient-to-r from-error-600/30 to-red-500/20 text-error-400 border border-error-500/40;
-    box-shadow: 0 2px 10px rgba(255, 23, 68, 0.05);
-    @apply hover:from-error-600/45 hover:to-red-500/35 hover:border-error-400 hover:text-white;
-    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+    background: rgba(255, 23, 68, 0.05);
+    border: 1px solid rgba(255, 23, 68, 0.35);
+    color: var(--error);
+    text-shadow: 0 0 8px rgba(255, 23, 68, 0.3);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05), 0 0 12px rgba(255, 23, 68, 0.05);
+    @apply hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none;
 
     &:hover {
-      box-shadow: 0 4px 20px rgba(255, 23, 68, 0.2);
+      background: rgba(255, 23, 68, 0.18);
+      border-color: rgba(255, 23, 68, 0.8);
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(255, 23, 68, 0.6);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.15), 0 0 20px rgba(255, 23, 68, 0.25);
+    }
+  }
+
+  .btn-warning {
+    @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
+    background: rgba(255, 179, 0, 0.05);
+    border: 1px solid rgba(255, 179, 0, 0.35);
+    color: var(--warning);
+    text-shadow: 0 0 8px rgba(255, 179, 0, 0.3);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05), 0 0 12px rgba(255, 179, 0, 0.05);
+    @apply hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none;
+
+    &:hover {
+      background: rgba(255, 179, 0, 0.18);
+      border-color: rgba(255, 179, 0, 0.8);
+      color: #ffffff;
+      text-shadow: 0 0 12px rgba(255, 179, 0, 0.6);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.15), 0 0 20px rgba(255, 179, 0, 0.25);
+    }
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.02), 0 0 10px rgba(0, 0, 0, 0.1);
+    @apply hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.10);
+      border-color: rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.05), 0 0 15px rgba(255, 255, 255, 0.05);
     }
   }
 
   .btn-ghost {
     @apply px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wider transition-all duration-300;
     @apply text-dark-300 hover:text-dark-100 hover:bg-dark-800/80 border border-transparent hover:border-dark-700/50;
-    @apply active:scale-[0.96] disabled:opacity-50 disabled:pointer-events-none;
+    @apply hover:scale-[1.02] active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none;
   }
 }
 
@@ -690,6 +738,39 @@ html, body, #root {
   0% { transform: translateY(0) rotate(0deg); }
   50% { transform: translateY(-16px) rotate(180deg); }
   100% { transform: translateY(0) rotate(360deg); }
+}
+
+/* Ken Burns background zoom animation */
+@keyframes ken-burns {
+  0% {
+    transform: scale(1) translate(0, 0);
+  }
+  50% {
+    transform: scale(1.08) translate(-0.8%, -0.5%);
+  }
+  100% {
+    transform: scale(1) translate(0, 0);
+  }
+}
+
+.animate-ken-burns {
+  animation: ken-burns 36s ease-in-out infinite;
+}
+
+/* Tab Switch Animations */
+@keyframes tab-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-tab-content {
+  animation: tab-fade-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 

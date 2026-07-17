@@ -275,6 +275,8 @@ pub fn run(safe_mode: bool) -> tauri::Result<()> {
             commands::config::save_raw_config,
             commands::config::get_config_presets,
             commands::config::apply_preset,
+            commands::config::serialize_config,
+            commands::config::deserialize_config,
             // RCON commands
             commands::rcon::rcon_connect,
             commands::rcon::rcon_disconnect,

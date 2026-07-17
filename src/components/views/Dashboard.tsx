@@ -5,6 +5,7 @@ import { SponsorBanner } from '../ui/SponsorBanner';
 import { useI18nStore } from '../../lib/i18n';
 import { RunningPal } from '../ui/RunningPal';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { PerformanceChart } from '../ui/PerformanceChart';
 
 // Custom SVGs for stats & actions
 const ServerStackIcon = () => (
@@ -73,6 +74,8 @@ export const Dashboard: React.FC = () => {
   const [installStatesMap, setInstallStatesMap] = useState<Record<number, boolean>>({});
 
   const [systemInfo, setSystemInfo] = useState<any>(null);
+  const [cpuHistory, setCpuHistory] = useState<{ value: number; timestamp: number }[]>([]);
+  const [ramHistory, setRamHistory] = useState<{ value: number; timestamp: number }[]>([]);
   const [serverStats, setServerStats] = useState<Record<number, any>>({});
   
   // Real-time ticking uptime state
@@ -143,7 +146,7 @@ export const Dashboard: React.FC = () => {
   const handleCloneServerPrompt = (server: any) => {
     setCloningServer(server);
     setCloneName(`${server.name} - Clone`);
-    setCloneInstallPath(`${server.installPath}_clone`);
+    setCloneInstallPath(`${server.installPath.replace(/\s+/g, '_')}_clone`);
   };
 
   const handleBrowseClonePath = async () => {
@@ -171,12 +174,16 @@ export const Dashboard: React.FC = () => {
       showNotification('error', 'Please enter/select a destination path');
       return;
     }
+    if (/\s/.test(cloneInstallPath)) {
+      showNotification('error', 'Spaces are not allowed in the destination path due to SteamCMD limitations. Please remove spaces or use underscores (_).');
+      return;
+    }
 
     setIsCloning(true);
     try {
       showNotification('info', `Cloning server "${cloningServer.name}" to "${cloneName}"...`);
       const newServer = await tauriCommands.cloneServer(cloningServer.id, cloneName.trim(), cloneInstallPath.trim());
-      showNotification('success', `Successfully cloned server to "${newServer.name}"!`);
+      showNotification('success', `Successfully cloned server to "${newServer.name}"! Please check the Config tab to review the PalWorldSettings.ini configurations (ports, server name, passwords).`);
       
       // Refresh servers in the store
       const updated = await tauriCommands.getServers();
@@ -297,6 +304,29 @@ export const Dashboard: React.FC = () => {
     try {
       const info = await tauriCommands.getSystemInfo();
       setSystemInfo(info);
+
+      const now = Date.now();
+      setCpuHistory((prev) => {
+        if (prev.length === 0) {
+          return Array(5).fill(null).map((_, i) => ({
+            value: info.cpuUsage,
+            timestamp: now - (5 - i) * 10000
+          }));
+        }
+        const next = [...prev, { value: info.cpuUsage, timestamp: now }];
+        return next.slice(-60);
+      });
+
+      setRamHistory((prev) => {
+        if (prev.length === 0) {
+          return Array(5).fill(null).map((_, i) => ({
+            value: info.usedMemoryMb / 1024,
+            timestamp: now - (5 - i) * 10000
+          }));
+        }
+        const next = [...prev, { value: info.usedMemoryMb / 1024, timestamp: now }];
+        return next.slice(-60);
+      });
     } catch (_) {}
   };
 
@@ -801,6 +831,28 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* System Live Performance Charts */}
+      {systemInfo && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-slide-in" style={{ animationDelay: '350ms' }}>
+          <PerformanceChart
+            data={cpuHistory}
+            label="System CPU Load"
+            currentValue={`${systemInfo.cpuUsage.toFixed(0)}`}
+            unit="%"
+            color="#06b6d4"
+            maxValue={100}
+          />
+          <PerformanceChart
+            data={ramHistory}
+            label="System RAM Load"
+            currentValue={`${(systemInfo.usedMemoryMb / 1024).toFixed(1)}`}
+            unit="GB"
+            color="#f59e0b"
+            maxValue={systemInfo.totalMemoryMb / 1024}
+          />
+        </div>
+      )}
 
       {/* Server Grid */}
       {servers.length === 0 ? (

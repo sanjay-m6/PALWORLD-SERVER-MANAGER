@@ -120,12 +120,6 @@ pub async fn allocate_ports(
     state: State<'_, AppState>,
     server_id: i64,
 ) -> Result<crate::models::ServerPorts, String> {
-    fn is_port_free_tcp_and_udp(port: u16) -> bool {
-        let tcp_ok = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
-        let udp_ok = std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok();
-        tcp_ok && udp_ok
-    }
-
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db.get_connection()?;
 
@@ -157,17 +151,17 @@ pub async fn allocate_ports(
     let (cur_game, cur_rcon, cur_rest) = current_ports.unwrap_or((0, 0, 0));
 
     let mut game_port = 8211;
-    while reserved_game_ports.contains(&game_port) || (game_port != cur_game && !is_port_free_tcp_and_udp(game_port)) {
+    while reserved_game_ports.contains(&game_port) || (game_port != cur_game && !crate::services::network::NetworkUtils::is_udp_port_available(game_port)) {
         game_port += 1;
     }
 
     let mut rcon_port = 25575;
-    while reserved_rcon_ports.contains(&rcon_port) || (rcon_port != cur_rcon && !is_port_free_tcp_and_udp(rcon_port)) {
+    while reserved_rcon_ports.contains(&rcon_port) || (rcon_port != cur_rcon && !crate::services::network::NetworkUtils::is_tcp_port_available(rcon_port)) {
         rcon_port += 1;
     }
 
     let mut rest_api_port = 8212;
-    while reserved_rest_ports.contains(&rest_api_port) || rest_api_port == game_port || (rest_api_port != cur_rest && !is_port_free_tcp_and_udp(rest_api_port)) {
+    while reserved_rest_ports.contains(&rest_api_port) || rest_api_port == game_port || (rest_api_port != cur_rest && !crate::services::network::NetworkUtils::is_tcp_port_available(rest_api_port)) {
         rest_api_port += 1;
     }
 
@@ -497,3 +491,18 @@ pub async fn apply_preset(
 
     Ok(config)
 }
+
+#[tauri::command]
+pub fn serialize_config(config: PalworldConfig) -> Result<String, String> {
+    let map = crate::services::ini_parser::config_to_map(&config);
+    Ok(crate::services::ini_parser::serialize_palworld_settings(&map))
+}
+
+#[tauri::command]
+pub fn deserialize_config(content: String) -> Result<PalworldConfig, String> {
+    let settings_map = crate::services::ini_parser::parse_palworld_settings(&content);
+    let mut config = PalworldConfig::default();
+    config.update_from_map(&settings_map);
+    Ok(config)
+}
+

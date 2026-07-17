@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { tauriCommands, getStatusColor, formatUptime, formatBytes } from '../../lib/tauri';
 import { useI18nStore } from '../../lib/i18n';
 import { RconConsole } from '../tabs/RconConsole';
-import { ConfigEditor } from '../tabs/ConfigEditor';
+import { ConfigEditor, type ConfigEditorHandle } from '../tabs/ConfigEditor';
 import { BackupsTab } from '../tabs/BackupsTab';
 import { LogsTab } from '../tabs/LogsTab';
 import { PlayersTab } from '../tabs/PlayersTab';
@@ -14,6 +14,7 @@ import { FirewallTab } from '../tabs/FirewallTab';
 import { DiscordTab } from '../tabs/DiscordTab';
 import { CustomSelect } from '../ui/CustomSelect';
 import { RunningPal } from '../ui/RunningPal';
+import { PerformanceChart } from '../ui/PerformanceChart';
 
 // SVG Icons for Tabs
 const OverviewIcon = () => (
@@ -91,6 +92,49 @@ const tabIcons: Record<ServerTab, React.ComponentType> = {
   ),
 };
 
+const tabColors: Record<ServerTab, { active: string; hover: string }> = {
+  overview: {
+    active: 'bg-[#00D9FF]/10 text-[#00D9FF] border-[#00D9FF]/40 shadow-[0_0_12px_rgba(0,217,255,0.15)]',
+    hover: 'hover:text-[#00D9FF] hover:bg-[#00D9FF]/5 hover:border-[#00D9FF]/20'
+  },
+  config: {
+    active: 'bg-[#d946ef]/10 text-[#d946ef] border-[#d946ef]/40 shadow-[0_0_12px_rgba(217,70,239,0.15)]',
+    hover: 'hover:text-[#d946ef] hover:bg-[#d946ef]/5 hover:border-[#d946ef]/20'
+  },
+  rcon: {
+    active: 'bg-[#f97316]/10 text-[#f97316] border-[#f97316]/40 shadow-[0_0_12px_rgba(249,115,22,0.15)]',
+    hover: 'hover:text-[#f97316] hover:bg-[#f97316]/5 hover:border-[#f97316]/20'
+  },
+  players: {
+    active: 'bg-[#10b981]/10 text-[#10b981] border-[#10b981]/40 shadow-[0_0_12px_rgba(16,185,129,0.15)]',
+    hover: 'hover:text-[#10b981] hover:bg-[#10b981]/5 hover:border-[#10b981]/20'
+  },
+  backups: {
+    active: 'bg-[#eab308]/10 text-[#eab308] border-[#eab308]/40 shadow-[0_0_12px_rgba(234,179,8,0.15)]',
+    hover: 'hover:text-[#eab308] hover:bg-[#eab308]/5 hover:border-[#eab308]/20'
+  },
+  mods: {
+    active: 'bg-[#8b5cf6]/10 text-[#8b5cf6] border-[#8b5cf6]/40 shadow-[0_0_12px_rgba(139,92,246,0.15)]',
+    hover: 'hover:text-[#8b5cf6] hover:bg-[#8b5cf6]/5 hover:border-[#8b5cf6]/20'
+  },
+  logs: {
+    active: 'bg-[#14b8a6]/10 text-[#14b8a6] border-[#14b8a6]/40 shadow-[0_0_12px_rgba(20,184,166,0.15)]',
+    hover: 'hover:text-[#14b8a6] hover:bg-[#14b8a6]/5 hover:border-[#14b8a6]/20'
+  },
+  scheduler: {
+    active: 'bg-[#3b82f6]/10 text-[#3b82f6] border-[#3b82f6]/40 shadow-[0_0_12px_rgba(59,130,246,0.15)]',
+    hover: 'hover:text-[#3b82f6] hover:bg-[#3b82f6]/5 hover:border-[#3b82f6]/20'
+  },
+  firewall: {
+    active: 'bg-[#ef4444]/10 text-[#ef4444] border-[#ef4444]/40 shadow-[0_0_12px_rgba(239,68,68,0.15)]',
+    hover: 'hover:text-[#ef4444] hover:bg-[#ef4444]/5 hover:border-[#ef4444]/20'
+  },
+  discord: {
+    active: 'bg-[#5865F2]/10 text-[#5865F2] border-[#5865F2]/40 shadow-[0_0_12px_rgba(88,101,242,0.15)]',
+    hover: 'hover:text-[#5865F2] hover:bg-[#5865F2]/5 hover:border-[#5865F2]/20'
+  },
+};
+
 const tabs: { id: ServerTab; labelKey: string; defaultLabel: string }[] = [
   { id: 'overview', labelKey: 'nav.overview', defaultLabel: 'Overview' },
   { id: 'config', labelKey: 'nav.config', defaultLabel: 'Config' },
@@ -123,6 +167,8 @@ export const ServerDetail: React.FC = () => {
   } = useAppStore();
 
   const [liveStats, setLiveStats] = useState<any>(null);
+  const [cpuHistory, setCpuHistory] = useState<{ value: number; timestamp: number }[]>([]);
+  const [ramHistory, setRamHistory] = useState<{ value: number; timestamp: number }[]>([]);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
   const [isStopModalOpen, setIsStopModalOpen] = useState(false);
@@ -131,6 +177,9 @@ export const ServerDetail: React.FC = () => {
   const [isCloning, setIsCloning] = useState(false);
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [backupFirst, setBackupFirst] = useState(true);
+  const configEditorRef = useRef<ConfigEditorHandle>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Mod compatibility warning states
   const [showModWarningModal, setShowModWarningModal] = useState(false);
@@ -144,6 +193,34 @@ export const ServerDetail: React.FC = () => {
     try {
       const stats = await tauriCommands.getServerStatus(server.id);
       setLiveStats(stats);
+
+      const now = Date.now();
+      if (stats.isRunning) {
+        setCpuHistory((prev) => {
+          if (prev.length === 0) {
+            return Array(5).fill(null).map((_, i) => ({
+              value: stats.cpuUsage || 0,
+              timestamp: now - (5 - i) * 5000
+            }));
+          }
+          const next = [...prev, { value: stats.cpuUsage || 0, timestamp: now }];
+          return next.slice(-60);
+        });
+
+        setRamHistory((prev) => {
+          if (prev.length === 0) {
+            return Array(5).fill(null).map((_, i) => ({
+              value: stats.memoryMb || 0,
+              timestamp: now - (5 - i) * 5000
+            }));
+          }
+          const next = [...prev, { value: stats.memoryMb || 0, timestamp: now }];
+          return next.slice(-60);
+        });
+      } else {
+        setCpuHistory([]);
+        setRamHistory([]);
+      }
 
       // Self-heal/update status if it was in starting/restarting but is now running
       if (stats.isRunning && (server.status === 'starting' || server.status === 'restarting')) {
@@ -161,7 +238,7 @@ export const ServerDetail: React.FC = () => {
         }
       }
     } catch (_) { }
-  }, [server?.id, server?.status]);
+  }, [server?.id, server?.status, server?.lastStarted]);
 
   useEffect(() => {
     if (server && (server.status === 'running' || server.status === 'online' || server.status === 'starting' || server.status === 'restarting')) {
@@ -258,7 +335,7 @@ export const ServerDetail: React.FC = () => {
 
   const handleClone = () => {
     setCloneName(`${server.name} - Clone`);
-    setCloneInstallPath(`${server.installPath}_clone`);
+    setCloneInstallPath(`${server.installPath.replace(/\s+/g, '_')}_clone`);
     setIsCloneModalOpen(true);
   };
 
@@ -286,12 +363,16 @@ export const ServerDetail: React.FC = () => {
       showNotification('error', 'Please enter/select a destination path');
       return;
     }
+    if (/\s/.test(cloneInstallPath)) {
+      showNotification('error', 'Spaces are not allowed in the destination path due to SteamCMD limitations. Please remove spaces or use underscores (_).');
+      return;
+    }
 
     setIsCloning(true);
     try {
       showNotification('info', `Cloning server "${server.name}" to "${cloneName}"...`);
       const newServer = await tauriCommands.cloneServer(server.id, cloneName.trim(), cloneInstallPath.trim());
-      showNotification('success', `Successfully cloned server to "${newServer.name}"!`);
+      showNotification('success', `Successfully cloned server to "${newServer.name}"! Please check the Config tab to review the PalWorldSettings.ini configurations (ports, server name, passwords).`);
 
       // Refresh servers in the store
       const updated = await tauriCommands.getServers();
@@ -331,6 +412,32 @@ export const ServerDetail: React.FC = () => {
       showNotification('success', 'Server cache cleared successfully.');
     } catch (e: any) {
       showNotification('error', `Failed to clear cache: ${e}`);
+    }
+  };
+
+  const handleGlobalSave = async () => {
+    setIsSaving(true);
+    setSaveSuccess(false);
+    try {
+      // Save the config (INI settings + DB sync)
+      if (configEditorRef.current) {
+        await configEditorRef.current.save();
+      } else {
+        // Fallback: load and re-save the config directly
+        const cfg = await tauriCommands.getServerConfig(server.id);
+        await tauriCommands.saveServerConfig(server.id, cfg);
+        showNotification('success', 'Configuration saved');
+      }
+
+      // Refresh the full server list
+      const updated = await tauriCommands.getServers();
+      setServers(updated);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (e: any) {
+      showNotification('error', `Save failed: ${e}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -413,7 +520,7 @@ export const ServerDetail: React.FC = () => {
             <>
               <button
                 onClick={handleRestart}
-                className="group flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-dark-200 hover:text-dark-100 bg-dark-800 hover:bg-dark-750 border border-dark-700/50 hover:border-dark-600 rounded-lg transition-all duration-200 active:scale-95"
+                className="btn-secondary group flex items-center gap-1.5"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5 transition-transform duration-700 ease-out group-hover:rotate-[360deg]">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -422,7 +529,7 @@ export const ServerDetail: React.FC = () => {
               </button>
               <button
                 onClick={handleStop}
-                className="btn-danger group animate-danger-hover flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold uppercase tracking-wider shadow-md active:scale-95 transition-all duration-200"
+                className="btn-danger group flex items-center gap-1.5"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5 animate-warning-shake">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
@@ -433,7 +540,7 @@ export const ServerDetail: React.FC = () => {
           ) : (
             <button
               onClick={handleStart}
-              className="btn-success px-4 py-1.5 text-xs font-bold uppercase tracking-wider shadow-md active:scale-95 transition-all duration-200"
+              className="btn-success"
               disabled={server.status === 'starting'}
             >
               {server.status === 'starting' ? 'Starting...' : 'Start Server'}
@@ -443,7 +550,7 @@ export const ServerDetail: React.FC = () => {
             <button
               onClick={handleClearCache}
               disabled={server.status === 'starting' || server.status === 'running'}
-              className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-warning-400 hover:text-warning-300 hover:bg-warning-500/10 border border-warning-500/25 hover:border-warning-500/40 rounded-lg transition-all duration-200 active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+              className="btn-warning"
               title="Clear crash dumps, temporary logs, and SteamCMD cache to avoid crash loops and free up disk space"
             >
               Clear Cache
@@ -451,22 +558,49 @@ export const ServerDetail: React.FC = () => {
           )}
           <button
             onClick={handleClone}
-            className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/25 hover:border-cyan-500/40 rounded-lg transition-all duration-200 active:scale-95"
+            className="btn-primary"
             title="Clone this server instance config, ports and saves"
           >
             Clone Server
           </button>
           <button
             onClick={handleDelete}
-            className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-error-400 hover:text-error-300 hover:bg-error-500/10 border border-error-500/20 hover:border-error-500/30 rounded-lg transition-all duration-200 active:scale-95"
+            className="btn-danger"
           >
             {server.isRemote ? 'Remove Connection' : 'Delete Server'}
           </button>
+          {!server.isRemote && (
+            <button
+              onClick={handleGlobalSave}
+              disabled={isSaving || isActive}
+              title={isActive ? 'Stop the server before saving — Palworld overwrites settings on shutdown' : 'Save entire server configuration to PalWorldSettings.ini'}
+              className={`group relative flex items-center gap-1.5 font-bold text-xs py-2 px-4 rounded-lg uppercase tracking-wider transition-all duration-300 active:scale-95 disabled:opacity-50 ${
+                saveSuccess
+                  ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 shadow-[0_0_16px_rgba(16,185,129,0.25)]'
+                  : 'bg-gradient-to-r from-primary-500/10 to-cyan-500/10 border border-primary-500/30 hover:border-primary-500/50 text-primary-400 hover:text-primary-300 hover:shadow-[0_0_20px_rgba(0,217,255,0.15)]'
+              }`}
+            >
+              {isSaving ? (
+                <div className="w-3.5 h-3.5 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
+              ) : saveSuccess ? (
+                <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-emerald-400 animate-bounce-in">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 5.5V17a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1h9.5L17 5.5z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v4H7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 12h6M7 15h4" />
+                </svg>
+              )}
+              {isSaving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save All'}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-0.5 px-6 border-b border-dark-700/30 bg-dark-900/20">
+      <div className="flex items-center flex-wrap gap-1.5 px-6 py-3 border-b border-dark-800/40 bg-dark-950/20 backdrop-blur-sm">
         {(server.isRemote ? tabs.filter(t => ['overview', 'rcon', 'players'].includes(t.id)) : tabs).map((tab) => {
           const Icon = tabIcons[tab.id];
           return (
@@ -474,10 +608,11 @@ export const ServerDetail: React.FC = () => {
               key={tab.id}
               id={`tab-${tab.id}`}
               onClick={() => setActiveServerTab(tab.id)}
-              className={`flex items-center gap-2 px-3.5 py-3 text-xs font-semibold transition-all border-b-2 ${activeServerTab === tab.id
-                ? 'text-primary-400 border-primary-500 bg-primary-500/5'
-                : 'text-dark-400 border-transparent hover:text-dark-200 hover:border-dark-700/60 hover:bg-dark-900/10'
-                }`}
+              className={`flex items-center gap-2 px-3.5 py-2 text-[10px] font-bold uppercase tracking-widest rounded-lg border transition-all duration-250 active:scale-95 ${
+                activeServerTab === tab.id
+                  ? tabColors[tab.id].active
+                  : `bg-transparent text-dark-400 border-transparent ${tabColors[tab.id].hover}`
+              }`}
             >
               {Icon && <Icon />}
               <span>{t(tab.labelKey)}</span>
@@ -551,34 +686,34 @@ export const ServerDetail: React.FC = () => {
           </div>
         )}
 
-        <div className={activeServerTab === 'overview' ? 'h-full block' : 'hidden'}>
-          <OverviewTab key={server.id} server={server} stats={liveStats} onStart={handleStart} onClearCache={handleClearCache} />
+        <div className={activeServerTab === 'overview' ? 'h-full block animate-tab-content' : 'hidden'}>
+          <OverviewTab key={server.id} server={server} stats={liveStats} onStart={handleStart} onClearCache={handleClearCache} cpuHistory={cpuHistory} ramHistory={ramHistory} />
         </div>
-        <div className={activeServerTab === 'config' ? 'h-full block' : 'hidden'}>
-          <ConfigEditor key={server.id} serverId={server.id} />
+        <div className={activeServerTab === 'config' ? 'h-full block animate-tab-content' : 'hidden'}>
+          <ConfigEditor key={server.id} serverId={server.id} ref={configEditorRef} />
         </div>
-        <div className={activeServerTab === 'rcon' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'rcon' ? 'h-full block animate-tab-content' : 'hidden'}>
           <RconConsole key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'players' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'players' ? 'h-full block animate-tab-content' : 'hidden'}>
           <PlayersTab key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'backups' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'backups' ? 'h-full block animate-tab-content' : 'hidden'}>
           <BackupsTab key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'logs' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'logs' ? 'h-full block animate-tab-content' : 'hidden'}>
           <LogsTab key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'mods' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'mods' ? 'h-full block animate-tab-content' : 'hidden'}>
           <ModsTab key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'scheduler' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'scheduler' ? 'h-full block animate-tab-content' : 'hidden'}>
           <SchedulerTab key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'firewall' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'firewall' ? 'h-full block animate-tab-content' : 'hidden'}>
           <FirewallTab key={server.id} serverId={server.id} />
         </div>
-        <div className={activeServerTab === 'discord' ? 'h-full block' : 'hidden'}>
+        <div className={activeServerTab === 'discord' ? 'h-full block animate-tab-content' : 'hidden'}>
           <DiscordTab key={server.id} serverId={server.id} />
         </div>
       </div>
@@ -878,7 +1013,14 @@ export const ServerDetail: React.FC = () => {
 
 // ─── Overview Tab ───────────────────────────────────────────────────────────
 
-const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onClearCache?: () => void }> = ({ server, stats, onStart, onClearCache }) => {
+const OverviewTab: React.FC<{
+  server: any;
+  stats: any;
+  onStart?: () => void;
+  onClearCache?: () => void;
+  cpuHistory: { value: number; timestamp: number }[];
+  ramHistory: { value: number; timestamp: number }[];
+}> = ({ server, stats, onStart, onClearCache, cpuHistory, ramHistory }) => {
   const { showNotification, installStates, setInstallState, setServers } = useAppStore();
   const [steamcmdInstalled, setSteamcmdInstalled] = useState<boolean | null>(null);
   const [isInstallingSteamcmd, setIsInstallingSteamcmd] = useState(false);
@@ -892,6 +1034,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
   const [isLoadingDetails, setIsLoadingDetails] = useState(true);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState(server.branch || 'public');
+  const [forceShowInstallDashboard, setForceShowInstallDashboard] = useState(false);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
   const [autoUpdateCountdown, setAutoUpdateCountdown] = useState(10);
   const [autoUpdateBackup, setAutoUpdateBackup] = useState(true);
@@ -1121,6 +1264,13 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
     }
     lastInstallStage.current = installState.stage;
   }, [installState.stage, fetchDetails]);
+
+  // Auto-open installation dashboard overlay when install is active
+  useEffect(() => {
+    if (installState.isInstalling) {
+      setForceShowInstallDashboard(true);
+    }
+  }, [installState.isInstalling]);
 
   const dismissCompletionModal = () => {
     setShowCompletionModal(false);
@@ -1410,6 +1560,27 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
           </div>
         )}
       </div>
+
+      {/* Process Live Performance Charts */}
+      {isActive && stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-slide-in">
+          <PerformanceChart
+            data={cpuHistory}
+            label="Process CPU Load"
+            currentValue={`${(stats.cpuUsage || 0).toFixed(1)}`}
+            unit="%"
+            color="#06b6d4"
+            maxValue={100}
+          />
+          <PerformanceChart
+            data={ramHistory}
+            label="Process Memory Load"
+            currentValue={`${stats.memoryMb ?? 0}`}
+            unit="MB"
+            color="#f59e0b"
+          />
+        </div>
+      )}
 
       {server.status === 'crashed' && !server.isRemote && (
         <div className="glass-card p-5 border border-error-500/25 bg-error-500/5 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
@@ -1906,7 +2077,7 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
               )}
 
               {/* Active Installation Dashboard */}
-              {installState.isInstalling && (
+              {forceShowInstallDashboard && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-4 border-t border-dark-800/40">
 
                   {/* Left Column: Progress circle, Timeline, Performance stats */}
@@ -1971,12 +2142,21 @@ const OverviewTab: React.FC<{ server: any; stats: any; onStart?: () => void; onC
                             Elapsed Time: <strong className="text-dark-300">{formatUptime(elapsedTime)}</strong>
                           </span>
                         </div>
-                        <button
-                          onClick={handleCancelInstallation}
-                          className="mt-2 text-[10px] font-bold text-error-400 hover:text-error-300 bg-error-500/5 hover:bg-error-500/10 border border-error-500/20 rounded px-2.5 py-1 uppercase tracking-wider active:scale-95 transition-all"
-                        >
-                          Cancel Installation
-                        </button>
+                        {installState.isInstalling ? (
+                          <button
+                            onClick={handleCancelInstallation}
+                            className="mt-2 text-[10px] font-bold text-error-400 hover:text-error-300 bg-error-500/5 hover:bg-error-500/10 border border-error-500/20 rounded px-2.5 py-1 uppercase tracking-wider active:scale-95 transition-all"
+                          >
+                            Cancel Installation
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setForceShowInstallDashboard(false)}
+                            className="mt-2 text-[10px] font-bold text-success-400 hover:text-success-300 bg-success-500/5 hover:bg-success-500/10 border border-success-500/20 rounded px-2.5 py-1 uppercase tracking-wider active:scale-95 transition-all"
+                          >
+                            Dismiss Dashboard
+                          </button>
+                        )}
                       </div>
                     </div>
 

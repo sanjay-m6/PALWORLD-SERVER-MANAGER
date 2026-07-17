@@ -127,9 +127,11 @@ impl SteamCmdService {
 
         self.write_optimization_config();
 
+        let normalized_install_path = install_path.replace("\\", "/");
+
         let mut args = vec![
             "+force_install_dir".to_string(),
-            install_path.to_string(),
+            normalized_install_path,
             "+login".to_string(),
             "anonymous".to_string(),
             "+@nClientDownloadEnableHTTP2PlatformWindows".to_string(),

@@ -5,12 +5,14 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { useI18nStore } from '../../lib/i18n';
 
 export const CreateServer: React.FC = () => {
-  const { setCurrentView, setServers, showNotification, setSelectedServerId, setActiveServerTab, setInstallState } = useAppStore();
+  const { servers, setCurrentView, setServers, showNotification, setSelectedServerId, setActiveServerTab, setInstallState } = useAppStore();
   const { t } = useI18nStore();
 
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPathManuallyEdited, setIsPathManuallyEdited] = useState(false);
+  const [isNameManuallyEdited, setIsNameManuallyEdited] = useState(false);
+  const [isPortsAutoAllocated, setIsPortsAutoAllocated] = useState(true);
   const [mode, setMode] = useState<'create' | 'import' | 'remote'>('create');
 
   const [form, setForm] = useState({
@@ -47,16 +49,25 @@ export const CreateServer: React.FC = () => {
     handleAutoAllocate();
   }, []);
 
+  useEffect(() => {
+    if (isNameManuallyEdited) return;
+    const nextNum = servers.length + 1;
+    const autoName = `Server${nextNum}`;
+    setForm((prev) => {
+      const next = { ...prev, name: autoName };
+      if (!isPathManuallyEdited && mode === 'create') {
+        const cleanedName = autoName.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').trim();
+        next.installPath = cleanedName ? `C:\\PalworldServers\\${cleanedName}` : '';
+      } else if (!isPathManuallyEdited && mode === 'import') {
+        next.installPath = '';
+      }
+      return next;
+    });
+  }, [servers, mode, isPathManuallyEdited, isNameManuallyEdited]);
+
   const updateField = (field: string, value: any) => {
     setForm((prev) => {
       const next = { ...prev, [field]: value };
-
-      // Auto-update path if not manually edited and we are editing the server name
-      if (field === 'name' && !isPathManuallyEdited && mode !== 'remote') {
-        const cleanedName = value.replace(/[\\/:*?"<>|]/g, '').trim();
-        next.installPath = cleanedName ? `C:\\PalworldServers\\${cleanedName}` : '';
-      }
-
       return next;
     });
   };
@@ -115,6 +126,10 @@ export const CreateServer: React.FC = () => {
     }
     if (mode !== 'remote' && !form.installPath.trim()) {
       showNotification('error', 'Install path is required');
+      return;
+    }
+    if (mode !== 'remote' && /\s/.test(form.installPath)) {
+      showNotification('error', 'Spaces are not allowed in the installation folder path due to SteamCMD limitations. Please remove spaces or use underscores (_).');
       return;
     }
     if (!form.adminPassword.trim()) {
@@ -265,7 +280,12 @@ export const CreateServer: React.FC = () => {
               <div className="grid grid-cols-3 gap-2 bg-dark-900/40 p-1 rounded-lg border border-dark-800/50">
                 <button
                   type="button"
-                  onClick={() => { setMode('create'); updateField('installPath', form.name ? `C:\\PalworldServers\\${form.name.replace(/[\\/:*?"<>|]/g, '').trim()}` : ''); }}
+                  onClick={() => {
+                    setMode('create');
+                    updateField('installPath', form.name ? `C:\\PalworldServers\\${form.name.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').trim()}` : '');
+                    setIsPortsAutoAllocated(true);
+                    handleAutoAllocate();
+                  }}
                   className={`py-2 px-3 rounded-md text-xs font-semibold transition-all ${
                     mode === 'create'
                       ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
@@ -276,7 +296,11 @@ export const CreateServer: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setMode('import'); updateField('installPath', ''); }}
+                  onClick={() => {
+                    setMode('import');
+                    updateField('installPath', '');
+                    setIsPortsAutoAllocated(false);
+                  }}
                   className={`py-2 px-3 rounded-md text-xs font-semibold transition-all ${
                     mode === 'import'
                       ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
@@ -287,7 +311,11 @@ export const CreateServer: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setMode('remote'); updateField('installPath', 'remote'); }}
+                  onClick={() => {
+                    setMode('remote');
+                    updateField('installPath', 'remote');
+                    setIsPortsAutoAllocated(false);
+                  }}
                   className={`py-2 px-3 rounded-md text-xs font-semibold transition-all ${
                     mode === 'remote'
                       ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
@@ -299,20 +327,64 @@ export const CreateServer: React.FC = () => {
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                {t('createServer.name')} *
-              </label>
-              <input
-                id="create-server-name"
-                type="text"
-                value={form.name}
-                onChange={(e) => updateField('name', e.target.value)}
-                className="input-field"
-                placeholder={mode === 'remote' ? "Remote Server Name" : "My Palworld Server"}
-                autoFocus
-              />
-            </div>
+            {mode === 'remote' ? (
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1.5">
+                  Remote Server Name *
+                </label>
+                <input
+                  id="create-server-name"
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => updateField('name', e.target.value)}
+                  className="input-field"
+                  placeholder="Remote Server Name"
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="block text-xs font-medium text-dark-400">
+                    Server Name *
+                  </label>
+                  {isNameManuallyEdited ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsNameManuallyEdited(false);
+                      }}
+                      className="text-[10px] text-primary-400 hover:text-primary-300 font-semibold underline"
+                    >
+                      Reset to Auto-name
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-primary-400 bg-primary-500/10 border border-primary-500/20 px-1.5 py-0.5 rounded-full font-bold font-mono">
+                      Auto
+                    </span>
+                  )}
+                </div>
+                <input
+                  id="create-server-name"
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => {
+                    const newName = e.target.value;
+                    updateField('name', newName);
+                    setIsNameManuallyEdited(true);
+                    if (!isPathManuallyEdited && mode === 'create') {
+                      const cleaned = newName
+                        .replace(/[\\/:*?"<>|]/g, '')
+                        .replace(/\s+/g, '_')
+                        .trim();
+                      updateField('installPath', cleaned ? `C:\\PalworldServers\\${cleaned}` : '');
+                    }
+                  }}
+                  className="input-field animate-fade-in"
+                  placeholder="e.g. Server1"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-medium text-dark-400 mb-1.5">
@@ -344,7 +416,7 @@ export const CreateServer: React.FC = () => {
             ) : (
               <div>
                 <label className="block text-xs font-medium text-dark-400 mb-1.5">
-                  Install Path *
+                  Server Folder Location / Save File Location *
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -361,7 +433,7 @@ export const CreateServer: React.FC = () => {
                       }
                     }}
                     className="input-field font-mono text-xs flex-1"
-                    placeholder="C:\PalworldServers\Server01"
+                    placeholder="C:\PalworldServers\Server1"
                   />
                   <button
                     type="button"
@@ -373,8 +445,8 @@ export const CreateServer: React.FC = () => {
                 </div>
                 <p className="text-[10px] text-dark-500 mt-1">
                   {mode === 'import'
-                    ? 'Select the folder containing your existing PalServer.exe'
-                    : 'Directory where PalServer.exe will be installed'}
+                    ? 'Select the folder containing your existing PalServer.exe / Save files'
+                    : 'Select the folder where the server will be installed / run'}
                 </p>
               </div>
             )}
@@ -421,12 +493,33 @@ export const CreateServer: React.FC = () => {
                 Network & Security
               </h2>
               {mode !== 'remote' && (
-                <button
-                  onClick={handleAutoAllocate}
-                  className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
-                >
-                  Auto-Allocate Ports
-                </button>
+                <div className="flex items-center gap-1 bg-dark-950/60 p-0.5 rounded-lg border border-dark-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPortsAutoAllocated(true);
+                      handleAutoAllocate();
+                    }}
+                    className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 ${
+                      isPortsAutoAllocated
+                        ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
+                        : 'text-dark-400 hover:text-dark-200'
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPortsAutoAllocated(false)}
+                    className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 ${
+                      !isPortsAutoAllocated
+                        ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
+                        : 'text-dark-400 hover:text-dark-200'
+                    }`}
+                  >
+                    Manual
+                  </button>
+                </div>
               )}
             </div>
 
@@ -441,15 +534,19 @@ export const CreateServer: React.FC = () => {
                     type="number"
                     value={form.gamePort}
                     onChange={(e) => updateField('gamePort', parseInt(e.target.value))}
-                    className="input-field font-mono flex-1 min-w-0"
+                    disabled={isPortsAutoAllocated && mode !== 'remote'}
+                    className={`input-field font-mono flex-1 min-w-0 ${
+                      isPortsAutoAllocated && mode !== 'remote' ? 'opacity-60 cursor-not-allowed bg-dark-950/40 border-dark-800/50' : ''
+                    }`}
                   />
-                  {mode !== 'remote' && (
+                  {!isPortsAutoAllocated && mode !== 'remote' && (
                     <button
+                      type="button"
                       onClick={async () => {
                         const ports = await tauriCommands.allocatePorts(0);
                         updateField('gamePort', ports.gamePort);
                       }}
-                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 whitespace-nowrap"
                     >
                       Assign
                     </button>
@@ -466,15 +563,19 @@ export const CreateServer: React.FC = () => {
                     type="number"
                     value={form.rconPort}
                     onChange={(e) => updateField('rconPort', parseInt(e.target.value))}
-                    className="input-field font-mono flex-1 min-w-0"
+                    disabled={isPortsAutoAllocated && mode !== 'remote'}
+                    className={`input-field font-mono flex-1 min-w-0 ${
+                      isPortsAutoAllocated && mode !== 'remote' ? 'opacity-60 cursor-not-allowed bg-dark-950/40 border-dark-800/50' : ''
+                    }`}
                   />
-                  {mode !== 'remote' && (
+                  {!isPortsAutoAllocated && mode !== 'remote' && (
                     <button
+                      type="button"
                       onClick={async () => {
                         const ports = await tauriCommands.allocatePorts(0);
                         updateField('rconPort', ports.rconPort);
                       }}
-                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 whitespace-nowrap"
                     >
                       Assign
                     </button>
@@ -491,15 +592,19 @@ export const CreateServer: React.FC = () => {
                     type="number"
                     value={form.restApiPort}
                     onChange={(e) => updateField('restApiPort', parseInt(e.target.value))}
-                    className="input-field font-mono flex-1 min-w-0"
+                    disabled={isPortsAutoAllocated && mode !== 'remote'}
+                    className={`input-field font-mono flex-1 min-w-0 ${
+                      isPortsAutoAllocated && mode !== 'remote' ? 'opacity-60 cursor-not-allowed bg-dark-950/40 border-dark-800/50' : ''
+                    }`}
                   />
-                  {mode !== 'remote' && (
+                  {!isPortsAutoAllocated && mode !== 'remote' && (
                     <button
+                      type="button"
                       onClick={async () => {
                         const ports = await tauriCommands.allocatePorts(0);
                         updateField('restApiPort', ports.restApiPort);
                       }}
-                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95"
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 whitespace-nowrap"
                     >
                       Assign
                     </button>

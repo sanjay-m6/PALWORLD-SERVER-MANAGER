@@ -12,6 +12,7 @@ import { SettingsView } from './components/views/SettingsView';
 import { useAppStore } from './stores/useAppStore';
 import { setupEventListeners, tauriCommands, fetchAppVersion } from './lib/tauri';
 import { RunningPal } from './components/ui/RunningPal';
+import { BackgroundSlideshow } from './components/ui/BackgroundSlideshow';
 
 const App: React.FC = () => {
   const { currentView, setServers, setAppVersion } = useAppStore();
@@ -105,6 +106,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-transparent relative">
+      <BackgroundSlideshow />
       {/* Splash Screen / Entry UI */}
       {showSplash && (
         <div
@@ -168,7 +170,7 @@ const App: React.FC = () => {
       <TitleBar />
 
       {/* Main Layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative z-10">
         {/* Sidebar */}
         <Sidebar />
 

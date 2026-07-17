@@ -18,57 +18,63 @@ pub fn parse_palworld_settings(content: &str) -> HashMap<String, String> {
     for line in content.lines() {
         let trimmed = line.trim();
 
-        // Look for the OptionSettings line
-        if let Some(option_content) = trimmed.strip_prefix("OptionSettings=(") {
-            // Remove trailing ')'
-            let option_content = option_content.trim_end_matches(')');
+        // Find if line contains OptionSettings
+        if let Some(start_idx) = trimmed.find("OptionSettings") {
+            // Find the opening parenthesis of OptionSettings=(...) or OptionSettings = (...)
+            if let Some(open_paren_idx) = trimmed[start_idx..].find('(') {
+                let actual_open_idx = start_idx + open_paren_idx;
+                let option_content = &trimmed[actual_open_idx + 1..];
 
-            // Parse comma-separated Key=Value pairs
-            // Handle nested parentheses for complex values
-            let mut current_key = String::new();
-            let mut current_value = String::new();
-            let mut in_value = false;
-            let mut paren_depth = 0;
+                // Remove trailing ')' if exists
+                let option_content = option_content.trim_end_matches(')');
 
-            for ch in option_content.chars() {
-                match ch {
-                    '(' => {
-                        paren_depth += 1;
-                        if in_value {
-                            current_value.push(ch);
+                // Parse comma-separated Key=Value pairs
+                // Handle nested parentheses for complex values
+                let mut current_key = String::new();
+                let mut current_value = String::new();
+                let mut in_value = false;
+                let mut paren_depth = 0;
+
+                for ch in option_content.chars() {
+                    match ch {
+                        '(' => {
+                            paren_depth += 1;
+                            if in_value {
+                                current_value.push(ch);
+                            }
                         }
-                    }
-                    ')' => {
-                        paren_depth -= 1;
-                        if in_value {
-                            current_value.push(ch);
+                        ')' => {
+                            paren_depth -= 1;
+                            if in_value {
+                                current_value.push(ch);
+                            }
                         }
-                    }
-                    '=' if !in_value && paren_depth == 0 => {
-                        in_value = true;
-                    }
-                    ',' if paren_depth == 0 => {
-                        // End of a key=value pair
-                        if !current_key.is_empty() {
-                            settings.insert(current_key.trim().to_string(), current_value.trim().to_string());
+                        '=' if !in_value && paren_depth == 0 => {
+                            in_value = true;
                         }
-                        current_key.clear();
-                        current_value.clear();
-                        in_value = false;
-                    }
-                    _ => {
-                        if in_value {
-                            current_value.push(ch);
-                        } else {
-                            current_key.push(ch);
+                        ',' if paren_depth == 0 => {
+                            // End of a key=value pair
+                            if !current_key.is_empty() {
+                                settings.insert(current_key.trim().to_string(), current_value.trim().to_string());
+                            }
+                            current_key.clear();
+                            current_value.clear();
+                            in_value = false;
+                        }
+                        _ => {
+                            if in_value {
+                                current_value.push(ch);
+                            } else {
+                                current_key.push(ch);
+                            }
                         }
                     }
                 }
-            }
 
-            // Don't forget the last pair
-            if !current_key.is_empty() {
-                settings.insert(current_key.trim().to_string(), current_value.trim().to_string());
+                // Don't forget the last pair
+                if !current_key.is_empty() {
+                    settings.insert(current_key.trim().to_string(), current_value.trim().to_string());
+                }
             }
         }
     }
@@ -283,5 +289,15 @@ OptionSettings=(Difficulty=None,DayTimeSpeedRate=1.000000,NightTimeSpeedRate=1.0
 
         assert_eq!(parsed.get("Difficulty"), Some(&"None".to_string()));
         assert_eq!(parsed.get("ExpRate"), Some(&"2.000000".to_string()));
+    }
+
+    #[test]
+    fn test_parse_settings_with_spaces() {
+        let content = r#"[/Script/Pal.PalGameWorldSettings]
+OptionSettings = (Difficulty=Normal,ExpRate=3.000000)"#;
+
+        let settings = parse_palworld_settings(content);
+        assert_eq!(settings.get("Difficulty"), Some(&"Normal".to_string()));
+        assert_eq!(settings.get("ExpRate"), Some(&"3.000000".to_string()));
     }
 }

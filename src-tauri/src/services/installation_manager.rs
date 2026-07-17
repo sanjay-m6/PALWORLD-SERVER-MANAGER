@@ -373,7 +373,6 @@ impl InstallationManager {
 
         Ok(())
     }
-
     async fn installation_task(
         &self,
         app_handle: AppHandle,
@@ -387,287 +386,347 @@ impl InstallationManager {
     ) -> Result<()> {
         log::info!("[INSTALL] Running installation loop for server ID {}", server_id);
 
-        // 1. Kill any existing orphaned steamcmd processes to release locks
-        {
-            let mut sys = sysinfo::System::new();
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-            for (pid, process) in sys.processes() {
-                let name = process.name().to_string_lossy().to_lowercase();
-                if name == "steamcmd.exe" || name == "steamcmd" {
-                    log::info!("[INSTALL] Killing orphaned steamcmd process with PID {}", pid);
-                    let _ = process.kill();
-                }
-            }
-            // Give the OS a moment to release locks
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
+        let retries = 3;
+        let mut try_count = 1;
+        let mut last_error = None;
+        let mut install_success = false;
 
-        let log_file_path = steamcmd_dir.join("logs").join("console_log.txt");
-        if log_file_path.exists() {
-            let _ = std::fs::remove_file(&log_file_path);
-        }
+        while try_count <= retries {
+            log::info!("[INSTALL] Launching SteamCMD installation (Try {}/{})...", try_count, retries);
+            let _ = app_handle.emit("install-log", InstallLogPayload {
+                server_id,
+                line: format!("🔄 Launching SteamCMD installation task (Branch: {}, Try {}/{})...\n", branch, try_count, retries),
+            });
 
-        let mut child = self.launch_steamcmd(install_path.clone(), branch.clone(), steamcmd_exe)?;
-        let child_pid = child.id();
-        
-        let stdout = child.stdout.take().context("Stdout piped handle corrupted")?;
-        let stderr = child.stderr.take().context("Stderr piped handle corrupted")?;
-        
-        // Output channel streams lines
-        let (log_tx, mut log_rx) = tokio::sync::mpsc::channel::<String>(100);
-        let log_tx_file = log_tx.clone();
-
-        // Spawn async reader task for stdout to drain it (prevent blocking)
-        tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut reader = stdout;
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = reader.read(&mut buf).await {
-                if n == 0 { break; }
-            }
-        });
-
-        // Spawn async reader task for stderr to drain it (prevent blocking)
-        tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut reader = stderr;
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = reader.read(&mut buf).await {
-                if n == 0 { break; }
-            }
-        });
-
-        // Spawn async reader task for console_log.txt
-        tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            
-            // Wait for the log file to be created by SteamCMD
-            let mut file = None;
-            for _ in 0..100 { // try for 10 seconds
-                if log_file_path.exists() {
-                    if let Ok(f) = tokio::fs::File::open(&log_file_path).await {
-                        file = Some(f);
-                        break;
+            // 1. Kill any existing orphaned steamcmd processes to release locks
+            {
+                let mut sys = sysinfo::System::new();
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                for (pid, process) in sys.processes() {
+                    let name = process.name().to_string_lossy().to_lowercase();
+                    if name == "steamcmd.exe" || name == "steamcmd" {
+                        log::info!("[INSTALL] Killing orphaned steamcmd process with PID {}", pid);
+                        let _ = process.kill();
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                // Give the OS a moment to release locks
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
-            let mut file = match file {
-                Some(f) => f,
-                None => {
-                    log::error!("[INSTALL] Failed to open SteamCMD console_log.txt after 10 seconds");
-                    return;
-                }
-            };
+            let log_file_path = steamcmd_dir.join("logs").join("console_log.txt");
+            if log_file_path.exists() {
+                let _ = std::fs::remove_file(&log_file_path);
+            }
 
-            let mut accumulated = Vec::new();
-            let mut buf = [0u8; 1024];
+            // Run this attempt
+            let run_attempt = async {
+                let mut child = self.launch_steamcmd(install_path.clone(), branch.clone(), steamcmd_exe.clone())?;
+                let child_pid = child.id();
+                
+                let stdout = child.stdout.take().context("Stdout piped handle corrupted")?;
+                let stderr = child.stderr.take().context("Stderr piped handle corrupted")?;
+                
+                // Output channel streams lines
+                let (log_tx, mut log_rx) = tokio::sync::mpsc::channel::<String>(100);
+                let log_tx_file = log_tx.clone();
 
-            loop {
-                match file.read(&mut buf).await {
-                    Ok(0) => {
-                        // EOF reached, wait a bit for new writes
+                // Spawn async reader task for stdout to drain it (prevent blocking)
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt;
+                    let mut reader = stdout;
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n) = reader.read(&mut buf).await {
+                        if n == 0 { break; }
+                    }
+                });
+
+                // Spawn async reader task for stderr to drain it (prevent blocking)
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt;
+                    let mut reader = stderr;
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n) = reader.read(&mut buf).await {
+                        if n == 0 { break; }
+                    }
+                });
+
+                // Spawn async reader task for console_log.txt
+                let log_file_path_clone = log_file_path.clone();
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt;
+                    
+                    // Wait for the log file to be created by SteamCMD
+                    let mut file = None;
+                    for _ in 0..100 { // try for 10 seconds
+                        if log_file_path_clone.exists() {
+                            if let Ok(f) = tokio::fs::File::open(&log_file_path_clone).await {
+                                file = Some(f);
+                                break;
+                            }
+                        }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                    Ok(n) => {
-                        for &byte in &buf[..n] {
-                            if byte == b'\n' || byte == b'\r' {
-                                if !accumulated.is_empty() {
-                                    let line = String::from_utf8_lossy(&accumulated).into_owned();
-                                    let _ = log_tx_file.send(line).await;
-                                    accumulated.clear();
+
+                    let mut file = match file {
+                        Some(f) => f,
+                        None => {
+                            log::error!("[INSTALL] Failed to open SteamCMD console_log.txt after 10 seconds");
+                            return;
+                        }
+                    };
+
+                    let mut accumulated = Vec::new();
+                    let mut buf = [0u8; 1024];
+
+                    loop {
+                        match file.read(&mut buf).await {
+                            Ok(0) => {
+                                // EOF reached, wait a bit for new writes
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
+                            Ok(n) => {
+                                for &byte in &buf[..n] {
+                                    if byte == b'\n' || byte == b'\r' {
+                                        if !accumulated.is_empty() {
+                                            let line = String::from_utf8_lossy(&accumulated).into_owned();
+                                            let _ = log_tx_file.send(line).await;
+                                            accumulated.clear();
+                                        }
+                                    } else {
+                                        accumulated.push(byte);
+                                    }
                                 }
-                            } else {
-                                accumulated.push(byte);
+                            }
+                            Err(e) => {
+                                log::error!("[INSTALL] Error reading console_log.txt: {}", e);
+                                break;
                             }
                         }
                     }
-                    Err(e) => {
-                        log::error!("[INSTALL] Error reading console_log.txt: {}", e);
+                });
+
+                // Monitor ticks
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                let mut sys = sysinfo::System::new();
+                
+                let mut last_progress_bytes = 0u64;
+                let mut last_progress_time = Instant::now();
+                let mut last_log_time = Instant::now();
+                let start_instant = Instant::now();
+
+                // Regex definitions
+                let dl_re = regex::Regex::new(
+                    r"Update state \((0x[0-9a-fA-F]+)\) ([^,]+), progress: ([0-9.]+)\s*\((\d+)\s*/\s*(\d+)\)"
+                ).unwrap();
+                let state_re = regex::Regex::new(
+                    r"Update state \((0x[0-9a-fA-F]+)\) ([^,]+), progress: ([0-9.]+)"
+                ).unwrap();
+
+                loop {
+                    tokio::select! {
+                        _ = &mut cancel_rx => {
+                            let _ = child.kill().await;
+                            return Err(anyhow::anyhow!("CANCELLED"));
+                        }
+                        
+                        Some(log_line) = log_rx.recv() => {
+                            last_log_time = Instant::now();
+                            let trimmed = log_line.trim();
+                            if trimmed.is_empty() { continue; }
+                            
+                            log::info!("[STEAMCMD_{}] {}", server_id, trimmed);
+                            
+                            {
+                                let mut st = state.lock().unwrap();
+                                st.log.push_str(trimmed);
+                                st.log.push('\n');
+                            }
+                            
+                            let _ = app_handle.emit("install-log", InstallLogPayload {
+                                server_id,
+                                line: format!("{}\n", trimmed),
+                            });
+                            
+                            let mut st = state.lock().unwrap();
+                            // Parse line for stages
+                            if trimmed.contains("Checking for available updates") {
+                                st.stage = InstallStage::CheckingUpdates;
+                                st.status = "Checking SteamCMD updates...".to_string();
+                            } else if trimmed.contains("Connecting to Steam") {
+                                st.stage = InstallStage::Connecting;
+                                st.status = "Connecting to Steam servers...".to_string();
+                            } else if trimmed.contains("Logging in") {
+                                st.stage = InstallStage::Authenticating;
+                                st.status = "Authenticating login...".to_string();
+                            } else if trimmed.contains("Logged in OK") {
+                                st.status = "Authenticated successfully".to_string();
+                            } else if trimmed.contains("Fetching depot manifest") {
+                                st.stage = InstallStage::FetchingManifest;
+                                st.status = "Fetching depot manifest...".to_string();
+                            } else if trimmed.contains("Allocating") {
+                                st.stage = InstallStage::AllocatingDiskSpace;
+                                st.status = "Allocating disk space...".to_string();
+                            } else if trimmed.contains("Verifying installation") {
+                                st.stage = InstallStage::Verifying;
+                                st.status = "Verifying files...".to_string();
+                            }
+                            
+                            // Parse download speed regexes
+                            if let Some(caps) = dl_re.captures(trimmed) {
+                                st.stage = InstallStage::Downloading;
+                                st.status = "Downloading dedicated server files...".to_string();
+                                st.progress = caps.get(3).unwrap().as_str().parse::<f32>().unwrap_or(0.0);
+                                let bytes_dl = caps.get(4).unwrap().as_str().parse::<u64>().unwrap_or(0);
+                                st.bytes_total = caps.get(5).unwrap().as_str().parse::<u64>().unwrap_or(0);
+                                
+                                let now = Instant::now();
+                                let elapsed = now.duration_since(last_progress_time).as_secs_f64();
+                                if elapsed > 0.2 {
+                                    let diff = bytes_dl.saturating_sub(last_progress_bytes);
+                                    let calculated_speed = diff as f64 / elapsed;
+                                    if calculated_speed > 0.0 {
+                                        st.speed_bps = calculated_speed;
+                                        if st.speed_bps > st.peak_speed_bps {
+                                            st.peak_speed_bps = st.speed_bps;
+                                        }
+                                    }
+                                    last_progress_bytes = bytes_dl;
+                                    last_progress_time = now;
+                                }
+                                st.bytes_downloaded = bytes_dl;
+                            } else if let Some(caps) = state_re.captures(trimmed) {
+                                let op_state = caps.get(2).unwrap().as_str();
+                                st.progress = caps.get(3).unwrap().as_str().parse::<f32>().unwrap_or(0.0);
+                                if op_state.contains("verifying") {
+                                    st.stage = InstallStage::Verifying;
+                                    st.status = "Verifying installation files...".to_string();
+                                } else if op_state.contains("preallocating") {
+                                    st.stage = InstallStage::AllocatingDiskSpace;
+                                    st.status = "Allocating disk space...".to_string();
+                                } else if op_state.contains("extracting") {
+                                    st.stage = InstallStage::Installing;
+                                    st.status = "Extracting files...".to_string();
+                                }
+                            }
+                        }
+                        
+                        _ = interval.tick() => {
+                            let duration_secs = start_instant.elapsed().as_secs();
+                            
+                            // Freeze Stall Detection (Checked first to prevent MutexGuard across await)
+                            let last_log_elapsed = last_log_time.elapsed().as_secs();
+                            if last_log_elapsed >= 600 {
+                                let _ = child.kill().await;
+                                return Err(anyhow::anyhow!("SteamCMD stalled. No console output for 10 minutes."));
+                            }
+                            
+                            let mut st = state.lock().unwrap();
+                            st.elapsed_seconds = duration_secs;
+                            
+                            // Decay speed to 0 if no progress updates received in 5 seconds
+                            if last_progress_time.elapsed().as_secs() > 5 {
+                                st.speed_bps = 0.0;
+                            }
+                            
+                            // Calculate download speeds
+                            if st.stage == InstallStage::Downloading {
+                                if duration_secs > 0 {
+                                    st.avg_speed_bps = st.bytes_downloaded as f64 / duration_secs as f64;
+                                }
+                                
+                                if st.avg_speed_bps > 0.0 {
+                                    let rem = st.bytes_total.saturating_sub(st.bytes_downloaded);
+                                    st.eta_seconds = Some((rem as f64 / st.avg_speed_bps) as u64);
+                                }
+                            }
+                            
+                            // Refresh CPU, Memory, and Disk stats of the process
+                            if let Some(pid) = child_pid {
+                                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
+                                if let Some(proc) = sys.process(sysinfo::Pid::from_u32(pid)) {
+                                    let disk_usage = proc.disk_usage();
+                                    st.disk_write_speed_bps = disk_usage.written_bytes as f64;
+                                    st.disk_read_speed_bps = disk_usage.read_bytes as f64;
+                                }
+                            }
+                            
+                            if last_log_elapsed >= 180 {
+                                st.status = "Checking Steam Servers (Stall detected)...".to_string();
+                                st.cdn_server = "Checking packet loss...".to_string();
+                            }
+                            
+                            // Save recovery state to DB
+                            let _ = self.db.lock().unwrap().save_install_recovery(
+                                server_id,
+                                st.is_installing,
+                                &format!("{:?}", st.stage),
+                                st.progress,
+                                &st.status,
+                                st.bytes_downloaded,
+                                st.bytes_total,
+                                &st.log,
+                            );
+                            
+                            // Emit tick to UI
+                            let _ = app_handle.emit("install-tick", st.clone());
+                        }
+                    }
+                    
+                    // Check if process finished
+                    if let Ok(Some(status)) = child.try_wait() {
+                        if !status.success() {
+                            return Err(anyhow::anyhow!("SteamCMD process exited with error status: {:?}", status.code()));
+                        }
                         break;
                     }
                 }
-            }
-        });
+                Ok(())
+            }.await;
 
-        // Monitor ticks
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        let mut sys = sysinfo::System::new();
-        
-        let mut last_progress_bytes = 0u64;
-        let mut last_progress_time = Instant::now();
-        let mut last_log_time = Instant::now();
-        let start_instant = Instant::now();
-
-        // Regex definitions
-        // Download state: Update state (0x61) downloading, progress: 26.49 (1608797781 / 6073520175)
-        let dl_re = regex::Regex::new(
-            r"Update state \((0x[0-9a-fA-F]+)\) ([^,]+), progress: ([0-9.]+)\s*\((\d+)\s*/\s*(\d+)\)"
-        ).unwrap();
-        // Verification / Allocating: Update state (0x3) verifying, progress: 49.23
-        let state_re = regex::Regex::new(
-            r"Update state \((0x[0-9a-fA-F]+)\) ([^,]+), progress: ([0-9.]+)"
-        ).unwrap();
-
-        loop {
-            tokio::select! {
-                _ = &mut cancel_rx => {
-                    let _ = child.kill().await;
-                    anyhow::bail!("Installation cancelled by user");
+            match run_attempt {
+                Ok(_) => {
+                    install_success = true;
+                    break;
                 }
-                
-                Some(log_line) = log_rx.recv() => {
-                    last_log_time = Instant::now();
-                    let trimmed = log_line.trim();
-                    if trimmed.is_empty() { continue; }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    if err_msg == "CANCELLED" {
+                        return Err(anyhow::anyhow!("Installation cancelled by user"));
+                    }
+                    log::warn!("[INSTALL] Attempt {} failed: {}", try_count, err_msg);
                     
-                    // Log output handling
-                    log::info!("[STEAMCMD_{}] {}", server_id, trimmed);
-                    
-                    let mut st = state.lock().unwrap();
-                    st.log.push_str(trimmed);
-                    st.log.push('\n');
+                    {
+                        let mut st = state.lock().unwrap();
+                        st.log.push_str(&format!("❌ Attempt {} failed: {}\n", try_count, err_msg));
+                    }
                     
                     let _ = app_handle.emit("install-log", InstallLogPayload {
                         server_id,
-                        line: format!("{}\n", trimmed),
+                        line: format!("❌ Attempt {} failed: {}\n", try_count, err_msg),
                     });
+
+                    last_error = Some(e);
+                    try_count += 1;
                     
-                    // Parse line for stages
-                    if trimmed.contains("Checking for available updates") {
-                        st.stage = InstallStage::CheckingUpdates;
-                        st.status = "Checking SteamCMD updates...".to_string();
-                    } else if trimmed.contains("Connecting to Steam") {
-                        st.stage = InstallStage::Connecting;
-                        st.status = "Connecting to Steam servers...".to_string();
-                    } else if trimmed.contains("Logging in") {
-                        st.stage = InstallStage::Authenticating;
-                        st.status = "Authenticating login...".to_string();
-                    } else if trimmed.contains("Logged in OK") {
-                        st.status = "Authenticated successfully".to_string();
-                    } else if trimmed.contains("Fetching depot manifest") {
-                        st.stage = InstallStage::FetchingManifest;
-                        st.status = "Fetching depot manifest...".to_string();
-                    } else if trimmed.contains("Allocating") {
-                        st.stage = InstallStage::AllocatingDiskSpace;
-                        st.status = "Allocating disk space...".to_string();
-                    } else if trimmed.contains("Verifying installation") {
-                        st.stage = InstallStage::Verifying;
-                        st.status = "Verifying files...".to_string();
-                    }
-                    
-                    // Parse download speed regexes
-                    if let Some(caps) = dl_re.captures(trimmed) {
-                        st.stage = InstallStage::Downloading;
-                        st.status = "Downloading dedicated server files...".to_string();
-                        st.progress = caps.get(3).unwrap().as_str().parse::<f32>().unwrap_or(0.0);
-                        let bytes_dl = caps.get(4).unwrap().as_str().parse::<u64>().unwrap_or(0);
-                        st.bytes_total = caps.get(5).unwrap().as_str().parse::<u64>().unwrap_or(0);
+                    if try_count <= retries {
+                        let retry_wait = 5;
+                        log::info!("[INSTALL] Retrying in {} seconds...", retry_wait);
+                        let _ = app_handle.emit("install-log", InstallLogPayload {
+                            server_id,
+                            line: format!("⚠️ Retrying installation in {} seconds... (Retries remaining: {})\n", retry_wait, retries - try_count + 1),
+                        });
                         
-                        let now = Instant::now();
-                        let elapsed = now.duration_since(last_progress_time).as_secs_f64();
-                        if elapsed > 0.2 {
-                            let diff = bytes_dl.saturating_sub(last_progress_bytes);
-                            let calculated_speed = diff as f64 / elapsed;
-                            if calculated_speed > 0.0 {
-                                st.speed_bps = calculated_speed;
-                                if st.speed_bps > st.peak_speed_bps {
-                                    st.peak_speed_bps = st.speed_bps;
-                                }
-                            }
-                            last_progress_bytes = bytes_dl;
-                            last_progress_time = now;
-                        }
-                        st.bytes_downloaded = bytes_dl;
-                    } else if let Some(caps) = state_re.captures(trimmed) {
-                        let op_state = caps.get(2).unwrap().as_str();
-                        st.progress = caps.get(3).unwrap().as_str().parse::<f32>().unwrap_or(0.0);
-                        if op_state.contains("verifying") {
-                            st.stage = InstallStage::Verifying;
-                            st.status = "Verifying installation files...".to_string();
-                        } else if op_state.contains("preallocating") {
-                            st.stage = InstallStage::AllocatingDiskSpace;
-                            st.status = "Allocating disk space...".to_string();
-                        } else if op_state.contains("extracting") {
-                            st.stage = InstallStage::Installing;
-                            st.status = "Extracting files...".to_string();
-                        }
+                        tokio::time::sleep(Duration::from_secs(retry_wait)).await;
                     }
                 }
-                
-                _ = interval.tick() => {
-                    let duration_secs = start_instant.elapsed().as_secs();
-                    
-                    // Freeze Stall Detection (Checked first to prevent MutexGuard across await)
-                    let last_log_elapsed = last_log_time.elapsed().as_secs();
-                    if last_log_elapsed >= 600 {
-                        let _ = child.kill().await;
-                        anyhow::bail!("SteamCMD stalled. No console output for 10 minutes. Aborting install.");
-                    }
-                    
-                    let mut st = state.lock().unwrap();
-                    st.elapsed_seconds = duration_secs;
-                    
-                    // Decay speed to 0 if no progress updates received in 5 seconds
-                    if last_progress_time.elapsed().as_secs() > 5 {
-                        st.speed_bps = 0.0;
-                    }
-                    
-                    // Calculate download speeds
-                    if st.stage == InstallStage::Downloading {
-                        if duration_secs > 0 {
-                            st.avg_speed_bps = st.bytes_downloaded as f64 / duration_secs as f64;
-                        }
-                        
-                        if st.avg_speed_bps > 0.0 {
-                            let rem = st.bytes_total.saturating_sub(st.bytes_downloaded);
-                            st.eta_seconds = Some((rem as f64 / st.avg_speed_bps) as u64);
-                        }
-                    }
-                    
-                    // Refresh CPU, Memory, and Disk stats of the process
-                    if let Some(pid) = child_pid {
-                        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), true);
-                        if let Some(proc) = sys.process(sysinfo::Pid::from_u32(pid)) {
-                            let disk_usage = proc.disk_usage();
-                            st.disk_write_speed_bps = disk_usage.written_bytes as f64;
-                            st.disk_read_speed_bps = disk_usage.read_bytes as f64;
-                        }
-                    }
-                    
-                    if last_log_elapsed >= 180 {
-                        st.status = "Checking Steam Servers (Stall detected)...".to_string();
-                        st.cdn_server = "Checking packet loss...".to_string();
-                    }
-                    
-                    // Save recovery state to DB
-                    let _ = self.db.lock().unwrap().save_install_recovery(
-                        server_id,
-                        st.is_installing,
-                        &format!("{:?}", st.stage),
-                        st.progress,
-                        &st.status,
-                        st.bytes_downloaded,
-                        st.bytes_total,
-                        &st.log,
-                    );
-                    
-                    // Emit tick to UI
-                    let _ = app_handle.emit("install-tick", st.clone());
-                }
-            }
-            
-            // Check if process finished
-            if let Ok(Some(status)) = child.try_wait() {
-                if !status.success() {
-                    anyhow::bail!("SteamCMD process exited with error status: {:?}", status.code());
-                }
-                break;
             }
         }
 
-        Ok(())
+        if install_success {
+            Ok(())
+        } else {
+            Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown installation failure")))
+        }
     }
 
     fn launch_steamcmd(&self, install_path: String, branch: String, steamcmd_exe: PathBuf) -> Result<tokio::process::Child> {
@@ -682,10 +741,11 @@ impl InstallationManager {
         }
 
         let steamcmd_dir = steamcmd_exe.parent().context("Failed to get steamcmd directory")?;
+        let normalized_install_path = install_path.replace("\\", "/");
 
         let mut args = vec![
             "+force_install_dir".to_string(),
-            install_path.to_string(),
+            normalized_install_path,
             "+login".to_string(),
             "anonymous".to_string(),
             "+@nClientDownloadEnableHTTP2PlatformWindows".to_string(),

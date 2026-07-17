@@ -5,11 +5,19 @@ use std::net::{TcpListener, UdpSocket};
 pub struct NetworkUtils;
 
 impl NetworkUtils {
+    /// Check if a TCP port is available
+    pub fn is_tcp_port_available(port: u16) -> bool {
+        TcpListener::bind(format!("0.0.0.0:{}", port)).is_ok()
+    }
+
+    /// Check if a UDP port is available
+    pub fn is_udp_port_available(port: u16) -> bool {
+        UdpSocket::bind(format!("0.0.0.0:{}", port)).is_ok()
+    }
+
     /// Check if a port is available (both TCP and UDP)
     pub fn is_port_available(port: u16) -> bool {
-        let tcp_ok = TcpListener::bind(format!("0.0.0.0:{}", port)).is_ok();
-        let udp_ok = UdpSocket::bind(format!("0.0.0.0:{}", port)).is_ok();
-        tcp_ok && udp_ok
+        Self::is_tcp_port_available(port) && Self::is_udp_port_available(port)
     }
 
     /// Get the public IP address

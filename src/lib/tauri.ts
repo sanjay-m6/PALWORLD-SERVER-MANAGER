@@ -50,6 +50,8 @@ export const tauriCommands = {
   getConfigPresets: () => invoke<any[]>('get_config_presets'),
   applyPreset: (serverId: number, preset: string) =>
     invoke<any>('apply_preset', { serverId, preset }),
+  serializeConfig: (config: any) => invoke<string>('serialize_config', { config }),
+  deserializeConfig: (content: string) => invoke<any>('deserialize_config', { content }),
 
   // RCON commands
   rconConnect: (serverId: number) => invoke<any>('rcon_connect', { serverId }),

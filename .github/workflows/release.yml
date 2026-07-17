@@ -86,20 +86,19 @@ jobs:
           releaseBody: |
             ## Palworld Server Manager v__VERSION__
 
-            This release introduces major updates to the Discord Integration, including real-time connection status tracking, intents fallback logic, and a fallback plain-text command parser.
+            This release introduces major UI upgrades, improved server cloning resilience, flawless SteamCMD downloads, and protocol-specific port collision check resolutions.
 
             ### 🚀 New Features & Improvements
-            - **Real-time Status Tracking**: Shows the precise connection state (`offline`, `connecting`, `online`) of your Discord Bot directly in the Tauri Manager dashboard.
-            - **Intents Fallback Logic**: Automatically detects and recovers from missing Privileged Intents (like Message Content Intent). If disabled in the Developer Portal, the bot falls back gracefully to keep Dashboard and Event Alert updates fully functional.
-            - **Instant Slash Commands**: Automatically registers all commands for the guilds the bot is currently in upon connection, making them instantly available to users without the standard 1-hour global Discord command cache delay.
-            - **Text Command Parser**: Added prefix/text command parsing (`/status`, `!status <id>`, `!players`, `!start <id>`, etc.) as a fallback option when slash commands are slow or if you prefer typing.
-            - **Live Dashboard Setup Command**: Run `/dashboard <server_id>` or `!dashboard <server_id>` in any Discord channel to automatically set it as the live dashboard channel and post the server dashboard embed.
-            - **Tauri App UI Command Reference**: Updated the Discord tab guide to display the new `/dashboard` command reference.
+            - **Modern Dynamic Background Slideshow**: Replaced the static background with a premium full-viewport slideshow featuring rotating high-quality Palworld artwork with pan-and-zoom Ken Burns effects and smooth cross-fades.
+            - **Sidebar Quick Actions**: Added context menu (on right-click) and hover vertical ellipsis options for all sidebar servers, supporting quick actions: Start/Stop, Clone, and Delete.
+            - **Save-Filtered Folder Cloning**: Clones the entire server folder recursively so that binaries, engine configurations, and files are copied. Excludes the original `SaveGames` database so that cloned instances start fresh.
+            - **Auto & Manual Port Allocation UI**: Redesigned the port selection step with automatic port assignment and locked/faded fields, with support for custom manual override settings.
+            - **Resilient SteamCMD Downloader**: Implemented high-level retries (3 attempts with 5-second cooldowns) that automatically clean orphaned background tasks and corrupt files between trials. The progress logs dashboard now stays open on complete/fail to inspect terminal logs.
+            - **Capsule-Tab HUD Glows**: Replaced bottom-border tabs with premium capsule-shaped tabs, customized with signature glows and slide-up animations.
 
             ### 🐛 Bug Fixes
-            - **Auto-Update Success Alerts**: Resolved the race condition and sorting mismatch where the update manager queried the oldest database history record to verify success, causing false-positive `Update Failed` notifications to Discord.
-            - **Background Thread Safety**: Prevented database locking issues during async `.await` execution in command interactions.
-            - **Tauri Command Safety**: Prevented triggering dashboard refreshes while the bot is offline or still connecting.
+            - **TCP/UDP Port Checkers Resolution**: Fixed false port-in-use blocks on Windows/Hyper-V by separating checks: game port checked using UDP only, and RCON/REST API ports checked using TCP only.
+            - **Space Directory Sanitization**: Automatically sanitizes and replaces space characters in server paths and clone paths with underscores (`_`) to avoid SteamCMD installation aborts.
 
             ---
             _Developed by Sanjay._

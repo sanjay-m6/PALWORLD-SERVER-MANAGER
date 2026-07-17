@@ -81,16 +81,22 @@ pub async fn create_server(
     // Generate config from preset or existing file if import
     let mut config = if request.is_import.unwrap_or(false) {
         let settings_path = crate::services::config_generator::ConfigGenerator::get_settings_path(&request.install_path);
-        if settings_path.exists() {
-            crate::services::ini_parser::read_settings_file(&settings_path)
+        let default_settings_path = std::path::PathBuf::from(&request.install_path).join("DefaultPalWorldSettings.ini");
+        let final_settings_path = if settings_path.exists() {
+            Some(settings_path)
+        } else if default_settings_path.exists() {
+            Some(default_settings_path)
+        } else {
+            None
+        };
+
+        if let Some(path) = final_settings_path {
+            crate::services::ini_parser::read_settings_file(&path)
                 .ok()
-                .map(|_| {
-                    // We don't want to parse everything back perfectly here, we just need to preserve it
-                    // Actually, a better approach is to NOT write the config file if it's an import,
-                    // BUT we still need the JSON for the DB. We can generate a dummy JSON or partial from preset.
-                    // Wait, writing config to disk will OVERWRITE it if we call write_config later.
-                    // So let's just use the preset for the DB json, and skip write_config if it's an import!
-                    crate::services::config_generator::ConfigGenerator::from_preset(&request.preset)
+                .map(|settings_map| {
+                    let mut config = crate::services::config_generator::ConfigGenerator::from_preset(&request.preset);
+                    config.update_from_map(&settings_map);
+                    config
                 })
                 .unwrap_or_else(|| crate::services::config_generator::ConfigGenerator::from_preset(&request.preset))
         } else {
@@ -109,6 +115,7 @@ pub async fn create_server(
     if let Some(ref pass) = request.server_password {
         config.server_password = pass.clone();
     }
+    config.server_name = request.name.clone();
     
     let config_json = serde_json::to_string(&config).map_err(|e| e.to_string())?;
 
@@ -252,12 +259,12 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     }
 
     // Check port availability
-    if !crate::services::network::NetworkUtils::is_port_available(game_port) {
-        return Err(format!("Game Port {} is already in use. Please choose a different port or stop the conflicting process.", game_port));
+    if !crate::services::network::NetworkUtils::is_udp_port_available(game_port) {
+        return Err(format!("Game Port {} (UDP) is already in use. Please choose a different port or stop the conflicting process.", game_port));
     }
 
-    if !crate::services::network::NetworkUtils::is_port_available(rcon_port) {
-        return Err(format!("RCON Port {} is already in use. Please choose a different RCON port or stop the conflicting process.", rcon_port));
+    if !crate::services::network::NetworkUtils::is_tcp_port_available(rcon_port) {
+        return Err(format!("RCON Port {} (TCP) is already in use. Please choose a different RCON port or stop the conflicting process.", rcon_port));
     }
 
     // Sync config from DB to INI file right before starting
@@ -1127,27 +1134,37 @@ pub async fn clone_server(
         }
     };
 
-    // 3. Copy save files and config files from source to target install path if not remote
+    // 3. Copy entire server directory from source to target install path if not remote, excluding SaveGames folder
     if !source_server.is_remote {
-        let src_saved_dir = source_server.install_path.join("Pal").join("Saved");
-        let dest_saved_dir = std::path::PathBuf::from(&new_install_path).join("Pal").join("Saved");
+        let src_dir = &source_server.install_path;
+        let dest_dir = std::path::Path::new(&new_install_path);
 
-        if src_saved_dir.exists() {
+        if src_dir.exists() {
             fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+                if let Some(name) = src.file_name() {
+                    if name == "SaveGames" {
+                        log::info!("[CLONE] Skipping SaveGames directory: {:?}", src);
+                        return Ok(());
+                    }
+                }
+
                 std::fs::create_dir_all(dst)?;
                 for entry in std::fs::read_dir(src)? {
                     let entry = entry?;
                     let ty = entry.file_type()?;
+                    let entry_path = entry.path();
+                    let dest_path = dst.join(entry.file_name());
+
                     if ty.is_dir() {
-                        copy_dir_all(&entry.path(), &dst.join(entry.file_name()))?;
+                        copy_dir_all(&entry_path, &dest_path)?;
                     } else {
-                        std::fs::copy(entry.path(), dst.join(entry.file_name()))?;
+                        std::fs::copy(&entry_path, &dest_path)?;
                     }
                 }
                 Ok(())
             }
 
-            let _ = copy_dir_all(&src_saved_dir, &dest_saved_dir);
+            let _ = copy_dir_all(src_dir, dest_dir);
         }
     }
 

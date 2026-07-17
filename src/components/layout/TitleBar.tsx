@@ -48,7 +48,7 @@ export const TitleBar: React.FC = () => {
   return (
     <div
       data-tauri-drag-region
-      className="flex items-center justify-between h-9 bg-dark-950/80 border-b border-dark-700/30 px-3 select-none"
+      className="relative z-20 flex items-center justify-between h-9 bg-dark-950/80 border-b border-dark-700/30 px-3 select-none"
     >
       {/* Left: App Logo + Title */}
       <div data-tauri-no-drag className="flex items-center gap-2.5">
