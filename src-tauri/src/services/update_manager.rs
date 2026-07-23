@@ -785,21 +785,22 @@ impl UpdateManager {
                 if let Ok(db) = app_state.db.lock() {
                     if let Ok(conn) = db.get_connection() {
                         conn.query_row(
-                            "SELECT install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE id = ?1",
+                            "SELECT install_path, startup_args, game_port, query_port, rcon_port, admin_password FROM servers WHERE id = ?1",
                             [server_id],
                             |row| Ok((
                                 row.get::<_, String>(0)?,
                                 row.get::<_, String>(1).unwrap_or_default(),
                                 row.get::<_, u16>(2).unwrap_or(8211),
-                                row.get::<_, u16>(3).unwrap_or(25575),
-                                row.get::<_, String>(4).unwrap_or_default(),
+                                row.get::<_, u16>(3).unwrap_or(27015),
+                                row.get::<_, u16>(4).unwrap_or(25575),
+                                row.get::<_, String>(5).unwrap_or_default(),
                             )),
                         ).ok()
                     } else { None }
                 } else { None }
             };
             
-            if let Some((install_path, startup_args, game_port, rcon_port, admin_password)) = start_params {
+            if let Some((install_path, startup_args, game_port, query_port, rcon_port, admin_password)) = start_params {
                 // Re-write the configuration to preserve all world settings
                 let (config, optimize_ram): (crate::models::PalworldConfig, bool) = {
                     let db = app_state.db.lock().unwrap();
@@ -827,6 +828,7 @@ impl UpdateManager {
                     &install_path,
                     &startup_args,
                     game_port,
+                    query_port,
                     rcon_port,
                     &admin_password,
                 ) {

@@ -9,6 +9,76 @@ use crate::services::process_manager::StopReason;
 
 #[tauri::command]
 pub async fn get_servers(state: State<'_, AppState>) -> Result<Vec<Server>, String> {
+    // Synchronize and self-heal server statuses against actual OS process state before returning
+    {
+        let servers_to_check = {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            db.get_all_servers().unwrap_or_default()
+        };
+
+        if !servers_to_check.is_empty() {
+            let mut sys = state.sys.lock().map_err(|e| e.to_string())?;
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+            for server in servers_to_check {
+                if server.is_remote {
+                    continue;
+                }
+
+                let is_tracked = state.process_manager.is_server_running(server.id);
+                let install_path_lower = server.install_path.to_string_lossy().to_lowercase();
+
+                let os_pid = sys.processes().values().find_map(|p| {
+                    let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    let name = p.name().to_string_lossy().to_lowercase();
+                    if (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower) {
+                        Some(p.pid().as_u32())
+                    } else {
+                        None
+                    }
+                });
+
+                if !is_tracked {
+                    if let Some(pid_val) = os_pid {
+                        log::info!("[PROCESS] Recovered orphaned server process on OS for server {} (PID {}). Adopting.", server.id, pid_val);
+                        state.process_manager.adopt_server_process(server.id, pid_val, &server.admin_password);
+                        state.log_watcher.start_watching(server.id, &server.install_path.to_string_lossy());
+                        if let Ok(db) = state.db.lock() {
+                            let _ = db.update_server_status(server.id, "running");
+                        }
+                    } else {
+                        // Server process is not alive anywhere
+                        if server.status == crate::models::ServerStatus::Running || server.status == crate::models::ServerStatus::Online {
+                            log::info!("[PROCESS] Self-healing: Server {} status in DB was '{:?}' but process is offline. Correcting to 'stopped'.", server.id, server.status);
+                            if let Ok(db) = state.db.lock() {
+                                let _ = db.update_server_status(server.id, "stopped");
+                            }
+                        } else if server.status == crate::models::ServerStatus::Starting || server.status == crate::models::ServerStatus::Restarting {
+                            let elapsed_sec = server.last_started
+                                .as_deref()
+                                .and_then(|ls| chrono::DateTime::parse_from_rfc3339(ls).ok())
+                                .map(|dt| chrono::Utc::now().signed_duration_since(dt.with_timezone(&chrono::Utc)).num_seconds())
+                                .unwrap_or(999);
+                            if elapsed_sec > 20 {
+                                log::info!("[PROCESS] Self-healing: Server {} stuck in starting/restarting for >20s. Correcting to 'stopped'.", server.id);
+                                if let Ok(db) = state.db.lock() {
+                                    let _ = db.update_server_status(server.id, "stopped");
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Is tracked & running
+                    if server.status == crate::models::ServerStatus::Stopped || server.status == crate::models::ServerStatus::Crashed {
+                        if let Ok(db) = state.db.lock() {
+                            let _ = db.update_server_status(server.id, "running");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.get_all_servers()
 }
@@ -49,12 +119,21 @@ pub async fn create_server(
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
 
-        // First: ensure the three new ports are mutually distinct
+        // First: ensure the four new ports are mutually distinct
         if request.game_port == request.rcon_port {
             return Err(format!("Game Port and RCON Port cannot be the same ({}). Each port must be unique.", request.game_port));
         }
         if request.game_port == request.rest_api_port {
             return Err(format!("Game Port and REST API Port cannot be the same ({}). Each port must be unique.", request.game_port));
+        }
+        if request.game_port == request.query_port {
+            return Err(format!("Game Port and Query Port cannot be the same ({}). Each port must be unique.", request.game_port));
+        }
+        if request.query_port == request.rcon_port {
+            return Err(format!("Query Port and RCON Port cannot be the same ({}). Each port must be unique.", request.query_port));
+        }
+        if request.query_port == request.rest_api_port {
+            return Err(format!("Query Port and REST API Port cannot be the same ({}). Each port must be unique.", request.query_port));
         }
         if request.rcon_port == request.rest_api_port {
             return Err(format!("RCON Port and REST API Port cannot be the same ({}). Each port must be unique.", request.rcon_port));
@@ -63,12 +142,13 @@ pub async fn create_server(
         // Cross-column check: each new port must not collide with ANY port on ANY existing server
         let new_ports = [
             (request.game_port, "Game Port"),
+            (request.query_port, "Query Port"),
             (request.rcon_port, "RCON Port"),
             (request.rest_api_port, "REST API Port"),
         ];
         for (port, label) in &new_ports {
             let conflict: Option<(String, String)> = conn.query_row(
-                "SELECT name, CASE WHEN game_port = ?1 THEN 'Game Port' WHEN rcon_port = ?1 THEN 'RCON Port' WHEN rest_api_port = ?1 THEN 'REST API Port' END FROM servers WHERE game_port = ?1 OR rcon_port = ?1 OR rest_api_port = ?1",
+                "SELECT name, CASE WHEN game_port = ?1 THEN 'Game Port' WHEN query_port = ?1 THEN 'Query Port' WHEN rcon_port = ?1 THEN 'RCON Port' WHEN rest_api_port = ?1 THEN 'REST API Port' END FROM servers WHERE game_port = ?1 OR query_port = ?1 OR rcon_port = ?1 OR rest_api_port = ?1",
                 [*port as i64],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             ).ok();
@@ -108,6 +188,7 @@ pub async fn create_server(
 
     // Apply the customized request settings to config
     config.public_port = request.game_port;
+    config.query_port = request.query_port;
     config.rcon_port = request.rcon_port;
     config.rest_api_port = request.rest_api_port;
     config.server_player_max_num = request.max_players;
@@ -221,19 +302,20 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     }
 
     // Get server info
-    let (install_path, startup_args, game_port, rcon_port, rest_api_port, admin_password) = {
+    let (install_path, startup_args, game_port, query_port, rcon_port, rest_api_port, admin_password) = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
         conn.query_row(
-            "SELECT install_path, startup_args, game_port, rcon_port, rest_api_port, admin_password FROM servers WHERE id = ?1",
+            "SELECT install_path, startup_args, game_port, query_port, rcon_port, rest_api_port, admin_password FROM servers WHERE id = ?1",
             [server_id],
             |row| Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1).unwrap_or_default(),
                 row.get::<_, u16>(2).unwrap_or(8211),
-                row.get::<_, u16>(3).unwrap_or(25575),
-                row.get::<_, u16>(4).unwrap_or(8212),
-                row.get::<_, String>(5).unwrap_or_default(),
+                row.get::<_, u16>(3).unwrap_or(27015),
+                row.get::<_, u16>(4).unwrap_or(25575),
+                row.get::<_, u16>(5).unwrap_or(8212),
+                row.get::<_, String>(6).unwrap_or_default(),
             )),
         ).map_err(|e| format!("Server not found: {}", e))?
     };
@@ -261,6 +343,10 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
     // Check port availability
     if !crate::services::network::NetworkUtils::is_udp_port_available(game_port) {
         return Err(format!("Game Port {} (UDP) is already in use. Please choose a different port or stop the conflicting process.", game_port));
+    }
+
+    if !crate::services::network::NetworkUtils::is_udp_port_available(query_port) {
+        return Err(format!("Query Port {} (UDP) is already in use. Please choose a different Query Port or stop the conflicting process.", query_port));
     }
 
     if !crate::services::network::NetworkUtils::is_tcp_port_available(rcon_port) {
@@ -294,6 +380,7 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
         &install_path,
         &startup_args,
         game_port,
+        query_port,
         rcon_port,
         &admin_password,
     ) {
@@ -331,6 +418,37 @@ pub async fn start_server(state: State<'_, AppState>, server_id: i64) -> Result<
                     add_game.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 }
                 let _ = add_game.status();
+
+                let query_rule_name = format!("Palworld Query Server Port {}", query_port);
+                
+                let mut del_query = std::process::Command::new("netsh");
+                del_query.args(["advfirewall", "firewall", "delete", "rule", &format!("name={}", query_rule_name)])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    del_query.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let _ = del_query.status();
+
+                let mut add_query = std::process::Command::new("netsh");
+                add_query.args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={}", query_rule_name),
+                    "dir=in",
+                    "action=allow",
+                    "protocol=UDP",
+                    &format!("localport={}", query_port)
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    add_query.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+                let _ = add_query.status();
 
                 let rcon_rule_name = format!("Palworld Server RCON {}", rcon_port);
                 
@@ -939,6 +1057,7 @@ pub async fn wipe_server(
             db.update_server_ports_and_settings(
                 server_id,
                 default_config.public_port,
+                default_config.query_port,
                 default_config.rcon_port,
                 default_config.rest_api_port,
                 default_config.server_player_max_num,
@@ -1120,7 +1239,10 @@ pub async fn clone_server(
         }
 
         let game_port = find_next_free(source_server.ports.game_port, &all_reserved)?;
-        all_reserved.insert(game_port); // Reserve it so rcon_port won't collide
+        all_reserved.insert(game_port); // Reserve it so query_port won't collide
+
+        let query_port = find_next_free(source_server.ports.query_port, &all_reserved)?;
+        all_reserved.insert(query_port); // Reserve it so rcon_port won't collide
 
         let rcon_port = find_next_free(source_server.ports.rcon_port, &all_reserved)?;
         all_reserved.insert(rcon_port); // Reserve it so rest_api_port won't collide
@@ -1129,6 +1251,7 @@ pub async fn clone_server(
 
         crate::models::ServerPorts {
             game_port,
+            query_port,
             rcon_port,
             rest_api_port,
         }
@@ -1175,6 +1298,7 @@ pub async fn clone_server(
         install_path: new_install_path,
         preset: source_server.preset.clone(),
         game_port: ports.game_port,
+        query_port: ports.query_port,
         rcon_port: ports.rcon_port,
         rest_api_port: ports.rest_api_port,
         max_players: source_server.max_players,

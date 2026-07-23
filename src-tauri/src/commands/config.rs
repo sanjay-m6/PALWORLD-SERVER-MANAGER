@@ -48,6 +48,16 @@ pub async fn save_server_config(
             return Err(format!("Game Port {} is already configured for server '{}'. Each server must have a unique Game Port.", config.public_port, other_name));
         }
 
+        // Check query_port
+        let conflict_query: Option<String> = conn.query_row(
+            "SELECT name FROM servers WHERE query_port = ?1 AND id != ?2",
+            [config.query_port as i64, server_id],
+            |row| row.get(0),
+        ).ok();
+        if let Some(other_name) = conflict_query {
+            return Err(format!("Query Port {} is already configured for server '{}'. Each server must have a unique Query Port.", config.query_port, other_name));
+        }
+
         // Check rcon_port
         let conflict_rcon: Option<String> = conn.query_row(
             "SELECT name FROM servers WHERE rcon_port = ?1 AND id != ?2",
@@ -78,6 +88,7 @@ pub async fn save_server_config(
         db.update_server_ports_and_settings(
             server_id,
             config.public_port,
+            config.query_port,
             config.rcon_port,
             config.rest_api_port,
             config.server_player_max_num,
@@ -123,36 +134,43 @@ pub async fn allocate_ports(
     let db = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db.get_connection()?;
 
-    let mut stmt = conn.prepare("SELECT game_port, rcon_port, rest_api_port FROM servers WHERE id != ?1")
+    let mut stmt = conn.prepare("SELECT game_port, query_port, rcon_port, rest_api_port FROM servers WHERE id != ?1")
         .map_err(|e| e.to_string())?;
     
     let port_rows = stmt.query_map([server_id], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))
     }).map_err(|e| e.to_string())?;
 
     let mut reserved_game_ports = std::collections::HashSet::new();
+    let mut reserved_query_ports = std::collections::HashSet::new();
     let mut reserved_rcon_ports = std::collections::HashSet::new();
     let mut reserved_rest_ports = std::collections::HashSet::new();
 
     for row in port_rows {
-        if let Ok((game, rcon, rest)) = row {
+        if let Ok((game, query, rcon, rest)) = row {
             reserved_game_ports.insert(game as u16);
+            reserved_query_ports.insert(query as u16);
             reserved_rcon_ports.insert(rcon as u16);
             reserved_rest_ports.insert(rest as u16);
         }
     }
 
-    let current_ports: Option<(u16, u16, u16)> = conn.query_row(
-        "SELECT game_port, rcon_port, rest_api_port FROM servers WHERE id = ?1",
+    let current_ports: Option<(u16, u16, u16, u16)> = conn.query_row(
+        "SELECT game_port, query_port, rcon_port, rest_api_port FROM servers WHERE id = ?1",
         [server_id],
-        |row| Ok((row.get::<_, i64>(0)? as u16, row.get::<_, i64>(1)? as u16, row.get::<_, i64>(2)? as u16))
+        |row| Ok((row.get::<_, i64>(0)? as u16, row.get::<_, i64>(1)? as u16, row.get::<_, i64>(2)? as u16, row.get::<_, i64>(3)? as u16))
     ).ok();
 
-    let (cur_game, cur_rcon, cur_rest) = current_ports.unwrap_or((0, 0, 0));
+    let (cur_game, cur_query, cur_rcon, cur_rest) = current_ports.unwrap_or((0, 0, 0, 0));
 
     let mut game_port = 8211;
     while reserved_game_ports.contains(&game_port) || (game_port != cur_game && !crate::services::network::NetworkUtils::is_udp_port_available(game_port)) {
         game_port += 1;
+    }
+
+    let mut query_port = 27015;
+    while reserved_query_ports.contains(&query_port) || query_port == game_port || (query_port != cur_query && !crate::services::network::NetworkUtils::is_udp_port_available(query_port)) {
+        query_port += 1;
     }
 
     let mut rcon_port = 25575;
@@ -167,6 +185,7 @@ pub async fn allocate_ports(
 
     Ok(crate::models::ServerPorts {
         game_port,
+        query_port,
         rcon_port,
         rest_api_port,
     })
@@ -176,23 +195,28 @@ pub async fn allocate_ports(
 pub async fn open_firewall_ports(
     server_name: String,
     game_port: u16,
+    query_port: u16,
     rcon_port: u16,
     rest_api_port: u16,
 ) -> Result<(), String> {
     let ps1_content = format!(
         "Remove-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (UDP)\" -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (TCP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - Query Port (UDP)\" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName \"Palworld - {0} - Query Port (TCP)\" -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (UDP)\" -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (TCP)\" -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (UDP)\" -ErrorAction SilentlyContinue
 Remove-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {1}
 New-NetFirewallRule -DisplayName \"Palworld - {0} - Game Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {1}
-New-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {2}
-New-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {2}
-New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {3}
-New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {3}",
-        server_name, game_port, rcon_port, rest_api_port
+New-NetFirewallRule -DisplayName \"Palworld - {0} - Query Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {2}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - Query Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {2}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {3}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - RCON Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {3}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (UDP)\" -Direction Inbound -Action Allow -Protocol UDP -LocalPort {4}
+New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {4}",
+        server_name, game_port, query_port, rcon_port, rest_api_port
     );
 
     let mut temp_file = std::env::temp_dir();
@@ -234,6 +258,7 @@ New-NetFirewallRule -DisplayName \"Palworld - {0} - REST API Port (TCP)\" -Direc
 #[serde(rename_all = "camelCase")]
 pub struct FirewallStatus {
     pub game_port_allowed: bool,
+    pub query_port_allowed: bool,
     pub rcon_port_allowed: bool,
     pub rest_api_port_allowed: bool,
 }
@@ -261,6 +286,8 @@ pub async fn check_firewall_status(server_name: String) -> Result<FirewallStatus
 
     let mut game_tcp = false;
     let mut game_udp = false;
+    let mut query_tcp = false;
+    let mut query_udp = false;
     let mut rcon_tcp = false;
     let mut rcon_udp = false;
     let mut rest_tcp = false;
@@ -294,6 +321,12 @@ pub async fn check_firewall_status(server_name: String) -> Result<FirewallStatus
                             } else if display_name.contains("(UDP)") {
                                 game_udp = true;
                             }
+                        } else if display_name.contains("Query Port") {
+                            if display_name.contains("(TCP)") {
+                                query_tcp = true;
+                            } else if display_name.contains("(UDP)") {
+                                query_udp = true;
+                            }
                         } else if display_name.contains("RCON Port") {
                             if display_name.contains("(TCP)") {
                                 rcon_tcp = true;
@@ -315,6 +348,7 @@ pub async fn check_firewall_status(server_name: String) -> Result<FirewallStatus
 
     Ok(FirewallStatus {
         game_port_allowed: game_tcp && game_udp,
+        query_port_allowed: query_tcp && query_udp,
         rcon_port_allowed: rcon_tcp && rcon_udp,
         rest_api_port_allowed: rest_tcp && rest_udp,
     })
@@ -426,6 +460,7 @@ pub async fn save_raw_config(
         db.update_server_ports_and_settings(
             server_id,
             config.public_port,
+            config.query_port,
             config.rcon_port,
             config.rest_api_port,
             config.server_player_max_num,
@@ -468,6 +503,7 @@ pub async fn apply_preset(
         db_lock.update_server_ports_and_settings(
             server_id,
             config.public_port,
+            config.query_port,
             config.rcon_port,
             config.rest_api_port,
             config.server_player_max_num,

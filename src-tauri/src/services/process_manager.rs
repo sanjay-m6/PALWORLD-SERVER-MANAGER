@@ -88,6 +88,7 @@ impl ProcessManager {
         install_path: &str,
         startup_args: &str,
         game_port: u16,
+        query_port: u16,
         _rcon_port: u16,
         admin_password: &str,
     ) -> Result<u32> {
@@ -141,6 +142,7 @@ impl ProcessManager {
         // Build command line arguments
         let mut args: Vec<String> = vec![
             format!("-port={}", game_port),
+            format!("-queryport={}", query_port),
             "-log".to_string(),
             "-stdout".to_string(),
             "-FORCELOGFLUSH".to_string(),
@@ -558,7 +560,7 @@ impl ProcessManager {
 
         std::thread::spawn(move || {
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(10));
+                std::thread::sleep(std::time::Duration::from_secs(3));
 
                 let is_stopping = {
                     let procs = processes.lock().unwrap();
@@ -678,21 +680,22 @@ impl ProcessManager {
                                     if let Ok(db) = state.db.lock() {
                                         if let Ok(conn) = db.get_connection() {
                                             conn.query_row(
-                                                "SELECT install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE id = ?1",
+                                                "SELECT install_path, startup_args, game_port, query_port, rcon_port, admin_password FROM servers WHERE id = ?1",
                                                 [server_id],
                                                 |row| Ok((
                                                     row.get::<_, String>(0)?,
                                                     row.get::<_, String>(1).unwrap_or_default(),
                                                     row.get::<_, u16>(2).unwrap_or(8211),
-                                                    row.get::<_, u16>(3).unwrap_or(25575),
-                                                    row.get::<_, String>(4).unwrap_or_default(),
+                                                    row.get::<_, u16>(3).unwrap_or(27015),
+                                                    row.get::<_, u16>(4).unwrap_or(25575),
+                                                    row.get::<_, String>(5).unwrap_or_default(),
                                                 ))
                                             ).ok()
                                         } else { None }
                                     } else { None }
                                 };
 
-                                if let Some((install_path, startup_args, game_port, rcon_port, admin_password)) = server_info {
+                                if let Some((install_path, startup_args, game_port, query_port, rcon_port, admin_password)) = server_info {
                                     log::info!("[PROCESS] Triggering auto-restart spawn for server {}...", server_id);
                                     if let Ok(db) = state.db.lock() {
                                         let _ = db.update_server_status(server_id, "starting");
@@ -704,6 +707,7 @@ impl ProcessManager {
                                         &install_path,
                                         &startup_args,
                                         game_port,
+                                        query_port,
                                         rcon_port,
                                         &admin_password,
                                     ) {

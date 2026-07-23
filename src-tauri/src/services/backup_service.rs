@@ -80,7 +80,8 @@ impl BackupService {
             let mut entry = archive.by_index(i)
                 .map_err(|e| format!("Failed to read archive entry: {}", e))?;
 
-            let out_path = target.join(entry.name());
+            let entry_name = entry.name().replace('\\', "/");
+            let out_path = target.join(&entry_name);
 
             if entry.is_dir() {
                 fs::create_dir_all(&out_path)
@@ -140,7 +141,7 @@ impl BackupService {
         for entry in WalkDir::new(source_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             let relative = path.strip_prefix(source_dir).unwrap_or(path);
-            let archive_path = format!("{}/{}", prefix, relative.to_string_lossy());
+            let archive_path = format!("{}/{}", prefix, relative.to_string_lossy().replace('\\', "/"));
 
             if path.is_dir() {
                 zip.add_directory(&archive_path, options)

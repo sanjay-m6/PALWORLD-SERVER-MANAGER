@@ -82,6 +82,7 @@ const configFields: ConfigField[] = [
   { key: 'adminPassword', label: 'Admin Password', type: 'string', category: 'Server Settings', description: 'Password required to execute admin RCON/console commands.', isImportant: true },
   { key: 'serverPassword', label: 'Server Password', type: 'string', category: 'Server Settings', description: 'Password required for players to connect to the server.' },
   { key: 'publicPort', label: 'Public Port', type: 'number', category: 'Server Settings', description: 'Port number used by client connections (default: 8211).' },
+  { key: 'queryPort', label: 'Query Port', type: 'number', category: 'Server Settings', description: 'Port number used for Steam server query (default: 27015). Change this if another game like Deadlock collides with port 27015.', isImportant: true },
   { key: 'publicIp', label: 'Public IP Override', type: 'string', category: 'Server Settings', description: 'Explicit external public IP address of the server.' },
   { key: 'region', label: 'Server Region', type: 'string', category: 'Server Settings', description: 'Geographic region setting for server indexing.' },
   { key: 'banListUrl', label: 'Ban List URL', type: 'string', category: 'Server Settings', description: 'URL link to a remote list of banned player SteamIDs.' },

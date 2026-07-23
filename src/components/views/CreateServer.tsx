@@ -21,6 +21,7 @@ export const CreateServer: React.FC = () => {
     installPath: '',
     preset: 'Balanced',
     gamePort: 8211,
+    queryPort: 27015,
     rconPort: 25575,
     restApiPort: 8212,
     maxPlayers: 32,
@@ -37,6 +38,7 @@ export const CreateServer: React.FC = () => {
       setForm((prev) => ({
         ...prev,
         gamePort: ports.gamePort,
+        queryPort: ports.queryPort,
         rconPort: ports.rconPort,
         restApiPort: ports.restApiPort,
       }));
@@ -82,6 +84,7 @@ export const CreateServer: React.FC = () => {
         description: config.description || prev.description,
         installPath: config.installPath || prev.installPath,
         gamePort: config.gamePort || prev.gamePort,
+        queryPort: config.queryPort || prev.queryPort,
         rconPort: config.rconPort || prev.rconPort,
         restApiPort: config.restApiPort || prev.restApiPort,
         maxPlayers: config.maxPlayers || prev.maxPlayers,
@@ -140,11 +143,12 @@ export const CreateServer: React.FC = () => {
     setIsSubmitting(true);
     try {
       const server = await tauriCommands.createServer({
-        name: form.name,
-        description: form.description || null,
-        installPath: mode === 'remote' ? 'remote' : form.installPath,
+        name: form.name.trim(),
+        description: form.description.trim() || undefined,
+        installPath: mode === 'remote' ? 'remote' : form.installPath.trim(),
         preset: mode === 'remote' ? 'Balanced' : form.preset,
         gamePort: form.gamePort,
+        queryPort: form.queryPort,
         rconPort: form.rconPort,
         restApiPort: form.restApiPort,
         maxPlayers: form.maxPlayers,
@@ -165,6 +169,7 @@ export const CreateServer: React.FC = () => {
           await tauriCommands.openFirewallPorts(
             server.name,
             form.gamePort,
+            form.queryPort,
             form.rconPort,
             form.restApiPort
           );
@@ -523,7 +528,7 @@ export const CreateServer: React.FC = () => {
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-medium text-dark-400 mb-1.5">
                   {t('createServer.port')}
@@ -545,6 +550,35 @@ export const CreateServer: React.FC = () => {
                       onClick={async () => {
                         const ports = await tauriCommands.allocatePorts(0);
                         updateField('gamePort', ports.gamePort);
+                      }}
+                      className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 whitespace-nowrap"
+                    >
+                      Assign
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-dark-400 mb-1.5">
+                  Query Port
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="create-query-port"
+                    type="number"
+                    value={form.queryPort}
+                    onChange={(e) => updateField('queryPort', parseInt(e.target.value))}
+                    disabled={isPortsAutoAllocated && mode !== 'remote'}
+                    className={`input-field font-mono flex-1 min-w-0 ${
+                      isPortsAutoAllocated && mode !== 'remote' ? 'opacity-60 cursor-not-allowed bg-dark-950/40 border-dark-800/50' : ''
+                    }`}
+                  />
+                  {!isPortsAutoAllocated && mode !== 'remote' && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ports = await tauriCommands.allocatePorts(0);
+                        updateField('queryPort', ports.queryPort);
                       }}
                       className="bg-primary-500/10 hover:bg-primary-500/20 text-primary-400 border border-primary-500/25 px-2.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 active:scale-95 whitespace-nowrap"
                     >

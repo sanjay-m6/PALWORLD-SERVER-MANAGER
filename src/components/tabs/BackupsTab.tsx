@@ -3,7 +3,7 @@ import { useAppStore } from '../../stores/useAppStore';
 import { tauriCommands, formatBytes } from '../../lib/tauri';
 import type { Backup } from '../../stores/useAppStore';
 import { CustomSelect } from '../ui/CustomSelect';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open, save, ask } from '@tauri-apps/plugin-dialog';
 
 export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   const { showNotification } = useAppStore();
@@ -77,7 +77,11 @@ export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   };
 
   const handleRestore = async (backupId: number) => {
-    if (!confirm('Restore this backup? Current save data will be overwritten.')) return;
+    const confirmed = await ask('Restore this backup? Current save data will be overwritten.', {
+      title: 'Restore Backup',
+      kind: 'warning',
+    });
+    if (!confirmed) return;
     try {
       await tauriCommands.restoreBackup(serverId, backupId);
       showNotification('success', 'Backup restored successfully');
@@ -87,7 +91,11 @@ export const BackupsTab: React.FC<{ serverId: number }> = ({ serverId }) => {
   };
 
   const handleDelete = async (backupId: number) => {
-    if (!confirm('Delete this backup? This cannot be undone.')) return;
+    const confirmed = await ask('Delete this backup? This cannot be undone.', {
+      title: 'Delete Backup',
+      kind: 'warning',
+    });
+    if (!confirmed) return;
     try {
       await tauriCommands.deleteBackup(backupId);
       showNotification('success', 'Backup deleted');

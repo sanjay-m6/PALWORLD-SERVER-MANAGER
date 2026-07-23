@@ -332,13 +332,11 @@ export const Dashboard: React.FC = () => {
 
   const refreshStats = async () => {
     const store = useAppStore.getState();
-    const running = store.servers.filter(
-      (s) => s.status === 'running' || s.status === 'online' || s.status === 'starting' || s.status === 'restarting'
-    );
     const stats: Record<number, any> = {};
     const newUptimes: Record<number, number> = {};
 
-    for (const server of running) {
+    for (const server of store.servers) {
+      if (server.isRemote) continue;
       try {
         const status = await tauriCommands.getServerStatus(server.id);
         stats[server.id] = status;
@@ -347,8 +345,10 @@ export const Dashboard: React.FC = () => {
         }
         
         // Self-heal/update store status if mismatched
-        if (status.isRunning && (server.status === 'starting' || server.status === 'restarting')) {
-          store.updateServerStatus(server.id, 'running');
+        if (status.isRunning) {
+          if (server.status === 'starting' || server.status === 'restarting' || server.status === 'stopped' || server.status === 'crashed') {
+            store.updateServerStatus(server.id, 'running');
+          }
         } else if (!status.isRunning) {
           if (server.status === 'running' || server.status === 'online') {
             store.updateServerStatus(server.id, 'stopped');
@@ -954,9 +954,9 @@ export const Dashboard: React.FC = () => {
                   {/* Info table */}
                   <div className="grid grid-cols-2 gap-y-3 text-[10px] mb-4 border-b border-dark-800 pb-3">
                     <div>
-                      <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">{server.isRemote ? 'Remote Host' : 'Game Port'}</span>
-                      <span className="text-dark-200 font-mono font-semibold truncate block max-w-[120px]" title={server.isRemote ? `${server.host}:${server.ports.gamePort}` : undefined}>
-                        {server.isRemote ? server.host : server.ports.gamePort}
+                      <span className="text-dark-500 font-medium uppercase tracking-wider block text-[8px]">{server.isRemote ? 'Remote Host' : 'Ports (Game/Query/RCON)'}</span>
+                      <span className="text-dark-200 font-mono font-semibold truncate block max-w-[140px]" title={server.isRemote ? `${server.host}:${server.ports.gamePort}` : `Game: ${server.ports.gamePort}, Query: ${server.ports.queryPort || 27015}, RCON: ${server.ports.rconPort}`}>
+                        {server.isRemote ? server.host : `${server.ports.gamePort}/${server.ports.queryPort || 27015}/${server.ports.rconPort}`}
                       </span>
                     </div>
                     <div>

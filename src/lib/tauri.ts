@@ -39,11 +39,11 @@ export const tauriCommands = {
   saveServerConfig: (serverId: number, config: any) =>
     invoke<void>('save_server_config', { serverId, config }),
   allocatePorts: (serverId: number) =>
-    invoke<{ gamePort: number; rconPort: number; restApiPort: number }>('allocate_ports', { serverId }),
-  openFirewallPorts: (serverName: string, gamePort: number, rconPort: number, restApiPort: number) =>
-    invoke<void>('open_firewall_ports', { serverName, gamePort, rconPort, restApiPort }),
+    invoke<{ gamePort: number; queryPort: number; rconPort: number; restApiPort: number }>('allocate_ports', { serverId }),
+  openFirewallPorts: (serverName: string, gamePort: number, queryPort: number, rconPort: number, restApiPort: number) =>
+    invoke<void>('open_firewall_ports', { serverName, gamePort, queryPort, rconPort, restApiPort }),
   checkFirewallStatus: (serverName: string) =>
-    invoke<{ gamePortAllowed: boolean; rconPortAllowed: boolean; restApiPortAllowed: boolean }>('check_firewall_status', { serverName }),
+    invoke<{ gamePortAllowed: boolean; queryPortAllowed: boolean; rconPortAllowed: boolean; restApiPortAllowed: boolean }>('check_firewall_status', { serverName }),
   getRawConfig: (serverId: number) => invoke<string>('get_raw_config', { serverId }),
   saveRawConfig: (serverId: number, content: string) =>
     invoke<void>('save_raw_config', { serverId, content }),
@@ -110,6 +110,7 @@ export const tauriCommands = {
       description: string;
       installPath: string;
       gamePort: number;
+      queryPort: number;
       rconPort: number;
       restApiPort: number;
       maxPlayers: number;
@@ -418,6 +419,27 @@ export function setupEventListeners() {
   }>('in-app-notification', (event) => {
     const { type, message } = event.payload;
     useAppStore.getState().showNotification(type, message);
+  });
+
+  // Server lifecycle events (started, stopped, crashed)
+  registerListener<{
+    server_id: number;
+    event: string;
+    reason?: string;
+    exit_code?: number;
+    uptime_seconds?: number;
+    timestamp: string;
+  }>('server-lifecycle', (event) => {
+    const data = event.payload;
+    const store = useAppStore.getState();
+    if (data.event === 'crashed') {
+      store.updateServerStatus(data.server_id, 'crashed');
+      store.showNotification('error', `Server #${data.server_id} has crashed! ${data.reason || ''}`);
+    } else if (data.event === 'stopped') {
+      store.updateServerStatus(data.server_id, 'stopped');
+    } else if (data.event === 'started') {
+      store.updateServerStatus(data.server_id, 'running');
+    }
   });
 }
 

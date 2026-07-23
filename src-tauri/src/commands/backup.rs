@@ -75,6 +75,21 @@ pub async fn restore_backup(
         return Err("Server must be stopped before restoring a backup".to_string());
     }
 
+    // Check if another process for this server is already running on the OS from the same install directory
+    let install_path_lower = install_path.to_lowercase();
+    let is_already_running_on_system = {
+        let mut sys = state.sys.lock().map_err(|e| e.to_string())?;
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        sys.processes().values().any(|p| {
+            let exe_path = p.exe().map(|path| path.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let name = p.name().to_string_lossy().to_lowercase();
+            (name.contains("palserver") || exe_path.contains("palserver")) && exe_path.contains(&install_path_lower)
+        })
+    };
+    if is_already_running_on_system {
+        return Err("Server must be stopped before restoring a backup (another server process is running on the system).".to_string());
+    }
+
     crate::services::backup_service::BackupService::restore_backup(&backup_path, &install_path)
 }
 
@@ -327,7 +342,7 @@ pub async fn import_server_migration(
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)
             .map_err(|e| format!("Failed to read archive entry: {}", e))?;
-        let entry_name = entry.name().to_string();
+        let entry_name = entry.name().replace('\\', "/");
         
         if entry_name == "server_metadata.json" {
             continue;

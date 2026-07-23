@@ -86,19 +86,18 @@ jobs:
           releaseBody: |
             ## Palworld Server Manager v__VERSION__
 
-            This release introduces major UI upgrades, improved server cloning resilience, flawless SteamCMD downloads, and protocol-specific port collision check resolutions.
+            This release introduces Steam Query Port configuration, process argument handling for query ports, automatic OS status self-healing, and real-time server lifecycle event synchronization.
 
             ### 🚀 New Features & Improvements
-            - **Modern Dynamic Background Slideshow**: Replaced the static background with a premium full-viewport slideshow featuring rotating high-quality Palworld artwork with pan-and-zoom Ken Burns effects and smooth cross-fades.
-            - **Sidebar Quick Actions**: Added context menu (on right-click) and hover vertical ellipsis options for all sidebar servers, supporting quick actions: Start/Stop, Clone, and Delete.
-            - **Save-Filtered Folder Cloning**: Clones the entire server folder recursively so that binaries, engine configurations, and files are copied. Excludes the original `SaveGames` database so that cloned instances start fresh.
-            - **Auto & Manual Port Allocation UI**: Redesigned the port selection step with automatic port assignment and locked/faded fields, with support for custom manual override settings.
-            - **Resilient SteamCMD Downloader**: Implemented high-level retries (3 attempts with 5-second cooldowns) that automatically clean orphaned background tasks and corrupt files between trials. The progress logs dashboard now stays open on complete/fail to inspect terminal logs.
-            - **Capsule-Tab HUD Glows**: Replaced bottom-border tabs with premium capsule-shaped tabs, customized with signature glows and slide-up animations.
+            - **Configurable Steam Query Port**: Added full support for configuring custom Steam Query Ports (`QueryPort`, default: `27015`). Automatically appends `-queryport=XXXXX` to `PalServer.exe` process launch arguments to prevent port collisions with games like Deadlock.
+            - **Auto & Manual Query Port Allocation**: Integrated Query Port selection in server creation/importing step 2, visual INI config editor, auto port assignment, and dedicated Windows Firewall rules.
+            - **Automatic Server Status Self-Healing**: Implemented automatic OS process checking (`sysinfo`) on server list retrieval. Mismatched or orphaned process statuses in database are self-healed and synced in real-time.
+            - **Reactive Server Lifecycle Listener**: Registered a global event listener for `server-lifecycle` events in the frontend, ensuring instant state reflection when servers start, stop, or crash.
+            - **High-Frequency Process Crash Monitor**: Optimized crash monitoring cycle to 3-second intervals for rapid crash feedback.
 
             ### 🐛 Bug Fixes
-            - **TCP/UDP Port Checkers Resolution**: Fixed false port-in-use blocks on Windows/Hyper-V by separating checks: game port checked using UDP only, and RCON/REST API ports checked using TCP only.
-            - **Space Directory Sanitization**: Automatically sanitizes and replaces space characters in server paths and clone paths with underscores (`_`) to avoid SteamCMD installation aborts.
+            - **Offline Status Out-of-Sync Fix**: Resolved issues where servers could remain marked as ONLINE in the UI even after the game server process was terminated or crashed.
+            - **Query Port Firewall & Collision Resolution**: Resolved query port binding conflicts and ensured Windows Defender Firewall UDP rules are automatically added for Query Ports.
 
             ---
             _Developed by Sanjay._

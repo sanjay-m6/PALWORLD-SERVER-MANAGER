@@ -2633,6 +2633,7 @@ pub struct ImportConfigResponse {
     pub description: String,
     pub install_path: String,
     pub game_port: u16,
+    pub query_port: u16,
     pub rcon_port: u16,
     pub rest_api_port: u16,
     pub max_players: u32,
@@ -2710,6 +2711,7 @@ pub async fn parse_existing_server_config(install_path: String) -> Result<Import
         description: "".to_string(),
         install_path: install_path_str.clone(),
         game_port: 8211,
+        query_port: 27015,
         rcon_port: 25575,
         rest_api_port: 8212,
         max_players: 32,
@@ -2737,6 +2739,11 @@ pub async fn parse_existing_server_config(install_path: String) -> Result<Import
             if let Some(v) = settings_map.get("PublicPort") {
                 if let Ok(port) = v.parse::<u16>() {
                     import_resp.game_port = port;
+                }
+            }
+            if let Some(v) = settings_map.get("QueryPort") {
+                if let Ok(port) = v.parse::<u16>() {
+                    import_resp.query_port = port;
                 }
             }
             if let Some(v) = settings_map.get("RCONPort") {

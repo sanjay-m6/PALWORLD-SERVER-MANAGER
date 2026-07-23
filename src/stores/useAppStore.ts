@@ -13,6 +13,7 @@ export interface Server {
   status: ServerStatus;
   ports: {
     gamePort: number;
+    queryPort: number;
     rconPort: number;
     restApiPort: number;
   };

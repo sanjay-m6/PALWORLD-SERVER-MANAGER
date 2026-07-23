@@ -1,6 +1,6 @@
 [package]
 name = "palworld-server-manager"
-version = "1.7.0"
+version = "1.8.0"
 description = "Palworld Server Manager - Professional Dedicated Server Management"
 authors = ["Sanjay"]
 license = "Apache-2.0"

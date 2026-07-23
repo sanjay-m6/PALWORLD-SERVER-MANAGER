@@ -69,6 +69,7 @@ pub struct Server {
 #[serde(rename_all = "camelCase")]
 pub struct ServerPorts {
     pub game_port: u16,
+    pub query_port: u16,
     pub rcon_port: u16,
     pub rest_api_port: u16,
 }
@@ -90,6 +91,7 @@ pub struct RestApiConfig {
 fn default_true() -> bool {
     true
 }
+fn default_query_port() -> u16 { 27015 }
 fn default_float_one() -> f32 { 1.0 }
 fn default_float_thirty() -> f32 { 30.0 }
 fn default_float_3600() -> f32 { 3600.0 }
@@ -178,6 +180,8 @@ pub struct PalworldConfig {
     pub admin_password: String,
     pub server_password: String,
     pub public_port: u16,
+    #[serde(default = "default_query_port")]
+    pub query_port: u16,
     pub public_ip: String,
     pub rcon_enabled: bool,
     pub rcon_port: u16,
@@ -372,6 +376,7 @@ impl PalworldConfig {
         if let Some(v) = map.get("AdminPassword") { self.admin_password = v.trim_matches('"').trim().to_string(); }
         if let Some(v) = map.get("ServerPassword") { self.server_password = v.trim_matches('"').trim().to_string(); }
         if let Some(v) = map.get("PublicPort") { if let Ok(val) = v.parse() { self.public_port = val; } }
+        if let Some(v) = map.get("QueryPort") { if let Ok(val) = v.parse() { self.query_port = val; } }
         if let Some(v) = map.get("PublicIP") { self.public_ip = v.trim_matches('"').to_string(); }
         if let Some(v) = map.get("RCONEnabled") { self.rcon_enabled = parse_bool(v); }
         if let Some(v) = map.get("RCONPort") { if let Ok(val) = v.parse() { self.rcon_port = val; } }
@@ -499,6 +504,7 @@ impl Default for PalworldConfig {
             admin_password: String::new(),
             server_password: String::new(),
             public_port: 8211,
+            query_port: 27015,
             public_ip: String::new(),
             rcon_enabled: true,
             rcon_port: 25575,
@@ -711,6 +717,8 @@ pub struct CreateServerRequest {
     pub install_path: String,
     pub preset: String,
     pub game_port: u16,
+    #[serde(default = "default_query_port")]
+    pub query_port: u16,
     pub rcon_port: u16,
     pub rest_api_port: u16,
     pub max_players: u32,

@@ -174,6 +174,7 @@ pub fn config_to_map(config: &crate::models::PalworldConfig) -> HashMap<String, 
     map.insert("AdminPassword".to_string(), format!("\"{}\"", config.admin_password.trim()));
     map.insert("ServerPassword".to_string(), format!("\"{}\"", config.server_password));
     map.insert("PublicPort".to_string(), config.public_port.to_string());
+    map.insert("QueryPort".to_string(), config.query_port.to_string());
     map.insert("PublicIP".to_string(), format!("\"{}\"", config.public_ip));
     map.insert("RCONEnabled".to_string(), config.rcon_enabled.to_string().capitalize_first());
     map.insert("RCONPort".to_string(), config.rcon_port.to_string());

@@ -120,12 +120,12 @@ pub fn set_startup_enabled(enabled: bool) -> Result<(), String> {
 pub async fn auto_start_servers(
     state: State<'_, AppState>,
 ) -> Result<u32, String> {
-    let servers_to_start: Vec<(i64, String, String, u16, u16, String)> = {
+    let servers_to_start: Vec<(i64, String, String, u16, u16, u16, String)> = {
         let db = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db.get_connection()?;
         
         let mut stmt = conn.prepare(
-            "SELECT id, install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE auto_start = 1 AND status = 'stopped'"
+            "SELECT id, install_path, startup_args, game_port, query_port, rcon_port, admin_password FROM servers WHERE auto_start = 1 AND status = 'stopped'"
         ).map_err(|e| format!("Query failed: {}", e))?;
 
         let rows = stmt.query_map([], |row| {
@@ -134,8 +134,9 @@ pub async fn auto_start_servers(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2).unwrap_or_default(),
                 row.get::<_, u16>(3).unwrap_or(8211),
-                row.get::<_, u16>(4).unwrap_or(25575),
-                row.get::<_, String>(5).unwrap_or_default(),
+                row.get::<_, u16>(4).unwrap_or(27015),
+                row.get::<_, u16>(5).unwrap_or(25575),
+                row.get::<_, String>(6).unwrap_or_default(),
             ))
         }).map_err(|e| format!("Query failed: {}", e))?;
 
@@ -143,7 +144,7 @@ pub async fn auto_start_servers(
     };
 
     let mut started = 0u32;
-    for (server_id, install_path, startup_args, game_port, rcon_port, admin_password) in servers_to_start {
+    for (server_id, install_path, startup_args, game_port, query_port, rcon_port, admin_password) in servers_to_start {
         // Update status to starting
         if let Ok(db) = state.db.lock() {
             let _ = db.update_server_status(server_id, "starting");
@@ -154,6 +155,7 @@ pub async fn auto_start_servers(
             &install_path,
             &startup_args,
             game_port,
+            query_port,
             rcon_port,
             &admin_password,
         ) {

@@ -12,12 +12,14 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
 
   const [portsAvailability, setPortsAvailability] = useState({
     gamePort: true,
+    queryPort: true,
     rconPort: true,
     restApiPort: true,
   });
 
   const [firewallStatus, setFirewallStatus] = useState({
     gamePortAllowed: false,
+    queryPortAllowed: false,
     rconPortAllowed: false,
     restApiPortAllowed: false,
   });
@@ -26,11 +28,13 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     if (!server) return;
     try {
       const gameAvailable = await tauriCommands.checkPortAvailable(server.ports.gamePort);
+      const queryAvailable = await tauriCommands.checkPortAvailable(server.ports.queryPort || 27015);
       const rconAvailable = await tauriCommands.checkPortAvailable(server.ports.rconPort);
       const restAvailable = await tauriCommands.checkPortAvailable(server.ports.restApiPort);
 
       setPortsAvailability({
         gamePort: gameAvailable,
+        queryPort: queryAvailable,
         rconPort: rconAvailable,
         restApiPort: restAvailable,
       });
@@ -40,7 +44,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     } catch (e) {
       console.error('Failed to check port availability or firewall rules:', e);
     }
-  }, [server?.ports.gamePort, server?.ports.rconPort, server?.ports.restApiPort, server?.name]);
+  }, [server?.ports.gamePort, server?.ports.queryPort, server?.ports.rconPort, server?.ports.restApiPort, server?.name]);
 
   useEffect(() => {
     checkPorts();
@@ -58,6 +62,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       // Get current config
       const config = await tauriCommands.getServerConfig(serverId);
       config.publicPort = ports.gamePort;
+      config.queryPort = ports.queryPort;
       config.rconPort = ports.rconPort;
       config.restApiPort = ports.restApiPort;
 
@@ -69,17 +74,18 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
         await tauriCommands.openFirewallPorts(
           server.name,
           ports.gamePort,
+          ports.queryPort,
           ports.rconPort,
           ports.restApiPort
         );
         showNotification(
           'success',
-          `Successfully allocated ports and updated Windows Firewall rules! Game: ${ports.gamePort}, RCON: ${ports.rconPort}, REST API: ${ports.restApiPort}`
+          `Successfully allocated ports and updated Windows Firewall rules! Game: ${ports.gamePort}, Query: ${ports.queryPort}, RCON: ${ports.rconPort}, REST API: ${ports.restApiPort}`
         );
       } catch (fwErr) {
         showNotification(
           'success',
-          `Successfully allocated and saved all ports! Game: ${ports.gamePort}, RCON: ${ports.rconPort}, REST API: ${ports.restApiPort}. (Firewall requires manual update: ${fwErr})`
+          `Successfully allocated and saved all ports! Game: ${ports.gamePort}, Query: ${ports.queryPort}, RCON: ${ports.rconPort}, REST API: ${ports.restApiPort}. (Firewall requires manual update: ${fwErr})`
         );
       }
 
@@ -99,7 +105,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
     }
   };
 
-  const handleAllocateIndividual = async (key: 'gamePort' | 'rconPort' | 'restApiPort') => {
+  const handleAllocateIndividual = async (key: 'gamePort' | 'queryPort' | 'rconPort' | 'restApiPort') => {
     setIsAllocating(true);
     try {
       const ports = await tauriCommands.allocatePorts(serverId);
@@ -109,6 +115,9 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       if (key === 'gamePort') {
         allocatedVal = ports.gamePort;
         config.publicPort = ports.gamePort;
+      } else if (key === 'queryPort') {
+        allocatedVal = ports.queryPort;
+        config.queryPort = ports.queryPort;
       } else if (key === 'rconPort') {
         allocatedVal = ports.rconPort;
         config.rconPort = ports.rconPort;
@@ -118,7 +127,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       }
 
       await tauriCommands.saveServerConfig(serverId, config);
-      showNotification('success', `Assigned new ${key === 'gamePort' ? 'Game Port' : key === 'rconPort' ? 'RCON Port' : 'REST API Port'}: ${allocatedVal}`);
+      showNotification('success', `Assigned new ${key === 'gamePort' ? 'Game Port' : key === 'queryPort' ? 'Query Port' : key === 'rconPort' ? 'RCON Port' : 'REST API Port'}: ${allocatedVal}`);
 
       if (isServerRunning) {
         showNotification('warning', 'Port modified. Please restart the server to apply changes.');
@@ -140,6 +149,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       await tauriCommands.openFirewallPorts(
         server.name,
         server.ports.gamePort,
+        server.ports.queryPort || 27015,
         server.ports.rconPort,
         server.ports.restApiPort
       );
@@ -181,7 +191,7 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
       </div>
 
       {/* Main Port Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {/* Game Port */}
         <div className="glass-card p-5 border border-dark-750/30 bg-dark-900/40 rounded-xl space-y-4 flex flex-col justify-between">
           <div className="space-y-2">
@@ -217,6 +227,48 @@ export const FirewallTab: React.FC<{ serverId: number }> = ({ serverId }) => {
           </div>
           <button
             onClick={() => handleAllocateIndividual('gamePort')}
+            disabled={isAllocating}
+            className="w-full bg-dark-950/60 hover:bg-dark-950 text-dark-300 hover:text-dark-100 border border-dark-800 font-black text-[10px] py-2 rounded-lg uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-50"
+          >
+            Assign Free Port
+          </button>
+        </div>
+
+        {/* Query Port */}
+        <div className="glass-card p-5 border border-dark-750/30 bg-dark-900/40 rounded-xl space-y-4 flex flex-col justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-dark-500 uppercase tracking-wider">Query Port (UDP)</span>
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${
+                    portsAvailability.queryPort
+                      ? 'text-success-400 bg-success-500/10 border-success-500/20'
+                      : 'text-error-400 bg-error-500/10 border-error-500/20'
+                  }`}
+                >
+                  {portsAvailability.queryPort ? 'Free' : 'In Use'}
+                </span>
+                <span
+                  className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${
+                    firewallStatus.queryPortAllowed
+                      ? 'text-success-400 bg-success-500/10 border-success-500/20'
+                      : 'text-warning-400 bg-warning-500/15 border-warning-500/20'
+                  }`}
+                >
+                  {firewallStatus.queryPortAllowed ? '🛡️ Allowed' : '⚠️ Blocked'}
+                </span>
+              </div>
+            </div>
+            <div className="text-2xl font-black text-dark-200 font-mono tracking-tight">
+              {server.ports.queryPort || 27015}
+            </div>
+            <p className="text-[10px] leading-relaxed text-dark-500">
+              Port used for Steam server query. Default is 27015. Change to avoid conflicts with Deadlock or other games.
+            </p>
+          </div>
+          <button
+            onClick={() => handleAllocateIndividual('queryPort')}
             disabled={isAllocating}
             className="w-full bg-dark-950/60 hover:bg-dark-950 text-dark-300 hover:text-dark-100 border border-dark-800 font-black text-[10px] py-2 rounded-lg uppercase tracking-wider transition-all duration-200 active:scale-95 disabled:opacity-50"
           >

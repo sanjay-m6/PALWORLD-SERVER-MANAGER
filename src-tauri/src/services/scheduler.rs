@@ -378,7 +378,8 @@ async fn execute_scheduled_task(app_handle: AppHandle, server_id: i64, task_id: 
                         &params.1,
                         params.2,
                         params.3,
-                        &params.4,
+                        params.4,
+                        &params.5,
                     ) {
                         Ok(_) => {
                             if let Ok(db) = state.db.lock() {
@@ -458,7 +459,8 @@ async fn execute_scheduled_task(app_handle: AppHandle, server_id: i64, task_id: 
                                 &params.1,
                                 params.2,
                                 params.3,
-                                &params.4,
+                                params.4,
+                                &params.5,
                             ) {
                                 Ok(_) => {
                                     if let Ok(db) = state.db.lock() {
@@ -481,18 +483,19 @@ async fn execute_scheduled_task(app_handle: AppHandle, server_id: i64, task_id: 
     }
 }
 
-fn get_start_params(state: &crate::AppState, server_id: i64) -> Option<(String, String, u16, u16, String)> {
+fn get_start_params(state: &crate::AppState, server_id: i64) -> Option<(String, String, u16, u16, u16, String)> {
     if let Ok(db) = state.db.lock() {
         if let Ok(conn) = db.get_connection() {
             conn.query_row(
-                "SELECT install_path, startup_args, game_port, rcon_port, admin_password FROM servers WHERE id = ?1",
+                "SELECT install_path, startup_args, game_port, query_port, rcon_port, admin_password FROM servers WHERE id = ?1",
                 [server_id],
                 |row| Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1).unwrap_or_default(),
                     row.get::<_, u16>(2).unwrap_or(8211),
-                    row.get::<_, u16>(3).unwrap_or(25575),
-                    row.get::<_, String>(4).unwrap_or_default(),
+                    row.get::<_, u16>(3).unwrap_or(27015),
+                    row.get::<_, u16>(4).unwrap_or(25575),
+                    row.get::<_, String>(5).unwrap_or_default(),
                 )),
             ).ok()
         } else {

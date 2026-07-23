@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS servers (
     is_remote INTEGER DEFAULT 0,
     auto_restart INTEGER DEFAULT 1,
     run_as_admin INTEGER DEFAULT 1,
-    optimize_ram INTEGER DEFAULT 1
+    optimize_ram INTEGER DEFAULT 1,
+    query_port INTEGER DEFAULT 27015
 );
 
 -- ─── Backups ────────────────────────────────────────────────────────────────

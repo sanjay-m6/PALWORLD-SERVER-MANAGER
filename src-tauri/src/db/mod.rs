@@ -33,6 +33,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN auto_restart INTEGER DEFAULT 1", []);
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN run_as_admin INTEGER DEFAULT 1", []);
         let _ = conn.execute("ALTER TABLE servers ADD COLUMN optimize_ram INTEGER DEFAULT 1", []);
+        let _ = conn.execute("ALTER TABLE servers ADD COLUMN query_port INTEGER DEFAULT 27015", []);
 
         // Migration for installation_history table
         let _ = conn.execute(
@@ -112,7 +113,7 @@ impl Database {
             "SELECT id, name, description, install_path, save_path, status, game_port, rcon_port, rcon_enabled,
                     rest_api_port, rest_api_enabled, max_players, admin_password, server_password, is_public,
                     preset, startup_args, crossplay_platforms, auto_start, auto_restart_schedule,
-                    created_at, last_started, config_json, branch, host, is_remote, auto_restart, run_as_admin, optimize_ram
+                    created_at, last_started, config_json, branch, host, is_remote, auto_restart, run_as_admin, optimize_ram, query_port
              FROM servers ORDER BY id"
         ).map_err(|e| e.to_string())?;
 
@@ -135,6 +136,7 @@ impl Database {
                 },
                 ports: crate::models::ServerPorts {
                     game_port: row.get::<_, u16>(6).unwrap_or(8211),
+                    query_port: row.get::<_, u16>(29).unwrap_or(27015),
                     rcon_port: row.get::<_, u16>(7).unwrap_or(25575),
                     rest_api_port: row.get::<_, u16>(9).unwrap_or(8212),
                 },
@@ -175,8 +177,8 @@ impl Database {
         conn.execute(
             "INSERT INTO servers (name, description, install_path, preset, game_port, rcon_port,
                                   rest_api_port, max_players, admin_password, server_password,
-                                  is_public, auto_start, config_json, host, is_remote, auto_restart, run_as_admin)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                                  is_public, auto_start, config_json, host, is_remote, auto_restart, run_as_admin, query_port)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 req.name,
                 req.description.as_deref().unwrap_or(""),
@@ -195,6 +197,7 @@ impl Database {
                 req.is_remote.unwrap_or(false) as i32,
                 req.auto_restart.unwrap_or(true) as i32,
                 req.run_as_admin.unwrap_or(true) as i32,
+                req.query_port,
             ],
         ).map_err(|e| e.to_string())?;
 
@@ -239,6 +242,7 @@ impl Database {
         &self,
         server_id: i64,
         game_port: u16,
+        query_port: u16,
         rcon_port: u16,
         rest_api_port: u16,
         max_players: u32,
@@ -249,14 +253,16 @@ impl Database {
         conn.execute(
             "UPDATE servers SET 
                 game_port = ?1,
-                rcon_port = ?2,
-                rest_api_port = ?3,
-                max_players = ?4,
-                admin_password = ?5,
-                server_password = ?6
-             WHERE id = ?7",
+                query_port = ?2,
+                rcon_port = ?3,
+                rest_api_port = ?4,
+                max_players = ?5,
+                admin_password = ?6,
+                server_password = ?7
+             WHERE id = ?8",
             params![
                 game_port,
+                query_port,
                 rcon_port,
                 rest_api_port,
                 max_players,
